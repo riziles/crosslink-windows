@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["httpx"]
+# ///
 """
 Chainlink Safe Fetch MCP Server
 
@@ -18,23 +22,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
+
 # Fix Windows encoding issues
 sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
-# Try to import httpx, fall back to requests, then urllib
-try:
-    import httpx
-    HTTP_CLIENT = 'httpx'
-except ImportError:
-    try:
-        import requests
-        HTTP_CLIENT = 'requests'
-    except ImportError:
-        import urllib.request
-        import urllib.error
-        HTTP_CLIENT = 'urllib'
 
 
 def log(message: str) -> None:
@@ -98,24 +91,15 @@ def sanitize(content: str, patterns: list[tuple[str, str]]) -> tuple[str, int]:
 
 
 def fetch_url(url: str) -> str:
-    """Fetch content from URL using available HTTP client."""
+    """Fetch content from URL using httpx."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (compatible; ChainlinkSafeFetch/1.0)'
     }
 
-    if HTTP_CLIENT == 'httpx':
-        with httpx.Client(follow_redirects=True, timeout=30) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.text
-    elif HTTP_CLIENT == 'requests':
-        response = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+    with httpx.Client(follow_redirects=True, timeout=30) as client:
+        response = client.get(url, headers=headers)
         response.raise_for_status()
         return response.text
-    else:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return response.read().decode('utf-8', errors='replace')
 
 
 def validate_url(url: str) -> str | None:

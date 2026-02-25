@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """
 Post-edit hook that detects stub patterns, runs linters, and reminds about tests.
 Runs after Write/Edit tool usage.

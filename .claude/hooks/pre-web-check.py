@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """
 Chainlink web security hook for Claude Code.
 Injects RFIP (Recursive Framing Interdiction Protocol) before web tool calls.

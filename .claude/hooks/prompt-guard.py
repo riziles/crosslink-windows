@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """
 Chainlink behavioral hook for Claude Code.
 Injects best practice reminders on every prompt submission.

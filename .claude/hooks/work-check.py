@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """
 PreToolUse hook that blocks Write|Edit|Bash unless a chainlink issue
 is being actively worked on. Forces issue creation before code changes.
@@ -15,10 +19,16 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Defaults — overridden by .chainlink/hook-config.json if present
 DEFAULT_BLOCKED_GIT = [
-    "git push", "git commit", "git merge", "git rebase", "git cherry-pick",
+    "git push", "git merge", "git rebase", "git cherry-pick",
     "git reset", "git checkout .", "git restore .", "git clean",
     "git stash", "git tag", "git am", "git apply",
     "git branch -d", "git branch -D", "git branch -m",
+]
+
+# Git commands that are blocked UNLESS there is an active chainlink issue.
+# This allows the /commit skill to work while still preventing unsolicited commits.
+DEFAULT_GATED_GIT = [
+    "git commit",
 ]
 
 DEFAULT_ALLOWED_BASH = [
@@ -34,22 +44,23 @@ DEFAULT_ALLOWED_BASH = [
 def load_config(chainlink_dir):
     """Load hook config from .chainlink/hook-config.json, falling back to defaults.
 
-    Returns (tracking_mode, blocked_git, allowed_bash).
+    Returns (tracking_mode, blocked_git, gated_git, allowed_bash).
     tracking_mode is one of: "strict", "normal", "relaxed".
       strict  — block Write/Edit/Bash without an active issue
       normal  — remind (print warning) but don't block
       relaxed — no issue-tracking enforcement, only git blocks
     """
     blocked = list(DEFAULT_BLOCKED_GIT)
+    gated = list(DEFAULT_GATED_GIT)
     allowed = list(DEFAULT_ALLOWED_BASH)
     mode = "strict"
 
     if not chainlink_dir:
-        return mode, blocked, allowed
+        return mode, blocked, gated, allowed
 
     config_path = os.path.join(chainlink_dir, "hook-config.json")
     if not os.path.isfile(config_path):
-        return mode, blocked, allowed
+        return mode, blocked, gated, allowed
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -59,12 +70,14 @@ def load_config(chainlink_dir):
             mode = config["tracking_mode"]
         if "blocked_git_commands" in config:
             blocked = config["blocked_git_commands"]
+        if "gated_git_commands" in config:
+            gated = config["gated_git_commands"]
         if "allowed_bash_prefixes" in config:
             allowed = config["allowed_bash_prefixes"]
     except (json.JSONDecodeError, OSError):
         pass
 
-    return mode, blocked, allowed
+    return mode, blocked, gated, allowed
 
 
 def _project_root_from_script():
@@ -102,11 +115,56 @@ def find_chainlink_dir():
     return None
 
 
-def run_chainlink(args):
+def _find_chainlink(chainlink_dir):
+    """Find the chainlink binary, checking config, PATH, and common locations."""
+    import shutil
+
+    # 1. Check hook-config.json for explicit path
+    if chainlink_dir:
+        config_path = os.path.join(chainlink_dir, "hook-config.json")
+        if os.path.isfile(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                bin_path = config.get("chainlink_binary")
+                if bin_path and os.path.isfile(bin_path) and os.access(bin_path, os.X_OK):
+                    return bin_path
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    # 2. Check PATH
+    found = shutil.which("chainlink")
+    if found:
+        return found
+
+    # 3. Check common cargo install location
+    home = os.path.expanduser("~")
+    candidate = os.path.join(home, ".cargo", "bin", "chainlink")
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+
+    # 4. Check relative to project root (dev builds)
+    root = _project_root_from_script()
+    if root:
+        for profile in ("release", "debug"):
+            candidate = os.path.join(root, "chainlink", "target", profile, "chainlink")
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+
+    return "chainlink"  # fallback to PATH lookup
+
+
+_chainlink_bin = None
+
+
+def run_chainlink(args, chainlink_dir=None):
     """Run a chainlink command and return output."""
+    global _chainlink_bin
+    if _chainlink_bin is None:
+        _chainlink_bin = _find_chainlink(chainlink_dir)
     try:
         result = subprocess.run(
-            ["chainlink"] + args,
+            [_chainlink_bin] + args,
             capture_output=True,
             text=True,
             timeout=3
@@ -116,17 +174,27 @@ def run_chainlink(args):
         return None
 
 
-def is_blocked_git(input_data, blocked_list):
-    """Check if a Bash command is a blocked git mutation. Always denied."""
-    command = input_data.get("tool_input", {}).get("command", "").strip()
-    for blocked in blocked_list:
-        if command.startswith(blocked):
+def _matches_command_list(command, cmd_list):
+    """Check if a command matches any entry in the list (direct or chained)."""
+    for entry in cmd_list:
+        if command.startswith(entry):
             return True
-    # Also catch piped/chained git mutations: && git push, ; git commit, etc.
-    for blocked in blocked_list:
-        if f"&& {blocked}" in command or f"; {blocked}" in command or f"| {blocked}" in command:
+    for entry in cmd_list:
+        if f"&& {entry}" in command or f"; {entry}" in command or f"| {entry}" in command:
             return True
     return False
+
+
+def is_blocked_git(input_data, blocked_list):
+    """Check if a Bash command is a permanently blocked git mutation."""
+    command = input_data.get("tool_input", {}).get("command", "").strip()
+    return _matches_command_list(command, blocked_list)
+
+
+def is_gated_git(input_data, gated_list):
+    """Check if a Bash command is a gated git command (allowed with active issue)."""
+    command = input_data.get("tool_input", {}).get("command", "").strip()
+    return _matches_command_list(command, gated_list)
 
 
 def is_allowed_bash(input_data, allowed_list):
@@ -169,13 +237,13 @@ def main():
         sys.exit(0)
 
     chainlink_dir = find_chainlink_dir()
-    tracking_mode, blocked_git, allowed_bash = load_config(chainlink_dir)
+    tracking_mode, blocked_git, gated_git, allowed_bash = load_config(chainlink_dir)
 
     # PERMANENT BLOCK: git mutation commands are never allowed (all modes)
     if tool_name == 'Bash' and is_blocked_git(input_data, blocked_git):
         print(
             "MANDATORY COMPLIANCE — DO NOT ATTEMPT TO WORK AROUND THIS BLOCK.\n\n"
-            "Git mutation commands (commit, push, merge, rebase, reset, etc.) are "
+            "Git mutation commands (push, merge, rebase, reset, etc.) are "
             "PERMANENTLY FORBIDDEN. The human performs all git write operations.\n\n"
             "You MUST NOT:\n"
             "  - Retry this command\n"
@@ -186,6 +254,24 @@ def main():
             "  - Inform the user that this is a manual step for them\n"
             "  - Continue with your other work\n\n"
             "Read-only git commands (status, diff, log, show, branch) are allowed."
+        )
+        sys.exit(2)
+
+    # GATED GIT: commands like `git commit` require an active chainlink issue
+    if tool_name == 'Bash' and is_gated_git(input_data, gated_git):
+        if not chainlink_dir:
+            # No chainlink dir — allow through (no enforcement possible)
+            sys.exit(0)
+        status = run_chainlink(["session", "status"], chainlink_dir)
+        if status and "Working on: #" in status:
+            sys.exit(0)
+        print(
+            "Git commit requires an active chainlink issue.\n\n"
+            "Create one first:\n"
+            "  chainlink quick \"<describe the work>\" -p <priority> -l <label>\n\n"
+            "Or pick an existing issue:\n"
+            "  chainlink list -s open\n"
+            "  chainlink session work <id>"
         )
         sys.exit(2)
 
@@ -201,7 +287,7 @@ def main():
         sys.exit(0)
 
     # Check session status
-    status = run_chainlink(["session", "status"])
+    status = run_chainlink(["session", "status"], chainlink_dir)
     if not status:
         # chainlink not available — don't block
         sys.exit(0)
