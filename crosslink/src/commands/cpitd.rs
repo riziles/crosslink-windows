@@ -1,7 +1,7 @@
 //! Code clone detection via cpitd (Copy Paste Is The Devil).
 //!
 //! Shells out to the `cpitd` Python tool, parses its JSON output,
-//! and creates chainlink issues for detected code clones.
+//! and creates crosslink issues for detected code clones.
 
 use std::collections::HashMap;
 use std::process::Command;
@@ -53,7 +53,7 @@ fn suggest_install() -> Result<()> {
     bail!(
         "cpitd is not installed or not found in PATH.\n\n\
          cpitd (Copy Paste Is The Devil) is a language-agnostic code clone\n\
-         detector that integrates with chainlink to track duplicated code\n\
+         detector that integrates with crosslink to track duplicated code\n\
          as issues.\n\n\
          Install it with:\n\n\
          \x20 pip install cpitd\n\n\

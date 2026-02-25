@@ -1,4 +1,4 @@
-# Chainlink Content Sanitization Patterns
+# Crosslink Content Sanitization Patterns
 # ========================================
 #
 # These patterns are applied to web content fetched via the safe-fetch MCP server.

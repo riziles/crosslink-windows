@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chainlink Context Provider - Agent-Agnostic AI Context Injection
+Crosslink Context Provider - Agent-Agnostic AI Context Injection
 
 This script generates context for any AI coding assistant by:
 1. Detecting project languages and structure
@@ -55,22 +55,22 @@ if sys.stderr.encoding != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 
-def find_chainlink_dir() -> Optional[Path]:
-    """Find .chainlink directory by walking up from cwd."""
+def find_crosslink_dir() -> Optional[Path]:
+    """Find .crosslink directory by walking up from cwd."""
     current = Path.cwd()
     while current != current.parent:
-        chainlink_dir = current / ".chainlink"
-        if chainlink_dir.exists():
-            return chainlink_dir
+        crosslink_dir = current / ".crosslink"
+        if crosslink_dir.exists():
+            return crosslink_dir
         current = current.parent
     return None
 
 
-def run_chainlink(args: list[str]) -> tuple[str, bool]:
-    """Run a chainlink command and return output."""
+def run_crosslink(args: list[str]) -> tuple[str, bool]:
+    """Run a crosslink command and return output."""
     try:
         result = subprocess.run(
-            ["chainlink"] + args,
+            ["crosslink"] + args,
             capture_output=True,
             text=True,
             timeout=10
@@ -160,7 +160,7 @@ def get_project_structure(max_depth: int = 3, max_entries: int = 50) -> str:
 
 
 def get_session_context() -> dict:
-    """Get current chainlink session context."""
+    """Get current crosslink session context."""
     context = {
         "active": False,
         "session_id": None,
@@ -171,7 +171,7 @@ def get_session_context() -> dict:
     }
 
     # Get session status
-    output, success = run_chainlink(["session", "status"])
+    output, success = run_crosslink(["session", "status"])
     if success and output:
         context["active"] = "Session #" in output
         for line in output.split("\n"):
@@ -189,14 +189,14 @@ def get_session_context() -> dict:
                     context["handoff_notes"] = output[idx + 14:].strip()
 
     # Get ready issues
-    output, success = run_chainlink(["ready"])
+    output, success = run_crosslink(["ready"])
     if success and output and "No ready issues" not in output:
         for line in output.split("\n"):
             if line.strip().startswith("#"):
                 context["ready_issues"].append(line.strip())
 
     # Get open issues
-    output, success = run_chainlink(["list"])
+    output, success = run_crosslink(["list"])
     if success and output and "No issues found" not in output:
         for line in output.split("\n"):
             if line.strip().startswith("#") or line.strip().startswith("  #"):
@@ -304,7 +304,7 @@ def format_output(context: dict, fmt: str = "xml") -> str:
     if context.get("session"):
         session = context["session"]
         if fmt == "xml":
-            parts.append("<chainlink-session>")
+            parts.append("<crosslink-session>")
             if session["active"]:
                 parts.append(f"Session #{session['session_id']} active")
                 if session["active_issue"]:
@@ -312,10 +312,10 @@ def format_output(context: dict, fmt: str = "xml") -> str:
                 if session["handoff_notes"]:
                     parts.append(f"Handoff notes: {session['handoff_notes']}")
             else:
-                parts.append("No active session. Use 'chainlink session start' to begin.")
-            parts.append("</chainlink-session>")
+                parts.append("No active session. Use 'crosslink session start' to begin.")
+            parts.append("</crosslink-session>")
         else:  # markdown
-            parts.append("## Chainlink Session")
+            parts.append("## Crosslink Session")
             if session["active"]:
                 parts.append(f"- **Session:** #{session['session_id']}")
                 if session["active_issue"]:
@@ -329,7 +329,7 @@ def format_output(context: dict, fmt: str = "xml") -> str:
     if context.get("issues"):
         issues = context["issues"]
         if fmt == "xml":
-            parts.append("<chainlink-issues>")
+            parts.append("<crosslink-issues>")
             if issues["ready"]:
                 parts.append("Ready issues (unblocked):")
                 for issue in issues["ready"]:
@@ -340,7 +340,7 @@ def format_output(context: dict, fmt: str = "xml") -> str:
                     parts.append(f"  {issue}")
             if not issues["ready"] and not issues["open"]:
                 parts.append("No open issues.")
-            parts.append("</chainlink-issues>")
+            parts.append("</crosslink-issues>")
         else:
             parts.append("## Issues")
             if issues["ready"]:
@@ -384,10 +384,10 @@ def format_output(context: dict, fmt: str = "xml") -> str:
             parts.append("<workflow-reminder>")
         else:
             parts.append("## Workflow")
-        parts.append("- Use `chainlink session start` at the beginning of work")
-        parts.append("- Use `chainlink session work <id>` to mark current focus")
-        parts.append("- Add comments: `chainlink comment <id> \"...\"`")
-        parts.append("- End with notes: `chainlink session end --notes \"...\"`")
+        parts.append("- Use `crosslink session start` at the beginning of work")
+        parts.append("- Use `crosslink session work <id>` to mark current focus")
+        parts.append("- Add comments: `crosslink comment <id> \"...\"`")
+        parts.append("- End with notes: `crosslink session end --notes \"...\"`")
         if fmt == "xml":
             parts.append("</workflow-reminder>")
 
@@ -396,7 +396,7 @@ def format_output(context: dict, fmt: str = "xml") -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate AI context from chainlink project state",
+        description="Generate AI context from crosslink project state",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -422,8 +422,8 @@ def main():
     # Default to all if no specific flags
     include_all = args.all or not (args.session or args.issues or args.rules or args.structure)
 
-    # Check for chainlink project
-    chainlink_dir = find_chainlink_dir()
+    # Check for crosslink project
+    crosslink_dir = find_crosslink_dir()
 
     # Detect languages
     languages = detect_languages()
@@ -461,12 +461,12 @@ def main():
 
     if args.env:
         # Output as shell-friendly env vars
-        print(f'CHAINLINK_LANGUAGES="{",".join(languages)}"')
+        print(f'CROSSLINK_LANGUAGES="{",".join(languages)}"')
         if context.get("session"):
-            print(f'CHAINLINK_SESSION_ACTIVE={"1" if context["session"]["active"] else "0"}')
+            print(f'CROSSLINK_SESSION_ACTIVE={"1" if context["session"]["active"] else "0"}')
             if context["session"]["session_id"]:
-                print(f'CHAINLINK_SESSION_ID="{context["session"]["session_id"]}"')
-        print(f'CHAINLINK_CONTEXT="{output.replace(chr(10), "\\n").replace(chr(34), "\\\"")}"')
+                print(f'CROSSLINK_SESSION_ID="{context["session"]["session_id"]}"')
+        print(f'CROSSLINK_CONTEXT="{output.replace(chr(10), "\\n").replace(chr(34), "\\\"")}"')
         return
 
     if args.clipboard:

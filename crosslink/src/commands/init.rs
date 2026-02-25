@@ -18,45 +18,45 @@ const MCP_JSON: &str = include_str!("../../resources/mcp.json");
 
 // Embed sanitization patterns
 const SANITIZE_PATTERNS: &str =
-    include_str!("../../resources/chainlink/rules/sanitize-patterns.txt");
+    include_str!("../../resources/crosslink/rules/sanitize-patterns.txt");
 
 // Embed hook configuration
-const HOOK_CONFIG_JSON: &str = include_str!("../../resources/chainlink/hook-config.json");
+const HOOK_CONFIG_JSON: &str = include_str!("../../resources/crosslink/hook-config.json");
 
 // Embed tracking mode rule files
 const RULE_TRACKING_STRICT: &str =
-    include_str!("../../resources/chainlink/rules/tracking-strict.md");
+    include_str!("../../resources/crosslink/rules/tracking-strict.md");
 const RULE_TRACKING_NORMAL: &str =
-    include_str!("../../resources/chainlink/rules/tracking-normal.md");
+    include_str!("../../resources/crosslink/rules/tracking-normal.md");
 const RULE_TRACKING_RELAXED: &str =
-    include_str!("../../resources/chainlink/rules/tracking-relaxed.md");
+    include_str!("../../resources/crosslink/rules/tracking-relaxed.md");
 
-// Embed rule files at compile time from resources/chainlink/rules/
-const RULE_GLOBAL: &str = include_str!("../../resources/chainlink/rules/global.md");
-const RULE_PROJECT: &str = include_str!("../../resources/chainlink/rules/project.md");
-const RULE_RUST: &str = include_str!("../../resources/chainlink/rules/rust.md");
-const RULE_PYTHON: &str = include_str!("../../resources/chainlink/rules/python.md");
-const RULE_JAVASCRIPT: &str = include_str!("../../resources/chainlink/rules/javascript.md");
-const RULE_TYPESCRIPT: &str = include_str!("../../resources/chainlink/rules/typescript.md");
+// Embed rule files at compile time from resources/crosslink/rules/
+const RULE_GLOBAL: &str = include_str!("../../resources/crosslink/rules/global.md");
+const RULE_PROJECT: &str = include_str!("../../resources/crosslink/rules/project.md");
+const RULE_RUST: &str = include_str!("../../resources/crosslink/rules/rust.md");
+const RULE_PYTHON: &str = include_str!("../../resources/crosslink/rules/python.md");
+const RULE_JAVASCRIPT: &str = include_str!("../../resources/crosslink/rules/javascript.md");
+const RULE_TYPESCRIPT: &str = include_str!("../../resources/crosslink/rules/typescript.md");
 const RULE_TYPESCRIPT_REACT: &str =
-    include_str!("../../resources/chainlink/rules/typescript-react.md");
+    include_str!("../../resources/crosslink/rules/typescript-react.md");
 const RULE_JAVASCRIPT_REACT: &str =
-    include_str!("../../resources/chainlink/rules/javascript-react.md");
-const RULE_GO: &str = include_str!("../../resources/chainlink/rules/go.md");
-const RULE_JAVA: &str = include_str!("../../resources/chainlink/rules/java.md");
-const RULE_C: &str = include_str!("../../resources/chainlink/rules/c.md");
-const RULE_CPP: &str = include_str!("../../resources/chainlink/rules/cpp.md");
-const RULE_CSHARP: &str = include_str!("../../resources/chainlink/rules/csharp.md");
-const RULE_RUBY: &str = include_str!("../../resources/chainlink/rules/ruby.md");
-const RULE_PHP: &str = include_str!("../../resources/chainlink/rules/php.md");
-const RULE_SWIFT: &str = include_str!("../../resources/chainlink/rules/swift.md");
-const RULE_KOTLIN: &str = include_str!("../../resources/chainlink/rules/kotlin.md");
-const RULE_SCALA: &str = include_str!("../../resources/chainlink/rules/scala.md");
-const RULE_ZIG: &str = include_str!("../../resources/chainlink/rules/zig.md");
-const RULE_ODIN: &str = include_str!("../../resources/chainlink/rules/odin.md");
-const RULE_ELIXIR: &str = include_str!("../../resources/chainlink/rules/elixir.md");
-const RULE_ELIXIR_PHOENIX: &str = include_str!("../../resources/chainlink/rules/elixir-phoenix.md");
-const RULE_WEB: &str = include_str!("../../resources/chainlink/rules/web.md");
+    include_str!("../../resources/crosslink/rules/javascript-react.md");
+const RULE_GO: &str = include_str!("../../resources/crosslink/rules/go.md");
+const RULE_JAVA: &str = include_str!("../../resources/crosslink/rules/java.md");
+const RULE_C: &str = include_str!("../../resources/crosslink/rules/c.md");
+const RULE_CPP: &str = include_str!("../../resources/crosslink/rules/cpp.md");
+const RULE_CSHARP: &str = include_str!("../../resources/crosslink/rules/csharp.md");
+const RULE_RUBY: &str = include_str!("../../resources/crosslink/rules/ruby.md");
+const RULE_PHP: &str = include_str!("../../resources/crosslink/rules/php.md");
+const RULE_SWIFT: &str = include_str!("../../resources/crosslink/rules/swift.md");
+const RULE_KOTLIN: &str = include_str!("../../resources/crosslink/rules/kotlin.md");
+const RULE_SCALA: &str = include_str!("../../resources/crosslink/rules/scala.md");
+const RULE_ZIG: &str = include_str!("../../resources/crosslink/rules/zig.md");
+const RULE_ODIN: &str = include_str!("../../resources/crosslink/rules/odin.md");
+const RULE_ELIXIR: &str = include_str!("../../resources/crosslink/rules/elixir.md");
+const RULE_ELIXIR_PHOENIX: &str = include_str!("../../resources/crosslink/rules/elixir-phoenix.md");
+const RULE_WEB: &str = include_str!("../../resources/crosslink/rules/web.md");
 
 /// All rule files to deploy
 const RULE_FILES: &[(&str, &str)] = &[
@@ -89,7 +89,7 @@ const RULE_FILES: &[(&str, &str)] = &[
     ("tracking-relaxed.md", RULE_TRACKING_RELAXED),
 ];
 
-/// Merge chainlink's MCP server entries into an existing `.mcp.json`, or create it fresh.
+/// Merge crosslink's MCP server entries into an existing `.mcp.json`, or create it fresh.
 /// Returns a list of warnings (e.g. overwritten keys) for the caller to display.
 fn write_mcp_json_merged(mcp_path: &Path) -> Result<Vec<String>> {
     let embedded: serde_json::Value = serde_json::from_str(MCP_JSON)
@@ -134,7 +134,7 @@ fn write_mcp_json_merged(mcp_path: &Path) -> Result<Vec<String>> {
     for (key, value) in src_servers {
         if dest_map.contains_key(key) {
             warnings.push(format!(
-                "Warning: overwriting existing mcpServers entry \"{}\" with chainlink default",
+                "Warning: overwriting existing mcpServers entry \"{}\" with crosslink default",
                 key
             ));
         }
@@ -151,51 +151,51 @@ fn write_mcp_json_merged(mcp_path: &Path) -> Result<Vec<String>> {
 }
 
 pub fn run(path: &Path, force: bool) -> Result<()> {
-    let chainlink_dir = path.join(".chainlink");
+    let crosslink_dir = path.join(".crosslink");
     let claude_dir = path.join(".claude");
     let hooks_dir = claude_dir.join("hooks");
 
     // Check if already initialized
-    let chainlink_exists = chainlink_dir.exists();
+    let crosslink_exists = crosslink_dir.exists();
     let claude_exists = claude_dir.exists();
 
-    if chainlink_exists && claude_exists && !force {
+    if crosslink_exists && claude_exists && !force {
         println!("Already initialized at {}", path.display());
         println!("Use --force to update hooks to latest version.");
         return Ok(());
     }
 
-    let rules_dir = chainlink_dir.join("rules");
+    let rules_dir = crosslink_dir.join("rules");
 
-    // Create .chainlink directory and database
-    if !chainlink_exists {
-        fs::create_dir_all(&chainlink_dir).context("Failed to create .chainlink directory")?;
+    // Create .crosslink directory and database
+    if !crosslink_exists {
+        fs::create_dir_all(&crosslink_dir).context("Failed to create .crosslink directory")?;
 
-        let db_path = chainlink_dir.join("issues.db");
+        let db_path = crosslink_dir.join("issues.db");
         Database::open(&db_path)?;
-        println!("Created {}", chainlink_dir.display());
+        println!("Created {}", crosslink_dir.display());
     }
 
     // Write hook config (create or update)
-    let config_path = chainlink_dir.join("hook-config.json");
+    let config_path = crosslink_dir.join("hook-config.json");
     if !config_path.exists() || force {
         fs::write(&config_path, HOOK_CONFIG_JSON).context("Failed to write hook-config.json")?;
     }
 
-    // Write .chainlink/.gitignore for multi-agent files
-    let chainlink_gitignore = chainlink_dir.join(".gitignore");
-    if !chainlink_gitignore.exists() || force {
+    // Write .crosslink/.gitignore for multi-agent files
+    let crosslink_gitignore = crosslink_dir.join(".gitignore");
+    if !crosslink_gitignore.exists() || force {
         fs::write(
-            &chainlink_gitignore,
+            &crosslink_gitignore,
             "# Multi-agent collaboration (machine-local)\nagent.json\n.locks-cache/\n",
         )
-        .context("Failed to write .chainlink/.gitignore")?;
+        .context("Failed to write .crosslink/.gitignore")?;
     }
 
     // Create or update rules directory
     let rules_exist = rules_dir.exists();
     if !rules_exist || force {
-        fs::create_dir_all(&rules_dir).context("Failed to create .chainlink/rules directory")?;
+        fs::create_dir_all(&rules_dir).context("Failed to create .crosslink/rules directory")?;
 
         for (filename, content) in RULE_FILES {
             fs::write(rules_dir.join(filename), content)
@@ -239,7 +239,7 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
         fs::write(mcp_dir.join("safe-fetch-server.py"), SAFE_FETCH_SERVER_PY)
             .context("Failed to write safe-fetch-server.py")?;
 
-        // Merge chainlink's MCP server entry into .mcp.json (preserving existing MCPs)
+        // Merge crosslink's MCP server entry into .mcp.json (preserving existing MCPs)
         let warnings =
             write_mcp_json_merged(&path.join(".mcp.json")).context("Failed to write .mcp.json")?;
         for warning in warnings {
@@ -253,10 +253,10 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
         }
     }
 
-    println!("Chainlink initialized successfully!");
+    println!("Crosslink initialized successfully!");
     println!("\nNext steps:");
-    println!("  chainlink session start     # Start a session");
-    println!("  chainlink create \"Task\"     # Create an issue");
+    println!("  crosslink session start     # Start a session");
+    println!("  crosslink create \"Task\"     # Create an issue");
 
     Ok(())
 }
@@ -273,13 +273,13 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify directories created
-        assert!(dir.path().join(".chainlink").exists());
-        assert!(dir.path().join(".chainlink/rules").exists());
-        assert!(dir.path().join(".chainlink/issues.db").exists());
+        assert!(dir.path().join(".crosslink").exists());
+        assert!(dir.path().join(".crosslink/rules").exists());
+        assert!(dir.path().join(".crosslink/issues.db").exists());
         assert!(dir.path().join(".claude").exists());
         assert!(dir.path().join(".claude/hooks").exists());
         assert!(dir.path().join(".claude/mcp").exists());
-        assert!(dir.path().join(".chainlink/hook-config.json").exists());
+        assert!(dir.path().join(".crosslink/hook-config.json").exists());
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod tests {
         let dir = tempdir().unwrap();
         run(dir.path(), false).unwrap();
 
-        let rules_dir = dir.path().join(".chainlink/rules");
+        let rules_dir = dir.path().join(".crosslink/rules");
         assert!(rules_dir.join("global.md").exists());
         assert!(rules_dir.join("project.md").exists());
         assert!(rules_dir.join("rust.md").exists());
@@ -560,15 +560,15 @@ mod tests {
         let content = fs::read_to_string(&mcp_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["someOtherKey"], true);
-        assert!(parsed["mcpServers"]["chainlink-safe-fetch"].is_object());
+        assert!(parsed["mcpServers"]["crosslink-safe-fetch"].is_object());
     }
 
     #[test]
-    fn test_run_partial_init_chainlink_only() {
+    fn test_run_partial_init_crosslink_only() {
         let dir = tempdir().unwrap();
 
-        // Create only .chainlink directory
-        fs::create_dir_all(dir.path().join(".chainlink")).unwrap();
+        // Create only .crosslink directory
+        fs::create_dir_all(dir.path().join(".crosslink")).unwrap();
 
         let result = run(dir.path(), false);
         assert!(result.is_ok());
@@ -587,8 +587,8 @@ mod tests {
         let result = run(dir.path(), false);
         assert!(result.is_ok());
 
-        // .chainlink should now exist
-        assert!(dir.path().join(".chainlink").exists());
+        // .crosslink should now exist
+        assert!(dir.path().join(".crosslink").exists());
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod tests {
         run(dir.path(), false).unwrap();
 
         // Open the created database and verify it works
-        let db_path = dir.path().join(".chainlink/issues.db");
+        let db_path = dir.path().join(".crosslink/issues.db");
         let db = Database::open(&db_path).unwrap();
 
         // Should be able to create an issue
@@ -610,7 +610,7 @@ mod tests {
         let dir = tempdir().unwrap();
         run(dir.path(), false).unwrap();
 
-        let rules_dir = dir.path().join(".chainlink/rules");
+        let rules_dir = dir.path().join(".crosslink/rules");
 
         // Verify rule files have content
         let global = fs::read_to_string(rules_dir.join("global.md")).unwrap();
@@ -626,7 +626,7 @@ mod tests {
         run(dir.path(), false).unwrap();
 
         // Modify a rule file
-        let rule_path = dir.path().join(".chainlink/rules/global.md");
+        let rule_path = dir.path().join(".crosslink/rules/global.md");
         fs::write(&rule_path, "# modified rule").unwrap();
 
         // Force update
@@ -648,7 +648,7 @@ mod tests {
         }
 
         // All files should still exist
-        assert!(dir.path().join(".chainlink/issues.db").exists());
+        assert!(dir.path().join(".crosslink/issues.db").exists());
         assert!(dir.path().join(".claude/settings.json").exists());
     }
 

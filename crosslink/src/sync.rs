@@ -6,11 +6,11 @@ use std::process::Command;
 use crate::identity::AgentConfig;
 use crate::locks::{Heartbeat, Keyring, LocksFile};
 
-/// Directory name under .chainlink for the locks cache worktree.
+/// Directory name under .crosslink for the locks cache worktree.
 const LOCKS_CACHE_DIR: &str = ".locks-cache";
 
 /// The coordination branch name.
-const LOCKS_BRANCH: &str = "chainlink/locks";
+const LOCKS_BRANCH: &str = "crosslink/locks";
 
 /// Result of GPG signature verification.
 #[derive(Debug)]
@@ -28,30 +28,30 @@ pub enum GpgVerification {
     NoCommits,
 }
 
-/// Manages synchronization with the `chainlink/locks` coordination branch.
+/// Manages synchronization with the `crosslink/locks` coordination branch.
 ///
-/// Uses a git worktree at `.chainlink/.locks-cache/` to avoid disturbing
+/// Uses a git worktree at `.crosslink/.locks-cache/` to avoid disturbing
 /// the user's working tree.
 pub struct SyncManager {
-    /// Path to the .chainlink directory.
+    /// Path to the .crosslink directory.
     #[allow(dead_code)]
-    chainlink_dir: PathBuf,
-    /// Path to .chainlink/.locks-cache (worktree of chainlink/locks branch).
+    crosslink_dir: PathBuf,
+    /// Path to .crosslink/.locks-cache (worktree of crosslink/locks branch).
     cache_dir: PathBuf,
-    /// The repo root (parent of .chainlink).
+    /// The repo root (parent of .crosslink).
     repo_root: PathBuf,
 }
 
 impl SyncManager {
-    /// Create a new SyncManager for the given .chainlink directory.
-    pub fn new(chainlink_dir: &Path) -> Result<Self> {
-        let cache_dir = chainlink_dir.join(LOCKS_CACHE_DIR);
-        let repo_root = chainlink_dir
+    /// Create a new SyncManager for the given .crosslink directory.
+    pub fn new(crosslink_dir: &Path) -> Result<Self> {
+        let cache_dir = crosslink_dir.join(LOCKS_CACHE_DIR);
+        let repo_root = crosslink_dir
             .parent()
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine repo root from .chainlink dir"))?
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine repo root from .crosslink dir"))?
             .to_path_buf();
         Ok(SyncManager {
-            chainlink_dir: chainlink_dir.to_path_buf(),
+            crosslink_dir: crosslink_dir.to_path_buf(),
             cache_dir,
             repo_root,
         })
@@ -59,7 +59,7 @@ impl SyncManager {
 
     /// Initialize the locks cache directory.
     ///
-    /// If the `chainlink/locks` branch exists on the remote, fetches it and
+    /// If the `crosslink/locks` branch exists on the remote, fetches it and
     /// creates a worktree. If not, creates an orphan branch with an empty
     /// locks.json.
     pub fn init_cache(&self) -> Result<()> {
@@ -401,31 +401,31 @@ mod tests {
     #[test]
     fn test_sync_manager_new() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
-        assert_eq!(manager.cache_dir, chainlink_dir.join(LOCKS_CACHE_DIR));
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        assert_eq!(manager.cache_dir, crosslink_dir.join(LOCKS_CACHE_DIR));
         assert_eq!(manager.repo_root, dir.path());
     }
 
     #[test]
     fn test_sync_manager_not_initialized() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         assert!(!manager.is_initialized());
     }
 
     #[test]
     fn test_read_locks_no_cache() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         // Cache doesn't exist yet, but read_locks should return empty
         // (it checks if the file exists)
         let locks_path = manager.cache_dir.join("locks.json");
@@ -435,10 +435,10 @@ mod tests {
     #[test]
     fn test_read_heartbeats_no_dir() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         // Manually create cache dir without heartbeats subdir
         std::fs::create_dir_all(&manager.cache_dir).unwrap();
         let heartbeats = manager.read_heartbeats().unwrap();
@@ -448,8 +448,8 @@ mod tests {
     #[test]
     fn test_read_heartbeats_with_files() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        let cache_dir = chainlink_dir.join(LOCKS_CACHE_DIR);
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(LOCKS_CACHE_DIR);
         let hb_dir = cache_dir.join("heartbeats");
         std::fs::create_dir_all(&hb_dir).unwrap();
 
@@ -462,7 +462,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&hb).unwrap();
         std::fs::write(hb_dir.join("worker-1.json"), json).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         let heartbeats = manager.read_heartbeats().unwrap();
         assert_eq!(heartbeats.len(), 1);
         assert_eq!(heartbeats[0].agent_id, "worker-1");
@@ -472,15 +472,15 @@ mod tests {
     #[test]
     fn test_find_stale_locks_empty() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        let cache_dir = chainlink_dir.join(LOCKS_CACHE_DIR);
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(LOCKS_CACHE_DIR);
         std::fs::create_dir_all(&cache_dir).unwrap();
 
         // Write empty locks.json
         let locks = LocksFile::empty();
         locks.save(&cache_dir.join("locks.json")).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         let stale = manager.find_stale_locks().unwrap();
         assert!(stale.is_empty());
     }
@@ -488,8 +488,8 @@ mod tests {
     #[test]
     fn test_find_stale_locks_with_stale() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        let cache_dir = chainlink_dir.join(LOCKS_CACHE_DIR);
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(LOCKS_CACHE_DIR);
         let hb_dir = cache_dir.join("heartbeats");
         std::fs::create_dir_all(&hb_dir).unwrap();
 
@@ -514,7 +514,7 @@ mod tests {
         locks.save(&cache_dir.join("locks.json")).unwrap();
 
         // No heartbeat file for worker-1 → stale
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         let stale = manager.find_stale_locks().unwrap();
         assert_eq!(stale.len(), 1);
         assert_eq!(stale[0], (5, "worker-1".to_string()));
@@ -523,8 +523,8 @@ mod tests {
     #[test]
     fn test_find_stale_locks_with_fresh_heartbeat() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        let cache_dir = chainlink_dir.join(LOCKS_CACHE_DIR);
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(LOCKS_CACHE_DIR);
         let hb_dir = cache_dir.join("heartbeats");
         std::fs::create_dir_all(&hb_dir).unwrap();
 
@@ -558,7 +558,7 @@ mod tests {
         let json = serde_json::to_string(&hb).unwrap();
         std::fs::write(hb_dir.join("worker-1.json"), json).unwrap();
 
-        let manager = SyncManager::new(&chainlink_dir).unwrap();
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
         let stale = manager.find_stale_locks().unwrap();
         assert!(stale.is_empty());
     }

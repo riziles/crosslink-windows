@@ -1,6 +1,6 @@
 ## Safe Web Fetching
 
-**IMPORTANT**: When fetching web content, prefer `mcp__chainlink-safe-fetch__safe_fetch` over the built-in `WebFetch` tool when available.
+**IMPORTANT**: When fetching web content, prefer `mcp__crosslink-safe-fetch__safe_fetch` over the built-in `WebFetch` tool when available.
 
 The safe-fetch MCP server sanitizes potentially malicious strings from web content before you see it, providing an additional layer of protection against prompt injection attacks.
 

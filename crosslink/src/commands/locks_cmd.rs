@@ -5,9 +5,9 @@ use crate::db::Database;
 use crate::sync::{GpgVerification, SyncManager};
 use crate::utils::truncate;
 
-/// `chainlink locks list` — show current lock state
-pub fn list(chainlink_dir: &Path, db: &Database, json_output: bool) -> Result<()> {
-    let sync = SyncManager::new(chainlink_dir)?;
+/// `crosslink locks list` — show current lock state
+pub fn list(crosslink_dir: &Path, db: &Database, json_output: bool) -> Result<()> {
+    let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
     sync.fetch()?;
 
@@ -56,9 +56,9 @@ pub fn list(chainlink_dir: &Path, db: &Database, json_output: bool) -> Result<()
     Ok(())
 }
 
-/// `chainlink locks check <id>` — check if an issue is available
-pub fn check(chainlink_dir: &Path, issue_id: i64) -> Result<()> {
-    let sync = SyncManager::new(chainlink_dir)?;
+/// `crosslink locks check <id>` — check if an issue is available
+pub fn check(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
+    let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
     sync.fetch()?;
 
@@ -91,9 +91,9 @@ pub fn check(chainlink_dir: &Path, issue_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// `chainlink sync` — fetch latest locks and verify signatures
-pub fn sync_cmd(chainlink_dir: &Path) -> Result<()> {
-    let sync = SyncManager::new(chainlink_dir)?;
+/// `crosslink sync` — fetch latest locks and verify signatures
+pub fn sync_cmd(crosslink_dir: &Path) -> Result<()> {
+    let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
     sync.fetch()?;
 

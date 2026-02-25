@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PreToolUse hook that blocks Write|Edit|Bash unless a chainlink issue
+PreToolUse hook that blocks Write|Edit|Bash unless a crosslink issue
 is being actively worked on. Forces issue creation before code changes.
 """
 
@@ -13,7 +13,7 @@ import io
 # Fix Windows encoding issues
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# Defaults — overridden by .chainlink/hook-config.json if present
+# Defaults — overridden by .crosslink/hook-config.json if present
 DEFAULT_BLOCKED_GIT = [
     "git push", "git merge", "git rebase", "git cherry-pick",
     "git reset", "git checkout .", "git restore .", "git clean",
@@ -21,14 +21,14 @@ DEFAULT_BLOCKED_GIT = [
     "git branch -d", "git branch -D", "git branch -m",
 ]
 
-# Git commands that are blocked UNLESS there is an active chainlink issue.
+# Git commands that are blocked UNLESS there is an active crosslink issue.
 # This allows the /commit skill to work while still preventing unsolicited commits.
 DEFAULT_GATED_GIT = [
     "git commit",
 ]
 
 DEFAULT_ALLOWED_BASH = [
-    "chainlink ",
+    "crosslink ",
     "git status", "git diff", "git log", "git branch", "git show",
     "cargo test", "cargo build", "cargo check", "cargo clippy", "cargo fmt",
     "npm test", "npm run", "npx ",
@@ -37,8 +37,8 @@ DEFAULT_ALLOWED_BASH = [
 ]
 
 
-def load_config(chainlink_dir):
-    """Load hook config from .chainlink/hook-config.json, falling back to defaults.
+def load_config(crosslink_dir):
+    """Load hook config from .crosslink/hook-config.json, falling back to defaults.
 
     Returns (tracking_mode, blocked_git, gated_git, allowed_bash).
     tracking_mode is one of: "strict", "normal", "relaxed".
@@ -51,10 +51,10 @@ def load_config(chainlink_dir):
     allowed = list(DEFAULT_ALLOWED_BASH)
     mode = "strict"
 
-    if not chainlink_dir:
+    if not crosslink_dir:
         return mode, blocked, gated, allowed
 
-    config_path = os.path.join(chainlink_dir, "hook-config.json")
+    config_path = os.path.join(crosslink_dir, "hook-config.json")
     if not os.path.isfile(config_path):
         return mode, blocked, gated, allowed
 
@@ -84,8 +84,8 @@ def _project_root_from_script():
         return None
 
 
-def find_chainlink_dir():
-    """Find the .chainlink directory.
+def find_crosslink_dir():
+    """Find the .crosslink directory.
 
     Prefers the project root derived from the hook script's own path
     (reliable even when cwd is a subdirectory), falling back to walking
@@ -94,14 +94,14 @@ def find_chainlink_dir():
     # Primary: resolve from script location
     root = _project_root_from_script()
     if root:
-        candidate = os.path.join(root, '.chainlink')
+        candidate = os.path.join(root, '.crosslink')
         if os.path.isdir(candidate):
             return candidate
 
     # Fallback: walk up from cwd
     current = os.getcwd()
     for _ in range(10):
-        candidate = os.path.join(current, '.chainlink')
+        candidate = os.path.join(current, '.crosslink')
         if os.path.isdir(candidate):
             return candidate
         parent = os.path.dirname(current)
@@ -111,31 +111,31 @@ def find_chainlink_dir():
     return None
 
 
-def _find_chainlink(chainlink_dir):
-    """Find the chainlink binary, checking config, PATH, and common locations."""
+def _find_crosslink(crosslink_dir):
+    """Find the crosslink binary, checking config, PATH, and common locations."""
     import shutil
 
     # 1. Check hook-config.json for explicit path
-    if chainlink_dir:
-        config_path = os.path.join(chainlink_dir, "hook-config.json")
+    if crosslink_dir:
+        config_path = os.path.join(crosslink_dir, "hook-config.json")
         if os.path.isfile(config_path):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                bin_path = config.get("chainlink_binary")
+                bin_path = config.get("crosslink_binary")
                 if bin_path and os.path.isfile(bin_path) and os.access(bin_path, os.X_OK):
                     return bin_path
             except (json.JSONDecodeError, OSError):
                 pass
 
     # 2. Check PATH
-    found = shutil.which("chainlink")
+    found = shutil.which("crosslink")
     if found:
         return found
 
     # 3. Check common cargo install location
     home = os.path.expanduser("~")
-    candidate = os.path.join(home, ".cargo", "bin", "chainlink")
+    candidate = os.path.join(home, ".cargo", "bin", "crosslink")
     if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
         return candidate
 
@@ -143,24 +143,24 @@ def _find_chainlink(chainlink_dir):
     root = _project_root_from_script()
     if root:
         for profile in ("release", "debug"):
-            candidate = os.path.join(root, "chainlink", "target", profile, "chainlink")
+            candidate = os.path.join(root, "crosslink", "target", profile, "crosslink")
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
 
-    return "chainlink"  # fallback to PATH lookup
+    return "crosslink"  # fallback to PATH lookup
 
 
-_chainlink_bin = None
+_crosslink_bin = None
 
 
-def run_chainlink(args, chainlink_dir=None):
-    """Run a chainlink command and return output."""
-    global _chainlink_bin
-    if _chainlink_bin is None:
-        _chainlink_bin = _find_chainlink(chainlink_dir)
+def run_crosslink(args, crosslink_dir=None):
+    """Run a crosslink command and return output."""
+    global _crosslink_bin
+    if _crosslink_bin is None:
+        _crosslink_bin = _find_crosslink(crosslink_dir)
     try:
         result = subprocess.run(
-            [_chainlink_bin] + args,
+            [_crosslink_bin] + args,
             capture_output=True,
             text=True,
             timeout=3
@@ -232,8 +232,8 @@ def main():
     if tool_name in ('Write', 'Edit') and is_claude_memory_path(input_data):
         sys.exit(0)
 
-    chainlink_dir = find_chainlink_dir()
-    tracking_mode, blocked_git, gated_git, allowed_bash = load_config(chainlink_dir)
+    crosslink_dir = find_crosslink_dir()
+    tracking_mode, blocked_git, gated_git, allowed_bash = load_config(crosslink_dir)
 
     # PERMANENT BLOCK: git mutation commands are never allowed (all modes)
     if tool_name == 'Bash' and is_blocked_git(input_data, blocked_git):
@@ -253,21 +253,21 @@ def main():
         )
         sys.exit(2)
 
-    # GATED GIT: commands like `git commit` require an active chainlink issue
+    # GATED GIT: commands like `git commit` require an active crosslink issue
     if tool_name == 'Bash' and is_gated_git(input_data, gated_git):
-        if not chainlink_dir:
-            # No chainlink dir — allow through (no enforcement possible)
+        if not crosslink_dir:
+            # No crosslink dir — allow through (no enforcement possible)
             sys.exit(0)
-        status = run_chainlink(["session", "status"], chainlink_dir)
+        status = run_crosslink(["session", "status"], crosslink_dir)
         if status and "Working on: #" in status:
             sys.exit(0)
         print(
-            "Git commit requires an active chainlink issue.\n\n"
+            "Git commit requires an active crosslink issue.\n\n"
             "Create one first:\n"
-            "  chainlink quick \"<describe the work>\" -p <priority> -l <label>\n\n"
+            "  crosslink quick \"<describe the work>\" -p <priority> -l <label>\n\n"
             "Or pick an existing issue:\n"
-            "  chainlink list -s open\n"
-            "  chainlink session work <id>"
+            "  crosslink list -s open\n"
+            "  crosslink session work <id>"
         )
         sys.exit(2)
 
@@ -279,13 +279,13 @@ def main():
     if tracking_mode == "relaxed":
         sys.exit(0)
 
-    if not chainlink_dir:
+    if not crosslink_dir:
         sys.exit(0)
 
     # Check session status
-    status = run_chainlink(["session", "status"], chainlink_dir)
+    status = run_crosslink(["session", "status"], crosslink_dir)
     if not status:
-        # chainlink not available — don't block
+        # crosslink not available — don't block
         sys.exit(0)
 
     # If already working on an issue, allow
@@ -295,7 +295,7 @@ def main():
     # No active work item — behavior depends on mode
     strict_msg = (
         "MANDATORY COMPLIANCE — DO NOT ATTEMPT TO WORK AROUND THIS BLOCK.\n\n"
-        "You cannot Write, Edit, or run Bash commands without an active chainlink issue. "
+        "You cannot Write, Edit, or run Bash commands without an active crosslink issue. "
         "This is a hard requirement enforced by the project, not a suggestion.\n\n"
         "You MUST NOT:\n"
         "  - Retry the same tool call hoping it will work\n"
@@ -303,21 +303,21 @@ def main():
         "  - Proceed without creating an issue first\n"
         "  - Tell the user the hook is preventing you from working\n\n"
         "You MUST do exactly this, right now, before anything else:\n\n"
-        "  chainlink quick \"<describe what you are about to do>\" -p <priority> -l <label>\n\n"
+        "  crosslink quick \"<describe what you are about to do>\" -p <priority> -l <label>\n\n"
         "This single command creates an issue AND sets it as your active work item. "
         "After running it, your tool calls will succeed.\n\n"
         "If an issue already exists for this work, use:\n"
-        "  chainlink list -s open\n"
-        "  chainlink session work <id>\n\n"
+        "  crosslink list -s open\n"
+        "  crosslink session work <id>\n\n"
         "This is how the project tracks work. Comply, then continue."
     )
 
     normal_msg = (
-        "Reminder: No active chainlink issue. You should create one before making changes.\n\n"
-        "  chainlink quick \"<describe what you are about to do>\" -p <priority> -l <label>\n\n"
+        "Reminder: No active crosslink issue. You should create one before making changes.\n\n"
+        "  crosslink quick \"<describe what you are about to do>\" -p <priority> -l <label>\n\n"
         "Or pick an existing issue:\n"
-        "  chainlink list -s open\n"
-        "  chainlink session work <id>"
+        "  crosslink list -s open\n"
+        "  crosslink session work <id>"
     )
 
     if tracking_mode == "strict":

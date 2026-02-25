@@ -18,7 +18,7 @@ Examples of when to search:
    - NEVER write `TODO`, `FIXME`, `pass`, `...`, `unimplemented!()` as implementation
    - NEVER write empty function bodies or placeholder returns
    - NEVER say "implement later" or "add logic here"
-   - If logic is genuinely too complex for one turn, use `raise NotImplementedError("Descriptive reason: what needs to be done")` and create a chainlink issue
+   - If logic is genuinely too complex for one turn, use `raise NotImplementedError("Descriptive reason: what needs to be done")` and create a crosslink issue
    - The PostToolUse hook WILL detect and flag stub patterns - write real code the first time
 2. **NO DEAD CODE**: Discover if dead code is truly dead or if it's an incomplete feature. If incomplete, complete it. If truly dead, remove it.
 3. **FULL FEATURES**: Implement the complete feature as requested. Don't stop partway or suggest "you could add X later."
@@ -44,15 +44,15 @@ When writing code: write it. When making changes: make them. Skip the narration.
 
 ### Large File Management (500+ lines)
 If you need to write or modify code that will exceed 500 lines:
-1. Create a parent issue for the overall feature: `chainlink create "<feature name>" -p high`
-2. Break down into subissues: `chainlink subissue <parent_id> "<component 1>"`, etc.
+1. Create a parent issue for the overall feature: `crosslink create "<feature name>" -p high`
+2. Break down into subissues: `crosslink subissue <parent_id> "<component 1>"`, etc.
 3. Inform the user: "This implementation will require multiple files/components. I've created issue #X with Y subissues to track progress."
 4. Work on one subissue at a time, marking each complete before moving on.
 
 ### Context Window Management
 If the conversation is getting long OR the task requires many more steps:
-1. Create a chainlink issue to track remaining work: `chainlink create "Continue: <task summary>" -p high`
-2. Add detailed notes as a comment: `chainlink comment <id> "<what's done, what's next>"`
+1. Create a crosslink issue to track remaining work: `crosslink create "Continue: <task summary>" -p high`
+2. Add detailed notes as a comment: `crosslink comment <id> "<what's done, what's next>"`
 3. Inform the user: "This task will require additional turns. I've created issue #X to track progress."
 
-Use `chainlink session work <id>` to mark what you're working on.
+Use `crosslink session work <id>` to mark what you're working on.

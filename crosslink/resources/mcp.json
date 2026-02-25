@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "chainlink-safe-fetch": {
+    "crosslink-safe-fetch": {
       "command": "uv",
       "args": ["run", ".claude/mcp/safe-fetch-server.py"]
     }

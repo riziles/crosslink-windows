@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Machine-local agent identity. Lives at `.chainlink/agent.json`.
+/// Machine-local agent identity. Lives at `.crosslink/agent.json`.
 /// This file is gitignored — each machine has its own.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentConfig {
@@ -13,9 +13,9 @@ pub struct AgentConfig {
 }
 
 impl AgentConfig {
-    /// Load from the .chainlink directory. Returns None if agent.json doesn't exist.
-    pub fn load(chainlink_dir: &Path) -> Result<Option<Self>> {
-        let path = chainlink_dir.join("agent.json");
+    /// Load from the .crosslink directory. Returns None if agent.json doesn't exist.
+    pub fn load(crosslink_dir: &Path) -> Result<Option<Self>> {
+        let path = crosslink_dir.join("agent.json");
         if !path.exists() {
             return Ok(None);
         }
@@ -28,7 +28,7 @@ impl AgentConfig {
     }
 
     /// Create and write a new agent config.
-    pub fn init(chainlink_dir: &Path, agent_id: &str, description: Option<&str>) -> Result<Self> {
+    pub fn init(crosslink_dir: &Path, agent_id: &str, description: Option<&str>) -> Result<Self> {
         let machine_id = detect_hostname();
         let config = AgentConfig {
             agent_id: agent_id.to_string(),
@@ -36,7 +36,7 @@ impl AgentConfig {
             description: description.map(|s| s.to_string()),
         };
         config.validate()?;
-        let path = chainlink_dir.join("agent.json");
+        let path = crosslink_dir.join("agent.json");
         let json = serde_json::to_string_pretty(&config)?;
         std::fs::write(&path, json)
             .with_context(|| format!("Failed to write {}", path.display()))?;

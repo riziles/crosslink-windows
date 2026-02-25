@@ -12,9 +12,9 @@ use crate::db::Database;
 
 const FLUSH_INTERVAL_SECS: u64 = 30;
 
-pub fn start(chainlink_dir: &Path) -> Result<()> {
-    let pid_file = chainlink_dir.join("daemon.pid");
-    let log_file = chainlink_dir.join("daemon.log");
+pub fn start(crosslink_dir: &Path) -> Result<()> {
+    let pid_file = crosslink_dir.join("daemon.pid");
+    let log_file = crosslink_dir.join("daemon.log");
 
     // Check if daemon is already running
     if let Some(pid) = read_pid(&pid_file) {
@@ -38,7 +38,7 @@ pub fn start(chainlink_dir: &Path) -> Result<()> {
         .arg("daemon")
         .arg("run")
         .arg("--dir")
-        .arg(chainlink_dir)
+        .arg(crosslink_dir)
         .stdin(Stdio::null())
         .stdout(log_handle)
         .stderr(log_handle_err)
@@ -55,8 +55,8 @@ pub fn start(chainlink_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn stop(chainlink_dir: &Path) -> Result<()> {
-    let pid_file = chainlink_dir.join("daemon.pid");
+pub fn stop(crosslink_dir: &Path) -> Result<()> {
+    let pid_file = crosslink_dir.join("daemon.pid");
 
     let pid = match read_pid(&pid_file) {
         Some(p) => p,
@@ -82,8 +82,8 @@ pub fn stop(chainlink_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn status(chainlink_dir: &Path) -> Result<()> {
-    let pid_file = chainlink_dir.join("daemon.pid");
+pub fn status(crosslink_dir: &Path) -> Result<()> {
+    let pid_file = crosslink_dir.join("daemon.pid");
 
     match read_pid(&pid_file) {
         Some(pid) => {
@@ -100,20 +100,20 @@ pub fn status(chainlink_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_daemon(chainlink_dir: &Path) -> Result<()> {
-    // Validate that this is a legitimate chainlink directory
-    let db_path = chainlink_dir.join("issues.db");
+pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
+    // Validate that this is a legitimate crosslink directory
+    let db_path = crosslink_dir.join("issues.db");
     if !db_path.exists() {
         anyhow::bail!(
-            "Invalid chainlink directory: {} does not contain issues.db",
-            chainlink_dir.display()
+            "Invalid crosslink directory: {} does not contain issues.db",
+            crosslink_dir.display()
         );
     }
 
-    let session_file = chainlink_dir.join("session.json");
+    let session_file = crosslink_dir.join("session.json");
 
     println!("Daemon starting...");
-    println!("Watching: {}", chainlink_dir.display());
+    println!("Watching: {}", crosslink_dir.display());
     println!("Flush interval: {} seconds", FLUSH_INTERVAL_SECS);
 
     // Heartbeat counter: push every 5 cycles (5 * 30s = 2.5 min)
@@ -195,8 +195,8 @@ pub fn run_daemon(chainlink_dir: &Path) -> Result<()> {
         // Heartbeat: push agent heartbeat every N cycles
         heartbeat_counter += 1;
         if heartbeat_counter.is_multiple_of(HEARTBEAT_EVERY_N) {
-            if let Ok(Some(agent)) = crate::identity::AgentConfig::load(chainlink_dir) {
-                if let Ok(sync) = crate::sync::SyncManager::new(chainlink_dir) {
+            if let Ok(Some(agent)) = crate::identity::AgentConfig::load(crosslink_dir) {
+                if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
                     let _ = sync.init_cache();
                     match sync.push_heartbeat(&agent, active_issue_id) {
                         Ok(()) => println!(

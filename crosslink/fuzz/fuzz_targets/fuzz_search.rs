@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 use tempfile::tempdir;
 
-use chainlink::db::Database;
+use crosslink::db::Database;
 
 fuzz_target!(|query: String| {
     let dir = match tempdir() {

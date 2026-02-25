@@ -1,4 +1,4 @@
-//! Chainlink issue tracker library
+//! Crosslink issue tracker library
 //!
 //! This module exposes the core functionality for use in fuzzing and testing.
 

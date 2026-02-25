@@ -12,9 +12,9 @@ type Progress = Option<(i32, i32)>;
 type ScoredIssue = (Issue, i32, Progress);
 
 /// Best-effort load of lock state for filtering. Returns (LocksFile, my_agent_id) or None.
-fn load_locks_filter(chainlink_dir: &Path) -> Option<(LocksFile, String)> {
-    let agent = crate::identity::AgentConfig::load(chainlink_dir).ok()??;
-    let sync = crate::sync::SyncManager::new(chainlink_dir).ok()?;
+fn load_locks_filter(crosslink_dir: &Path) -> Option<(LocksFile, String)> {
+    let agent = crate::identity::AgentConfig::load(crosslink_dir).ok()??;
+    let sync = crate::sync::SyncManager::new(crosslink_dir).ok()?;
     let _ = sync.init_cache();
     let _ = sync.fetch();
     let locks = sync.read_locks().ok()?;
@@ -44,19 +44,19 @@ fn calculate_progress(db: &Database, issue: &Issue) -> Result<Progress> {
     Ok(Some((closed, total)))
 }
 
-pub fn run(db: &Database, chainlink_dir: &std::path::Path) -> Result<()> {
+pub fn run(db: &Database, crosslink_dir: &std::path::Path) -> Result<()> {
     let ready = db.list_ready_issues()?;
 
     if ready.is_empty() {
         println!("No issues ready to work on.");
         println!(
-            "Use 'chainlink list' to see all issues or 'chainlink blocked' to see blocked issues."
+            "Use 'crosslink list' to see all issues or 'crosslink blocked' to see blocked issues."
         );
         return Ok(());
     }
 
     // Load lock state for filtering (best-effort, non-blocking)
-    let locks_filter = load_locks_filter(chainlink_dir);
+    let locks_filter = load_locks_filter(crosslink_dir);
 
     // Score and sort issues
     let mut scored: Vec<ScoredIssue> = Vec::new();
@@ -121,7 +121,7 @@ pub fn run(db: &Database, chainlink_dir: &std::path::Path) -> Result<()> {
     }
 
     println!();
-    println!("Run: chainlink session work {}", top.id);
+    println!("Run: crosslink session work {}", top.id);
 
     // Show runners-up if any
     if scored.len() > 1 {

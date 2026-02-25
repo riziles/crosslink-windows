@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use db::Database;
 
 #[derive(Parser)]
-#[command(name = "chainlink")]
+#[command(name = "crosslink")]
 #[command(about = "A simple, lean issue tracker CLI")]
 #[command(version)]
 struct Cli {
@@ -34,7 +34,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize chainlink in the current directory
+    /// Initialize crosslink in the current directory
     Init {
         /// Force update hooks even if already initialized
         #[arg(short, long)]
@@ -489,24 +489,24 @@ enum LocksCommands {
     },
 }
 
-fn find_chainlink_dir() -> Result<PathBuf> {
+fn find_crosslink_dir() -> Result<PathBuf> {
     let mut current = env::current_dir()?;
 
     loop {
-        let candidate = current.join(".chainlink");
+        let candidate = current.join(".crosslink");
         if candidate.is_dir() {
             return Ok(candidate);
         }
 
         if !current.pop() {
-            bail!("Not a chainlink repository (or any parent). Run 'chainlink init' first.");
+            bail!("Not a crosslink repository (or any parent). Run 'crosslink init' first.");
         }
     }
 }
 
 fn get_db() -> Result<Database> {
-    let chainlink_dir = find_chainlink_dir()?;
-    let db_path = chainlink_dir.join("issues.db");
+    let crosslink_dir = find_crosslink_dir()?;
+    let db_path = crosslink_dir.join("issues.db");
     Database::open(&db_path).context("Failed to open database")
 }
 
@@ -528,12 +528,12 @@ fn main() -> Result<()> {
             work,
         } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work,
                 quiet: cli.quiet,
-                chainlink_dir: Some(&chainlink_dir),
+                crosslink_dir: Some(&crosslink_dir),
             };
             commands::create::run(
                 &db,
@@ -553,12 +553,12 @@ fn main() -> Result<()> {
             label,
         } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work: true,
                 quiet: cli.quiet,
-                chainlink_dir: Some(&chainlink_dir),
+                crosslink_dir: Some(&crosslink_dir),
             };
             commands::create::run(
                 &db,
@@ -579,12 +579,12 @@ fn main() -> Result<()> {
             work,
         } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work,
                 quiet: cli.quiet,
-                chainlink_dir: Some(&chainlink_dir),
+                crosslink_dir: Some(&crosslink_dir),
             };
             commands::create::run_subissue(
                 &db,
@@ -645,11 +645,11 @@ fn main() -> Result<()> {
 
         Commands::Close { id, no_changelog } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             if cli.quiet {
-                commands::status::close_quiet(&db, id, !no_changelog, &chainlink_dir)
+                commands::status::close_quiet(&db, id, !no_changelog, &crosslink_dir)
             } else {
-                commands::status::close(&db, id, !no_changelog, &chainlink_dir)
+                commands::status::close(&db, id, !no_changelog, &crosslink_dir)
             }
         }
 
@@ -659,13 +659,13 @@ fn main() -> Result<()> {
             no_changelog,
         } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             commands::status::close_all(
                 &db,
                 label.as_deref(),
                 priority.as_deref(),
                 !no_changelog,
-                &chainlink_dir,
+                &crosslink_dir,
             )
         }
 
@@ -731,8 +731,8 @@ fn main() -> Result<()> {
 
         Commands::Next => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
-            commands::next::run(&db, &chainlink_dir)
+            let crosslink_dir = find_crosslink_dir()?;
+            commands::next::run(&db, &crosslink_dir)
         }
 
         Commands::Tree { status } => {
@@ -756,8 +756,8 @@ fn main() -> Result<()> {
         }
 
         Commands::Tested => {
-            let chainlink_dir = find_chainlink_dir()?;
-            commands::tested::run(&chainlink_dir)
+            let crosslink_dir = find_crosslink_dir()?;
+            commands::tested::run(&crosslink_dir)
         }
 
         Commands::Export { output, format } => {
@@ -806,12 +806,12 @@ fn main() -> Result<()> {
 
         Commands::Session { action } => {
             let db = get_db()?;
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             match action {
-                SessionCommands::Start => commands::session::start(&db, &chainlink_dir),
+                SessionCommands::Start => commands::session::start(&db, &crosslink_dir),
                 SessionCommands::End { notes } => commands::session::end(&db, notes.as_deref()),
                 SessionCommands::Status => commands::session::status(&db),
-                SessionCommands::Work { id } => commands::session::work(&db, id, &chainlink_dir),
+                SessionCommands::Work { id } => commands::session::work(&db, id, &crosslink_dir),
                 SessionCommands::LastHandoff => commands::session::last_handoff(&db),
                 SessionCommands::Action { text } => commands::session::action(&db, &text),
             }
@@ -819,16 +819,16 @@ fn main() -> Result<()> {
 
         Commands::Daemon { action } => match action {
             DaemonCommands::Start => {
-                let chainlink_dir = find_chainlink_dir()?;
-                daemon::start(&chainlink_dir)
+                let crosslink_dir = find_crosslink_dir()?;
+                daemon::start(&crosslink_dir)
             }
             DaemonCommands::Stop => {
-                let chainlink_dir = find_chainlink_dir()?;
-                daemon::stop(&chainlink_dir)
+                let crosslink_dir = find_crosslink_dir()?;
+                daemon::stop(&crosslink_dir)
             }
             DaemonCommands::Status => {
-                let chainlink_dir = find_chainlink_dir()?;
-                daemon::status(&chainlink_dir)
+                let crosslink_dir = find_crosslink_dir()?;
+                daemon::status(&crosslink_dir)
             }
             DaemonCommands::Run { dir } => daemon::run_daemon(&dir),
         },
@@ -848,32 +848,32 @@ fn main() -> Result<()> {
         }
 
         Commands::Agent { action } => {
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             match action {
                 AgentCommands::Init {
                     agent_id,
                     description,
-                } => commands::agent::init(&chainlink_dir, &agent_id, description.as_deref()),
-                AgentCommands::Status => commands::agent::status(&chainlink_dir),
+                } => commands::agent::init(&crosslink_dir, &agent_id, description.as_deref()),
+                AgentCommands::Status => commands::agent::status(&crosslink_dir),
             }
         }
 
         Commands::Locks { action } => {
-            let chainlink_dir = find_chainlink_dir()?;
+            let crosslink_dir = find_crosslink_dir()?;
             let db = get_db()?;
             match action {
                 LocksCommands::List => {
-                    commands::locks_cmd::list(&chainlink_dir, &db, cli.json)
+                    commands::locks_cmd::list(&crosslink_dir, &db, cli.json)
                 }
                 LocksCommands::Check { id } => {
-                    commands::locks_cmd::check(&chainlink_dir, id)
+                    commands::locks_cmd::check(&crosslink_dir, id)
                 }
             }
         }
 
         Commands::Sync => {
-            let chainlink_dir = find_chainlink_dir()?;
-            commands::locks_cmd::sync_cmd(&chainlink_dir)
+            let crosslink_dir = find_crosslink_dir()?;
+            commands::locks_cmd::sync_cmd(&crosslink_dir)
         }
     }
 }

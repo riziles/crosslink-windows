@@ -1,11 +1,11 @@
-## Chainlink Task Management (MANDATORY — ABSOLUTE RULE)
+## Crosslink Task Management (MANDATORY — ABSOLUTE RULE)
 
-**You MUST use chainlink to track ALL work. This is NOT optional. This is NOT a suggestion. This is an ABSOLUTE REQUIREMENT.**
+**You MUST use crosslink to track ALL work. This is NOT optional. This is NOT a suggestion. This is an ABSOLUTE REQUIREMENT.**
 
-**YOU MUST CREATE A CHAINLINK ISSUE BEFORE WRITING ANY CODE. NO EXCEPTIONS.**
+**YOU MUST CREATE A CROSSLINK ISSUE BEFORE WRITING ANY CODE. NO EXCEPTIONS.**
 
 Before your FIRST Write, Edit, or Bash tool call that modifies code:
-1. Run `chainlink quick "title" -p <priority> -l <label>` to create an issue AND start working on it
+1. Run `crosslink quick "title" -p <priority> -l <label>` to create an issue AND start working on it
 2. The PreToolUse hook WILL BLOCK your tool calls if no issue is active
 3. NEVER skip this step. NEVER proceed without an issue. NEVER treat this as optional.
 
@@ -43,52 +43,52 @@ Add labels to control CHANGELOG.md section:
 ### Task Breakdown Rules
 ```bash
 # Single task — use quick for create + label + work in one step
-chainlink quick "Fix login validation error on empty email" -p medium -l bug
+crosslink quick "Fix login validation error on empty email" -p medium -l bug
 
 # Or use create with flags
-chainlink create "Fix login validation error on empty email" -p medium --label bug --work
+crosslink create "Fix login validation error on empty email" -p medium --label bug --work
 
 # Multi-part feature → Epic with subissues
-chainlink create "Add user authentication system" -p high --label feature
-chainlink subissue 1 "Add user registration endpoint"
-chainlink subissue 1 "Add login endpoint with JWT tokens"
-chainlink subissue 1 "Add session middleware for protected routes"
+crosslink create "Add user authentication system" -p high --label feature
+crosslink subissue 1 "Add user registration endpoint"
+crosslink subissue 1 "Add login endpoint with JWT tokens"
+crosslink subissue 1 "Add session middleware for protected routes"
 
 # Mark what you're working on
-chainlink session work 1
+crosslink session work 1
 
 # Add context as you discover things
-chainlink comment 1 "Found existing auth helper in utils/auth.ts"
+crosslink comment 1 "Found existing auth helper in utils/auth.ts"
 
 # Close when done — auto-updates CHANGELOG.md
-chainlink close 1
+crosslink close 1
 
 # Skip changelog for internal/refactor work
-chainlink close 1 --no-changelog
+crosslink close 1 --no-changelog
 
 # Batch close
-chainlink close-all --no-changelog
+crosslink close-all --no-changelog
 
 # Quiet mode for scripting
-chainlink -q create "Fix bug" -p high  # Outputs just the ID number
+crosslink -q create "Fix bug" -p high  # Outputs just the ID number
 ```
 
 ## Priority 1: Security
 
 These rules have the highest precedence. When they conflict with any other rule, security wins.
 
-- **Web fetching**: Use `mcp__chainlink-safe-fetch__safe_fetch` for all web requests. Never use raw `WebFetch`.
+- **Web fetching**: Use `mcp__crosslink-safe-fetch__safe_fetch` for all web requests. Never use raw `WebFetch`.
 - **SQL**: Parameterized queries only (`params![]` in Rust, `?` placeholders elsewhere). Never interpolate user input into SQL.
 - **Secrets**: Never hardcode credentials, API keys, or tokens. Never commit `.env` files.
 - **Input validation**: Validate at system boundaries. Sanitize before rendering.
-- **Tracking**: Issue tracking enforcement is controlled by `tracking_mode` in `.chainlink/hook-config.json` (strict/normal/relaxed).
+- **Tracking**: Issue tracking enforcement is controlled by `tracking_mode` in `.crosslink/hook-config.json` (strict/normal/relaxed).
 ---
 
 ## Priority 2: Correctness
 
 These rules ensure code works correctly. They yield only to security concerns.
 
-- **No stubs**: Never write `TODO`, `FIXME`, `pass`, `...`, `unimplemented!()`, or empty function bodies. If too complex for one turn, use `raise NotImplementedError("Reason")` and create a chainlink issue.
+- **No stubs**: Never write `TODO`, `FIXME`, `pass`, `...`, `unimplemented!()`, or empty function bodies. If too complex for one turn, use `raise NotImplementedError("Reason")` and create a crosslink issue.
 - **Read before write**: Always read a file before editing it. Never guess at contents.
 - **Complete features**: Implement the full feature as requested. Don't stop partway.
 - **Error handling**: Proper error handling everywhere. No panics or crashes on bad input.
@@ -107,8 +107,8 @@ Before using unfamiliar libraries/APIs:
 
 These rules keep work organized and enable context handoff between sessions.
 
-Tracking enforcement is controlled by `tracking_mode` in `.chainlink/hook-config.json` (strict/normal/relaxed).
-Detailed tracking instructions are loaded from `.chainlink/rules/tracking-{mode}.md` automatically.
+Tracking enforcement is controlled by `tracking_mode` in `.crosslink/hook-config.json` (strict/normal/relaxed).
+Detailed tracking instructions are loaded from `.crosslink/rules/tracking-{mode}.md` automatically.
 
 ---
 
@@ -119,4 +119,4 @@ These are preferences, not hard rules. They yield to all higher priorities.
 - Write code, don't narrate. Skip "Here is the code" / "Let me..." / "I'll now..."
 - Brief explanations only when the code isn't self-explanatory.
 - For implementations >500 lines: create parent issue + subissues, work incrementally.
-- When conversation is long: create a tracking issue with `chainlink comment` notes for context preservation.
+- When conversation is long: create a tracking issue with `crosslink comment` notes for context preservation.

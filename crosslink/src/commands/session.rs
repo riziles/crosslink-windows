@@ -3,7 +3,7 @@ use chrono::Utc;
 
 use crate::db::Database;
 
-pub fn start(db: &Database, chainlink_dir: &std::path::Path) -> Result<()> {
+pub fn start(db: &Database, crosslink_dir: &std::path::Path) -> Result<()> {
     // Check if there's already an active session
     if let Some(current) = db.get_current_session()? {
         println!(
@@ -31,7 +31,7 @@ pub fn start(db: &Database, chainlink_dir: &std::path::Path) -> Result<()> {
     }
 
     // Load agent identity (best-effort)
-    let agent_id = crate::identity::AgentConfig::load(chainlink_dir)
+    let agent_id = crate::identity::AgentConfig::load(crosslink_dir)
         .ok()
         .flatten()
         .map(|a| a.agent_id);
@@ -62,7 +62,7 @@ pub fn status(db: &Database) -> Result<()> {
     let session = match db.get_current_session()? {
         Some(s) => s,
         None => {
-            println!("No active session. Use 'chainlink session start' to begin.");
+            println!("No active session. Use 'crosslink session start' to begin.");
             return Ok(());
         }
     };
@@ -94,10 +94,10 @@ pub fn status(db: &Database) -> Result<()> {
     Ok(())
 }
 
-pub fn work(db: &Database, issue_id: i64, chainlink_dir: &std::path::Path) -> Result<()> {
+pub fn work(db: &Database, issue_id: i64, crosslink_dir: &std::path::Path) -> Result<()> {
     let session = match db.get_current_session()? {
         Some(s) => s,
-        None => bail!("No active session. Use 'chainlink session start' first."),
+        None => bail!("No active session. Use 'crosslink session start' first."),
     };
 
     let issue = match db.get_issue(issue_id)? {
@@ -106,7 +106,7 @@ pub fn work(db: &Database, issue_id: i64, chainlink_dir: &std::path::Path) -> Re
     };
 
     // Check lock status before allowing work
-    crate::lock_check::enforce_lock(chainlink_dir, issue_id)?;
+    crate::lock_check::enforce_lock(crosslink_dir, issue_id)?;
 
     db.set_session_issue(session.id, issue_id)?;
     println!("Now working on: #{} {}", issue.id, issue.title);
@@ -116,7 +116,7 @@ pub fn work(db: &Database, issue_id: i64, chainlink_dir: &std::path::Path) -> Re
 pub fn action(db: &Database, text: &str) -> Result<()> {
     let session = match db.get_current_session()? {
         Some(s) => s,
-        None => bail!("No active session. Use 'chainlink session start' first."),
+        None => bail!("No active session. Use 'crosslink session start' first."),
     };
 
     db.set_session_action(session.id, text)?;

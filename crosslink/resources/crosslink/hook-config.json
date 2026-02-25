@@ -10,7 +10,7 @@
     "git commit"
   ],
   "allowed_bash_prefixes": [
-    "chainlink ",
+    "crosslink ",
     "git status", "git diff", "git log", "git branch", "git show",
     "cargo test", "cargo build", "cargo check", "cargo clippy", "cargo fmt",
     "npm test", "npm run", "npx ",

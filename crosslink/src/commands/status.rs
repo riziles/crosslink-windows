@@ -4,24 +4,24 @@ use std::path::Path;
 
 use crate::db::Database;
 
-pub fn close(db: &Database, id: i64, update_changelog: bool, chainlink_dir: &Path) -> Result<()> {
-    close_inner(db, id, update_changelog, chainlink_dir, false)
+pub fn close(db: &Database, id: i64, update_changelog: bool, crosslink_dir: &Path) -> Result<()> {
+    close_inner(db, id, update_changelog, crosslink_dir, false)
 }
 
 pub fn close_quiet(
     db: &Database,
     id: i64,
     update_changelog: bool,
-    chainlink_dir: &Path,
+    crosslink_dir: &Path,
 ) -> Result<()> {
-    close_inner(db, id, update_changelog, chainlink_dir, true)
+    close_inner(db, id, update_changelog, crosslink_dir, true)
 }
 
 fn close_inner(
     db: &Database,
     id: i64,
     update_changelog: bool,
-    chainlink_dir: &Path,
+    crosslink_dir: &Path,
     quiet: bool,
 ) -> Result<()> {
     // Get issue details before closing
@@ -42,7 +42,7 @@ fn close_inner(
 
     // Update changelog if requested
     if update_changelog {
-        let project_root = chainlink_dir.parent().unwrap_or(chainlink_dir);
+        let project_root = crosslink_dir.parent().unwrap_or(crosslink_dir);
         let changelog_path = project_root.join("CHANGELOG.md");
 
         // Create CHANGELOG.md if it doesn't exist
@@ -151,7 +151,7 @@ pub fn close_all(
     label_filter: Option<&str>,
     priority_filter: Option<&str>,
     update_changelog: bool,
-    chainlink_dir: &Path,
+    crosslink_dir: &Path,
 ) -> Result<()> {
     let issues = db.list_issues(Some("open"), label_filter, priority_filter)?;
 
@@ -162,7 +162,7 @@ pub fn close_all(
 
     let mut closed_count = 0;
     for issue in &issues {
-        match close(db, issue.id, update_changelog, chainlink_dir) {
+        match close(db, issue.id, update_changelog, crosslink_dir) {
             Ok(()) => closed_count += 1,
             Err(e) => eprintln!("Warning: Failed to close #{}: {}", issue.id, e),
         }
@@ -199,12 +199,12 @@ mod tests {
     #[test]
     fn test_close_existing_issue() {
         let (db, _dir) = setup_test_db();
-        let chainlink_dir = _dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = _dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
 
-        let result = close(&db, issue_id, false, &chainlink_dir);
+        let result = close(&db, issue_id, false, &crosslink_dir);
         assert!(result.is_ok());
 
         let issue = db.get_issue(issue_id).unwrap().unwrap();
@@ -215,10 +215,10 @@ mod tests {
     #[test]
     fn test_close_nonexistent_issue() {
         let (db, _dir) = setup_test_db();
-        let chainlink_dir = _dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = _dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let result = close(&db, 99999, false, &chainlink_dir);
+        let result = close(&db, 99999, false, &crosslink_dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -226,14 +226,14 @@ mod tests {
     #[test]
     fn test_close_already_closed_issue() {
         let (db, _dir) = setup_test_db();
-        let chainlink_dir = _dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = _dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
         db.close_issue(issue_id).unwrap();
 
         // Closing again should be fine (idempotent at db level)
-        let result = close(&db, issue_id, false, &chainlink_dir);
+        let result = close(&db, issue_id, false, &crosslink_dir);
         assert!(result.is_ok());
     }
 
@@ -361,13 +361,13 @@ mod tests {
     #[test]
     fn test_close_reopen_cycle() {
         let (db, _dir) = setup_test_db();
-        let chainlink_dir = _dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = _dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
 
         // Close
-        close(&db, issue_id, false, &chainlink_dir).unwrap();
+        close(&db, issue_id, false, &crosslink_dir).unwrap();
         let issue = db.get_issue(issue_id).unwrap().unwrap();
         assert_eq!(issue.status, "closed");
 
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(issue.status, "open");
 
         // Close again
-        close(&db, issue_id, false, &chainlink_dir).unwrap();
+        close(&db, issue_id, false, &crosslink_dir).unwrap();
         let issue = db.get_issue(issue_id).unwrap().unwrap();
         assert_eq!(issue.status, "closed");
     }
@@ -388,11 +388,11 @@ mod tests {
         #[test]
         fn prop_close_sets_status_to_closed(title in "[a-zA-Z0-9 ]{1,50}") {
             let (db, _dir) = setup_test_db();
-            let chainlink_dir = _dir.path().join(".chainlink");
-            std::fs::create_dir_all(&chainlink_dir).unwrap();
+            let crosslink_dir = _dir.path().join(".crosslink");
+            std::fs::create_dir_all(&crosslink_dir).unwrap();
 
             let issue_id = db.create_issue(&title, None, "medium").unwrap();
-            close(&db, issue_id, false, &chainlink_dir).unwrap();
+            close(&db, issue_id, false, &crosslink_dir).unwrap();
 
             let issue = db.get_issue(issue_id).unwrap().unwrap();
             prop_assert_eq!(issue.status, "closed");
@@ -414,10 +414,10 @@ mod tests {
         #[test]
         fn prop_nonexistent_issue_close_fails(issue_id in 1000i64..10000) {
             let (db, _dir) = setup_test_db();
-            let chainlink_dir = _dir.path().join(".chainlink");
-            std::fs::create_dir_all(&chainlink_dir).unwrap();
+            let crosslink_dir = _dir.path().join(".crosslink");
+            std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-            let result = close(&db, issue_id, false, &chainlink_dir);
+            let result = close(&db, issue_id, false, &crosslink_dir);
             prop_assert!(result.is_err());
         }
 

@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 use tempfile::tempdir;
 use std::io::Write;
 
-use chainlink::db::Database;
+use crosslink::db::Database;
 
 fuzz_target!(|data: &[u8]| {
     let dir = match tempdir() {

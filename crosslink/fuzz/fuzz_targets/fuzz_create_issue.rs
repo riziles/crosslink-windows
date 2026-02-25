@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use tempfile::tempdir;
 
-use chainlink::db::Database;
+use crosslink::db::Database;
 
 #[derive(Arbitrary, Debug)]
 struct CreateIssueInput {

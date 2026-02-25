@@ -77,7 +77,7 @@ pub struct CreateOpts<'a> {
     pub work: bool,
     pub quiet: bool,
     /// If set, lock enforcement is checked when --work is used.
-    pub chainlink_dir: Option<&'a std::path::Path>,
+    pub crosslink_dir: Option<&'a std::path::Path>,
 }
 
 pub fn run(
@@ -153,7 +153,7 @@ pub fn run(
     // Set as active session work item
     if opts.work {
         // Check lock status before allowing work on this issue
-        if let Some(dir) = opts.chainlink_dir {
+        if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id)?;
         }
         if let Ok(Some(session)) = db.get_current_session() {
@@ -207,7 +207,7 @@ pub fn run_subissue(
     // Set as active session work item
     if opts.work {
         // Check lock status before allowing work on this issue
-        if let Some(dir) = opts.chainlink_dir {
+        if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id)?;
         }
         if let Ok(Some(session)) = db.get_current_session() {

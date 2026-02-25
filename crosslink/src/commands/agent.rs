@@ -3,12 +3,12 @@ use std::path::Path;
 
 use crate::identity::AgentConfig;
 
-/// `chainlink agent init <agent-id> [-d "description"]`
-pub fn init(chainlink_dir: &Path, agent_id: &str, description: Option<&str>) -> Result<()> {
-    if AgentConfig::load(chainlink_dir)?.is_some() {
-        bail!("Agent already configured. Delete .chainlink/agent.json to reconfigure.");
+/// `crosslink agent init <agent-id> [-d "description"]`
+pub fn init(crosslink_dir: &Path, agent_id: &str, description: Option<&str>) -> Result<()> {
+    if AgentConfig::load(crosslink_dir)?.is_some() {
+        bail!("Agent already configured. Delete .crosslink/agent.json to reconfigure.");
     }
-    let config = AgentConfig::init(chainlink_dir, agent_id, description)?;
+    let config = AgentConfig::init(crosslink_dir, agent_id, description)?;
     println!("Agent initialized:");
     println!("  ID:      {}", config.agent_id);
     println!("  Machine: {}", config.machine_id);
@@ -18,9 +18,9 @@ pub fn init(chainlink_dir: &Path, agent_id: &str, description: Option<&str>) -> 
     Ok(())
 }
 
-/// `chainlink agent status`
-pub fn status(chainlink_dir: &Path) -> Result<()> {
-    match AgentConfig::load(chainlink_dir)? {
+/// `crosslink agent status`
+pub fn status(crosslink_dir: &Path) -> Result<()> {
+    match AgentConfig::load(crosslink_dir)? {
         Some(config) => {
             println!("Agent: {}", config.agent_id);
             println!("Machine: {}", config.machine_id);
@@ -29,7 +29,7 @@ pub fn status(chainlink_dir: &Path) -> Result<()> {
             }
 
             // Show locked issues (best-effort)
-            if let Ok(sync) = crate::sync::SyncManager::new(chainlink_dir) {
+            if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
                 let _ = sync.init_cache();
                 let _ = sync.fetch();
                 if let Ok(locks) = sync.read_locks() {
@@ -50,7 +50,7 @@ pub fn status(chainlink_dir: &Path) -> Result<()> {
             }
         }
         None => {
-            println!("No agent configured. Run 'chainlink agent init <id>' first.");
+            println!("No agent configured. Run 'crosslink agent init <id>' first.");
         }
     }
     Ok(())
@@ -64,12 +64,12 @@ mod tests {
     #[test]
     fn test_init_creates_config() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        init(&chainlink_dir, "worker-1", Some("Test agent")).unwrap();
+        init(&crosslink_dir, "worker-1", Some("Test agent")).unwrap();
 
-        let config = AgentConfig::load(&chainlink_dir).unwrap().unwrap();
+        let config = AgentConfig::load(&crosslink_dir).unwrap().unwrap();
         assert_eq!(config.agent_id, "worker-1");
         assert_eq!(config.description, Some("Test agent".to_string()));
     }
@@ -77,11 +77,11 @@ mod tests {
     #[test]
     fn test_init_rejects_duplicate() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        init(&chainlink_dir, "worker-1", None).unwrap();
-        let result = init(&chainlink_dir, "worker-2", None);
+        init(&crosslink_dir, "worker-1", None).unwrap();
+        let result = init(&crosslink_dir, "worker-2", None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already configured"));
     }
@@ -89,20 +89,20 @@ mod tests {
     #[test]
     fn test_status_no_config() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
         // Should not error, just print message
-        status(&chainlink_dir).unwrap();
+        status(&crosslink_dir).unwrap();
     }
 
     #[test]
     fn test_status_with_config() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        init(&chainlink_dir, "my-agent", Some("My agent")).unwrap();
-        status(&chainlink_dir).unwrap();
+        init(&crosslink_dir, "my-agent", Some("My agent")).unwrap();
+        status(&crosslink_dir).unwrap();
     }
 }

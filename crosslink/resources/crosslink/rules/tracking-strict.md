@@ -1,11 +1,11 @@
-## Chainlink Task Management (MANDATORY — ABSOLUTE RULE)
+## Crosslink Task Management (MANDATORY — ABSOLUTE RULE)
 
-**You MUST use chainlink to track ALL work. This is NOT optional. This is NOT a suggestion. This is an ABSOLUTE REQUIREMENT.**
+**You MUST use crosslink to track ALL work. This is NOT optional. This is NOT a suggestion. This is an ABSOLUTE REQUIREMENT.**
 
-**YOU MUST CREATE A CHAINLINK ISSUE BEFORE WRITING ANY CODE. NO EXCEPTIONS.**
+**YOU MUST CREATE A CROSSLINK ISSUE BEFORE WRITING ANY CODE. NO EXCEPTIONS.**
 
 Before your FIRST Write, Edit, or Bash tool call that modifies code:
-1. Run `chainlink quick "title" -p <priority> -l <label>` to create an issue AND start working on it
+1. Run `crosslink quick "title" -p <priority> -l <label>` to create an issue AND start working on it
 2. The PreToolUse hook WILL BLOCK your tool calls if no issue is active
 3. NEVER skip this step. NEVER proceed without an issue. NEVER treat this as optional.
 
@@ -43,34 +43,34 @@ Add labels to control CHANGELOG.md section:
 ### Task Breakdown Rules
 ```bash
 # Single task — use quick for create + label + work in one step
-chainlink quick "Fix login validation error on empty email" -p medium -l bug
+crosslink quick "Fix login validation error on empty email" -p medium -l bug
 
 # Or use create with flags
-chainlink create "Fix login validation error on empty email" -p medium --label bug --work
+crosslink create "Fix login validation error on empty email" -p medium --label bug --work
 
 # Multi-part feature → Epic with subissues
-chainlink create "Add user authentication system" -p high --label feature
-chainlink subissue 1 "Add user registration endpoint"
-chainlink subissue 1 "Add login endpoint with JWT tokens"
-chainlink subissue 1 "Add session middleware for protected routes"
+crosslink create "Add user authentication system" -p high --label feature
+crosslink subissue 1 "Add user registration endpoint"
+crosslink subissue 1 "Add login endpoint with JWT tokens"
+crosslink subissue 1 "Add session middleware for protected routes"
 
 # Mark what you're working on
-chainlink session work 1
+crosslink session work 1
 
 # Add context as you discover things
-chainlink comment 1 "Found existing auth helper in utils/auth.ts"
+crosslink comment 1 "Found existing auth helper in utils/auth.ts"
 
 # Close when done — auto-updates CHANGELOG.md
-chainlink close 1
+crosslink close 1
 
 # Skip changelog for internal/refactor work
-chainlink close 1 --no-changelog
+crosslink close 1 --no-changelog
 
 # Batch close
-chainlink close-all --no-changelog
+crosslink close-all --no-changelog
 
 # Quiet mode for scripting
-chainlink -q create "Fix bug" -p high  # Outputs just the ID number
+crosslink -q create "Fix bug" -p high  # Outputs just the ID number
 ```
 
 ### Memory-Driven Planning (CRITICAL)
@@ -78,20 +78,20 @@ chainlink -q create "Fix bug" -p high  # Outputs just the ID number
 Your auto-memory directory (`~/.claude/projects/.../memory/`) contains plans, architecture notes, and context from prior sessions. **You MUST consult memory before creating issues.**
 
 1. **Read memory first**: At session start, read `MEMORY.md` and any linked topic files. These contain the current plan of record.
-2. **Translate plans to issues**: Break memory plans into small, concrete chainlink issues/epics/subissues. Each subissue should be completable in a single focused session.
+2. **Translate plans to issues**: Break memory plans into small, concrete crosslink issues/epics/subissues. Each subissue should be completable in a single focused session.
 3. **Verbose comments are mandatory**: When creating issues from a memory plan, add comments that quote or reference the specific plan section, rationale, and acceptance criteria so any new agent instance can pick up the work without re-reading memory.
 4. **Stay on track**: Before starting new work, check if it aligns with the plan in memory. If the user's request diverges from the plan, update memory AND issues together — never let them drift apart.
 5. **Close the loop**: When closing an issue, update memory to reflect what was completed and what changed from the original plan.
 
 ```bash
 # Example: translating a memory plan into tracked work
-chainlink create "Implement webhook retry system" -p high --label feature
-chainlink comment 1 "Per memory/architecture.md: retry with exponential backoff, max 5 attempts, dead-letter queue after exhaustion. See 'Webhook Reliability' section."
-chainlink subissue 1 "Add retry queue with exponential backoff (max 5 attempts)"
-chainlink comment 2 "Backoff schedule: 1s, 5s, 25s, 125s, 625s. Store attempt count in webhook_deliveries table."
-chainlink subissue 1 "Add dead-letter queue for exhausted retries"
-chainlink comment 3 "Failed webhooks go to dead_letter_webhooks table with full payload + error history for manual inspection."
-chainlink subissue 1 "Add webhook delivery dashboard endpoint"
+crosslink create "Implement webhook retry system" -p high --label feature
+crosslink comment 1 "Per memory/architecture.md: retry with exponential backoff, max 5 attempts, dead-letter queue after exhaustion. See 'Webhook Reliability' section."
+crosslink subissue 1 "Add retry queue with exponential backoff (max 5 attempts)"
+crosslink comment 2 "Backoff schedule: 1s, 5s, 25s, 125s, 625s. Store attempt count in webhook_deliveries table."
+crosslink subissue 1 "Add dead-letter queue for exhausted retries"
+crosslink comment 3 "Failed webhooks go to dead_letter_webhooks table with full payload + error history for manual inspection."
+crosslink subissue 1 "Add webhook delivery dashboard endpoint"
 ```
 
 ### When to Create Issues
@@ -109,11 +109,11 @@ chainlink subissue 1 "Add webhook delivery dashboard endpoint"
 Sessions are auto-started by the SessionStart hook. **You MUST end sessions properly.**
 
 ```bash
-chainlink session work <id>          # Mark current focus — ALWAYS
-chainlink session end --notes "..."  # REQUIRED before stopping — ALWAYS
+crosslink session work <id>          # Mark current focus — ALWAYS
+crosslink session end --notes "..."  # REQUIRED before stopping — ALWAYS
 ```
 
-**You MUST run `chainlink session end --notes "..."` when:**
+**You MUST run `crosslink session end --notes "..."` when:**
 - Context is getting long (conversation > 30-40 messages)
 - User says goodbye, done, thanks, or indicates stopping
 - Before any natural stopping point
@@ -132,16 +132,16 @@ chainlink session end --notes "..."  # REQUIRED before stopping — ALWAYS
 
 ### Dependencies
 ```bash
-chainlink block 2 1     # Issue 2 blocked by issue 1
-chainlink ready         # Show unblocked work
+crosslink block 2 1     # Issue 2 blocked by issue 1
+crosslink ready         # Show unblocked work
 ```
 
 ### Large Implementations (500+ lines)
-1. Create parent issue: `chainlink create "<feature>" -p high`
-2. Break into subissues: `chainlink subissue <id> "<component>"`
+1. Create parent issue: `crosslink create "<feature>" -p high`
+2. Break into subissues: `crosslink subissue <id> "<component>"`
 3. Work one subissue at a time, close each when done
 
 ### Context Window Management
 When conversation is long or task needs many steps:
-1. Create tracking issue: `chainlink create "Continue: <summary>" -p high`
-2. Add notes: `chainlink comment <id> "<what's done, what's next>"`
+1. Create tracking issue: `crosslink create "Continue: <summary>" -p high`
+2. Add notes: `crosslink comment <id> "<what's done, what's next>"`

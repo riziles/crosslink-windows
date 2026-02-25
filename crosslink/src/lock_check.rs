@@ -22,15 +22,15 @@ pub enum LockStatus {
 /// Returns `LockStatus` without blocking — callers decide how to handle.
 /// Gracefully degrades: if agent config is missing, sync fails, or we're
 /// offline, returns `NotConfigured` so single-agent usage is unaffected.
-pub fn check_lock(chainlink_dir: &Path, issue_id: i64) -> Result<LockStatus> {
+pub fn check_lock(crosslink_dir: &Path, issue_id: i64) -> Result<LockStatus> {
     // If no agent config, we're in single-agent mode — no lock checking
-    let agent = match AgentConfig::load(chainlink_dir)? {
+    let agent = match AgentConfig::load(crosslink_dir)? {
         Some(a) => a,
         None => return Ok(LockStatus::NotConfigured),
     };
 
     // Try to create sync manager. If it fails, don't block.
-    let sync = match SyncManager::new(chainlink_dir) {
+    let sync = match SyncManager::new(crosslink_dir) {
         Ok(s) => s,
         Err(_) => return Ok(LockStatus::NotConfigured),
     };
@@ -74,8 +74,8 @@ pub fn check_lock(chainlink_dir: &Path, issue_id: i64) -> Result<LockStatus> {
 /// Enforce lock check. Bails if another agent holds the lock (unless stale).
 ///
 /// Use this in commands that set the active work item (session work, create --work, quick).
-pub fn enforce_lock(chainlink_dir: &Path, issue_id: i64) -> Result<()> {
-    match check_lock(chainlink_dir, issue_id)? {
+pub fn enforce_lock(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
+    match check_lock(crosslink_dir, issue_id)? {
         LockStatus::NotConfigured | LockStatus::Available | LockStatus::LockedBySelf => Ok(()),
         LockStatus::LockedByOther { agent_id, stale } => {
             if stale {
@@ -87,7 +87,7 @@ pub fn enforce_lock(chainlink_dir: &Path, issue_id: i64) -> Result<()> {
             } else {
                 bail!(
                     "Issue #{} is locked by agent '{}'. \
-                     Use 'chainlink locks check {}' for details. \
+                     Use 'crosslink locks check {}' for details. \
                      Ask the human to release it or wait for the lock to expire.",
                     issue_id,
                     agent_id,
@@ -106,21 +106,21 @@ mod tests {
     #[test]
     fn test_no_agent_config_returns_not_configured() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
-        let status = check_lock(&chainlink_dir, 1).unwrap();
+        let status = check_lock(&crosslink_dir, 1).unwrap();
         assert_eq!(status, LockStatus::NotConfigured);
     }
 
     #[test]
     fn test_enforce_not_configured_allows() {
         let dir = tempdir().unwrap();
-        let chainlink_dir = dir.path().join(".chainlink");
-        std::fs::create_dir_all(&chainlink_dir).unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
 
         // No agent.json → NotConfigured → allowed
-        assert!(enforce_lock(&chainlink_dir, 1).is_ok());
+        assert!(enforce_lock(&crosslink_dir, 1).is_ok());
     }
 
     #[test]
