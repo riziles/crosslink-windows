@@ -206,8 +206,21 @@ def main():
         # chainlink not available — don't block
         sys.exit(0)
 
-    # If already working on an issue, allow
+    # If already working on an issue, check lock status (best-effort)
     if "Working on: #" in status:
+        if tracking_mode == "strict":
+            import re
+            match = re.search(r'Working on: #(\d+)', status)
+            if match:
+                issue_id = match.group(1)
+                lock_result = run_chainlink(["locks", "check", issue_id])
+                if lock_result and "locked by" in lock_result.lower() and "locked by you" not in lock_result.lower():
+                    print(
+                        f"Warning: Issue #{issue_id} may be locked by another agent.\n"
+                        f"Lock status: {lock_result}\n"
+                        "Use 'chainlink locks check " + issue_id + "' for details."
+                    )
+                    # Warn but don't block — lock check is best-effort
         sys.exit(0)
 
     # No active work item — behavior depends on mode

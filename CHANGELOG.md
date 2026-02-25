@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Multi-Agent Collaboration
+
+Distributed issue locking and agent coordination, ported from chainlink-enterprise.
+
+#### Agent Identity
+- `chainlink agent init <id>` — register a machine-local agent identity (stored in `.chainlink/agent.json`, gitignored)
+- `chainlink agent status` — show agent identity and currently held locks
+
+#### Distributed Locking
+- `chainlink locks list` — show all active issue locks with stale detection
+- `chainlink locks check <id>` — check if a specific issue is available or claimed
+- `chainlink sync` — fetch lock state from the `chainlink/locks` coordination branch, verify GPG signatures, display cache path and commit info
+
+#### Lock-Aware Workflows
+- `chainlink next` now skips issues locked by other agents
+- `chainlink session work <id>` enforces lock ownership before allowing work
+- `chainlink create --work` and `chainlink subissue --work` check locks before claiming
+- Session start records agent identity in the database (schema v8 to v9 migration)
+
+#### Daemon Heartbeat
+- Daemon pushes agent heartbeat every 2.5 minutes to the coordination branch
+- Stale lock detection based on heartbeat freshness
+
+#### Hook Enhancements
+- `session-start.py` runs `chainlink sync` and displays active locks on startup
+- `work-check.py` warns (in strict mode) when working on an issue locked by another agent
+
+#### Init Improvements
+- `chainlink init` now writes `.chainlink/.gitignore` to exclude machine-local files (`agent.json`, `.locks-cache/`)
+
 ### Claude 4.6 Opus Optimization Epic (#99)
 
 Comprehensive overhaul to make chainlink work seamlessly with Claude 4.6 Opus,

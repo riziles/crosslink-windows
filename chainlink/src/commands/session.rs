@@ -3,7 +3,7 @@ use chrono::Utc;
 
 use crate::db::Database;
 
-pub fn start(db: &Database) -> Result<()> {
+pub fn start(db: &Database, chainlink_dir: &std::path::Path) -> Result<()> {
     // Check if there's already an active session
     if let Some(current) = db.get_current_session()? {
         println!(
@@ -30,7 +30,16 @@ pub fn start(db: &Database) -> Result<()> {
         }
     }
 
-    let id = db.start_session()?;
+    // Load agent identity (best-effort)
+    let agent_id = crate::identity::AgentConfig::load(chainlink_dir)
+        .ok()
+        .flatten()
+        .map(|a| a.agent_id);
+
+    let id = match &agent_id {
+        Some(_) => db.start_session_with_agent(agent_id.as_deref())?,
+        None => db.start_session()?,
+    };
     println!("Session #{} started.", id);
     Ok(())
 }
@@ -85,7 +94,7 @@ pub fn status(db: &Database) -> Result<()> {
     Ok(())
 }
 
-pub fn work(db: &Database, issue_id: i64) -> Result<()> {
+pub fn work(db: &Database, issue_id: i64, chainlink_dir: &std::path::Path) -> Result<()> {
     let session = match db.get_current_session()? {
         Some(s) => s,
         None => bail!("No active session. Use 'chainlink session start' first."),
@@ -95,6 +104,9 @@ pub fn work(db: &Database, issue_id: i64) -> Result<()> {
         Some(i) => i,
         None => bail!("Issue #{} not found", issue_id),
     };
+
+    // Check lock status before allowing work
+    crate::lock_check::enforce_lock(chainlink_dir, issue_id)?;
 
     db.set_session_issue(session.id, issue_id)?;
     println!("Now working on: #{} {}", issue.id, issue.title);
@@ -155,7 +167,7 @@ mod tests {
     fn test_start_session() {
         let (db, _dir) = setup_test_db();
 
-        let result = start(&db);
+        let result = start(&db, _dir.path());
         assert!(result.is_ok());
 
         let session = db.get_current_session().unwrap();
@@ -166,11 +178,11 @@ mod tests {
     fn test_start_already_active() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         let first_session = db.get_current_session().unwrap().unwrap();
 
         // Starting again should not create new session
-        let result = start(&db);
+        let result = start(&db, _dir.path());
         assert!(result.is_ok());
 
         let current = db.get_current_session().unwrap().unwrap();
@@ -183,7 +195,7 @@ mod tests {
     fn test_end_session() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         let result = end(&db, None);
         assert!(result.is_ok());
 
@@ -195,7 +207,7 @@ mod tests {
     fn test_end_session_with_notes() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         let result = end(&db, Some("Completed auth feature"));
         assert!(result.is_ok());
 
@@ -232,18 +244,18 @@ mod tests {
     fn test_status_with_session() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         let result = status(&db);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_status_with_active_issue() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
-        start(&db).unwrap();
-        work(&db, issue_id).unwrap();
+        start(&db, dir.path()).unwrap();
+        work(&db, issue_id, dir.path()).unwrap();
 
         let result = status(&db);
         assert!(result.is_ok());
@@ -253,12 +265,12 @@ mod tests {
 
     #[test]
     fn test_work_sets_active_issue() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
-        start(&db).unwrap();
+        start(&db, dir.path()).unwrap();
 
-        let result = work(&db, issue_id);
+        let result = work(&db, issue_id, dir.path());
         assert!(result.is_ok());
 
         let session = db.get_current_session().unwrap().unwrap();
@@ -267,11 +279,11 @@ mod tests {
 
     #[test]
     fn test_work_no_session() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
         let issue_id = db.create_issue("Test issue", None, "medium").unwrap();
 
-        let result = work(&db, issue_id);
+        let result = work(&db, issue_id, dir.path());
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -281,28 +293,28 @@ mod tests {
 
     #[test]
     fn test_work_nonexistent_issue() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, dir.path()).unwrap();
 
-        let result = work(&db, 99999);
+        let result = work(&db, 99999, dir.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]
     fn test_work_change_active_issue() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
         let issue1 = db.create_issue("Issue 1", None, "medium").unwrap();
         let issue2 = db.create_issue("Issue 2", None, "medium").unwrap();
-        start(&db).unwrap();
+        start(&db, dir.path()).unwrap();
 
-        work(&db, issue1).unwrap();
+        work(&db, issue1, dir.path()).unwrap();
         let session = db.get_current_session().unwrap().unwrap();
         assert_eq!(session.active_issue_id, Some(issue1));
 
-        work(&db, issue2).unwrap();
+        work(&db, issue2, dir.path()).unwrap();
         let session = db.get_current_session().unwrap().unwrap();
         assert_eq!(session.active_issue_id, Some(issue2));
     }
@@ -322,7 +334,7 @@ mod tests {
     fn test_last_handoff_no_notes() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         end(&db, None).unwrap();
 
         let result = last_handoff(&db);
@@ -334,7 +346,7 @@ mod tests {
     fn test_last_handoff_with_notes() {
         let (db, _dir) = setup_test_db();
 
-        start(&db).unwrap();
+        start(&db, _dir.path()).unwrap();
         end(&db, Some("Important handoff notes")).unwrap();
 
         let result = last_handoff(&db);
@@ -351,15 +363,15 @@ mod tests {
 
     #[test]
     fn test_full_session_workflow() {
-        let (db, _dir) = setup_test_db();
+        let (db, dir) = setup_test_db();
 
         // Start session
-        start(&db).unwrap();
+        start(&db, dir.path()).unwrap();
         assert!(db.get_current_session().unwrap().is_some());
 
         // Create and work on issue
         let issue_id = db.create_issue("Feature", None, "high").unwrap();
-        work(&db, issue_id).unwrap();
+        work(&db, issue_id, dir.path()).unwrap();
 
         // Check status
         status(&db).unwrap();
@@ -369,7 +381,7 @@ mod tests {
         assert!(db.get_current_session().unwrap().is_none());
 
         // Start new session
-        start(&db).unwrap();
+        start(&db, dir.path()).unwrap();
         let last = db.get_last_session().unwrap().unwrap();
         assert_eq!(
             last.handoff_notes,
@@ -385,7 +397,7 @@ mod tests {
             let (db, _dir) = setup_test_db();
 
             for _ in 0..iterations {
-                start(&db).unwrap();
+                start(&db, _dir.path()).unwrap();
                 prop_assert!(db.get_current_session().unwrap().is_some());
                 end(&db, None).unwrap();
                 prop_assert!(db.get_current_session().unwrap().is_none());
@@ -396,7 +408,7 @@ mod tests {
         fn prop_handoff_notes_roundtrip(notes in "[a-zA-Z0-9 ]{0,100}") {
             let (db, _dir) = setup_test_db();
 
-            start(&db).unwrap();
+            start(&db, _dir.path()).unwrap();
             end(&db, Some(&notes)).unwrap();
 
             let last = db.get_last_session().unwrap().unwrap();
@@ -405,10 +417,10 @@ mod tests {
 
         #[test]
         fn prop_work_nonexistent_fails(issue_id in 1000i64..10000) {
-            let (db, _dir) = setup_test_db();
+            let (db, dir) = setup_test_db();
 
-            start(&db).unwrap();
-            let result = work(&db, issue_id);
+            start(&db, dir.path()).unwrap();
+            let result = work(&db, issue_id, dir.path());
             prop_assert!(result.is_err());
         }
     }

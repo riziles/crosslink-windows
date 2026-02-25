@@ -182,6 +182,16 @@ pub fn run(path: &Path, force: bool) -> Result<()> {
         fs::write(&config_path, HOOK_CONFIG_JSON).context("Failed to write hook-config.json")?;
     }
 
+    // Write .chainlink/.gitignore for multi-agent files
+    let chainlink_gitignore = chainlink_dir.join(".gitignore");
+    if !chainlink_gitignore.exists() || force {
+        fs::write(
+            &chainlink_gitignore,
+            "# Multi-agent collaboration (machine-local)\nagent.json\n.locks-cache/\n",
+        )
+        .context("Failed to write .chainlink/.gitignore")?;
+    }
+
     // Create or update rules directory
     let rules_exist = rules_dir.exists();
     if !rules_exist || force {

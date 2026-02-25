@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::models::{Comment, Issue, Session};
 
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 pub struct Database {
     conn: Connection,
@@ -189,6 +189,13 @@ impl Database {
                 let _ = self
                     .conn
                     .execute("ALTER TABLE sessions ADD COLUMN last_action TEXT", []);
+            }
+
+            // Migration v9: Add agent_id column to sessions table
+            if version < 9 {
+                let _ = self
+                    .conn
+                    .execute("ALTER TABLE sessions ADD COLUMN agent_id TEXT", []);
             }
 
             self.conn
@@ -550,10 +557,14 @@ impl Database {
 
     // Sessions
     pub fn start_session(&self) -> Result<i64> {
+        self.start_session_with_agent(None)
+    }
+
+    pub fn start_session_with_agent(&self, agent_id: Option<&str>) -> Result<i64> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO sessions (started_at) VALUES (?1)",
-            params![now],
+            "INSERT INTO sessions (started_at, agent_id) VALUES (?1, ?2)",
+            params![now, agent_id],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -569,7 +580,7 @@ impl Database {
 
     pub fn get_current_session(&self) -> Result<Option<Session>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, started_at, ended_at, active_issue_id, handoff_notes, last_action FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            "SELECT id, started_at, ended_at, active_issue_id, handoff_notes, last_action, agent_id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
         )?;
 
         let session = stmt
@@ -581,6 +592,7 @@ impl Database {
                     active_issue_id: row.get(3)?,
                     handoff_notes: row.get(4)?,
                     last_action: row.get(5)?,
+                    agent_id: row.get(6)?,
                 })
             })
             .ok();
@@ -590,7 +602,7 @@ impl Database {
 
     pub fn get_last_session(&self) -> Result<Option<Session>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, started_at, ended_at, active_issue_id, handoff_notes, last_action FROM sessions WHERE ended_at IS NOT NULL ORDER BY id DESC LIMIT 1",
+            "SELECT id, started_at, ended_at, active_issue_id, handoff_notes, last_action, agent_id FROM sessions WHERE ended_at IS NOT NULL ORDER BY id DESC LIMIT 1",
         )?;
 
         let session = stmt
@@ -602,6 +614,7 @@ impl Database {
                     active_issue_id: row.get(3)?,
                     handoff_notes: row.get(4)?,
                     last_action: row.get(5)?,
+                    agent_id: row.get(6)?,
                 })
             })
             .ok();

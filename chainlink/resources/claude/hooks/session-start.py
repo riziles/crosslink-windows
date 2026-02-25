@@ -181,6 +181,16 @@ def main():
     if session_status:
         context_parts.append(f"## Current Session\n{session_status}")
 
+    # Sync lock state (best-effort, non-blocking)
+    sync_result = run_chainlink(["sync"])
+    if sync_result:
+        context_parts.append(f"## Lock Sync\n{sync_result}")
+
+    # Show lock assignments
+    locks_result = run_chainlink(["locks", "list"])
+    if locks_result and "No locks" not in locks_result:
+        context_parts.append(f"## Active Locks\n{locks_result}")
+
     # Get ready issues (unblocked work)
     ready_issues = run_chainlink(["ready"])
     if ready_issues:
@@ -198,6 +208,8 @@ def main():
 - Use `chainlink session action "..."` to record breadcrumbs before context compression
 - Add comments as you discover things: `chainlink comment <id> "..."`
 - End with handoff notes: `chainlink session end --notes "..."`
+- Use `chainlink locks list` to see which issues are claimed by agents
+- Use `chainlink sync` to refresh lock state from the coordination branch
 </chainlink-session-context>""")
 
     print("\n\n".join(context_parts))

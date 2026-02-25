@@ -30,6 +30,7 @@ pub struct Session {
     pub active_issue_id: Option<i64>,
     pub handoff_notes: Option<String>,
     pub last_action: Option<String>,
+    pub agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -184,6 +185,7 @@ mod tests {
             active_issue_id: Some(5),
             handoff_notes: Some("Notes here".to_string()),
             last_action: None,
+            agent_id: None,
         };
 
         let json = serde_json::to_string(&session).unwrap();
@@ -204,6 +206,7 @@ mod tests {
             active_issue_id: None,
             handoff_notes: Some("Final notes".to_string()),
             last_action: None,
+            agent_id: None,
         };
 
         let json = serde_json::to_string(&session).unwrap();
@@ -319,6 +322,7 @@ mod tests {
                 active_issue_id,
                 handoff_notes: handoff_notes.clone(),
                 last_action: None,
+                agent_id: None,
             };
 
             let json = serde_json::to_string(&session).unwrap();

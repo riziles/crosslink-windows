@@ -116,6 +116,10 @@ pub fn run_daemon(chainlink_dir: &Path) -> Result<()> {
     println!("Watching: {}", chainlink_dir.display());
     println!("Flush interval: {} seconds", FLUSH_INTERVAL_SECS);
 
+    // Heartbeat counter: push every 5 cycles (5 * 30s = 2.5 min)
+    let mut heartbeat_counter: u64 = 0;
+    const HEARTBEAT_EVERY_N: u64 = 5;
+
     // Zombie prevention: Monitor stdin for closure.
     // When the parent process (VS Code) dies, stdin will be closed.
     // This thread detects that and signals the main loop to exit.
@@ -165,8 +169,10 @@ pub fn run_daemon(chainlink_dir: &Path) -> Result<()> {
         }
 
         // Auto-flush: read current session and write to session.json
+        let mut active_issue_id: Option<i64> = None;
         if let Ok(db) = Database::open(&db_path) {
             if let Ok(Some(session)) = db.get_current_session() {
+                active_issue_id = session.active_issue_id;
                 let session_data = serde_json::json!({
                     "session_id": session.id,
                     "started_at": session.started_at.to_rfc3339(),
@@ -181,6 +187,23 @@ pub fn run_daemon(chainlink_dir: &Path) -> Result<()> {
                             "Session flushed at {}",
                             chrono::Utc::now().format("%H:%M:%S")
                         );
+                    }
+                }
+            }
+        }
+
+        // Heartbeat: push agent heartbeat every N cycles
+        heartbeat_counter += 1;
+        if heartbeat_counter.is_multiple_of(HEARTBEAT_EVERY_N) {
+            if let Ok(Some(agent)) = crate::identity::AgentConfig::load(chainlink_dir) {
+                if let Ok(sync) = crate::sync::SyncManager::new(chainlink_dir) {
+                    let _ = sync.init_cache();
+                    match sync.push_heartbeat(&agent, active_issue_id) {
+                        Ok(()) => println!(
+                            "Heartbeat pushed at {}",
+                            chrono::Utc::now().format("%H:%M:%S")
+                        ),
+                        Err(e) => eprintln!("Heartbeat push failed: {}", e),
                     }
                 }
             }

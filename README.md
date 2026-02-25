@@ -31,6 +31,11 @@ A simple, lean issue tracker CLI designed for AI-assisted development. Track tas
 - **Issue archiving**: Archive old closed issues to keep the active list clean
 - **Claude Code hooks**: Behavioral guardrails that inject best practices into AI sessions
 - **Stale session detection**: Auto-ends sessions idle >4 hours on next startup
+- **Multi-agent coordination**: Distributed issue locking via a `chainlink/locks` git branch
+- **Agent identity**: Machine-local agent registration for lock ownership tracking
+- **Lock-aware workflows**: `next`, `session work`, and `create --work` respect lock state
+- **Daemon heartbeat**: Background agent heartbeat for stale lock detection
+- **GPG signature verification**: Verify integrity of the shared locks branch
 - **Customizable rules**: Override default rules via `.chainlink/rules/` markdown files
 - **No sync complexity**: No git hooks, no auto-push, just simple local storage
 
@@ -209,9 +214,25 @@ Sessions preserve context across AI assistant restarts. Stale sessions (idle >4 
 | `chainlink session end --notes "..."` | End with handoff notes for next session |
 | `chainlink session last-handoff` | Retrieve handoff notes from the previous session |
 
+### Multi-Agent Coordination
+
+Register agents and coordinate work across multiple AI sessions or machines via distributed locking.
+
+| Command | Description |
+|---------|-------------|
+| `chainlink agent init <id>` | Register this machine as an agent (stored in `.chainlink/agent.json`) |
+| `chainlink agent init <id> -d "desc"` | Register with a description |
+| `chainlink agent status` | Show agent identity, machine ID, and held locks |
+| `chainlink locks list` | Show all active issue locks (with stale detection) |
+| `chainlink locks list --json` | Show locks as JSON |
+| `chainlink locks check <id>` | Check if an issue is available or locked by another agent |
+| `chainlink sync` | Fetch lock state from coordination branch and verify GPG signatures |
+
+Lock state is stored on a `chainlink/locks` branch and synchronized via git. Agent identity files are machine-local and gitignored.
+
 ### Daemon (Optional)
 
-The daemon auto-flushes session state every 30 seconds.
+The daemon auto-flushes session state every 30 seconds and pushes agent heartbeats every 2.5 minutes for stale lock detection.
 
 | Command | Description |
 |---------|-------------|
@@ -270,8 +291,8 @@ The hooks are located in `.claude/hooks/` and configured in `.claude/settings.js
 |------|---------|---------|
 | `prompt-guard.py` | Every prompt | Injects language-specific best practices (condensed after first prompt) |
 | `post-edit-check.py` | After file edits | Debounced linting reminder to verify changes compile |
-| `work-check.py` | Before write/edit | Enforces issue tracking (configurable: strict/normal/relaxed) and blocks git mutations |
-| `session-start.py` | Session start/resume | Loads context, detects stale sessions, restores breadcrumbs after context compression |
+| `work-check.py` | Before write/edit | Enforces issue tracking (configurable: strict/normal/relaxed), blocks git mutations, warns on lock conflicts in strict mode |
+| `session-start.py` | Session start/resume | Loads context, syncs lock state, shows active locks, detects stale sessions, restores breadcrumbs after context compression |
 
 ### Behavioral Guardrails
 

@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod archive;
 pub mod comment;
 pub mod cpitd;
@@ -9,6 +10,7 @@ pub mod import;
 pub mod init;
 pub mod label;
 pub mod list;
+pub mod locks_cmd;
 pub mod milestone;
 pub mod next;
 pub mod relate;

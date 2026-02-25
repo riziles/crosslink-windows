@@ -1,7 +1,11 @@
 mod commands;
 mod daemon;
 mod db;
+mod identity;
+mod lock_check;
+mod locks;
 mod models;
+mod sync;
 mod utils;
 
 use anyhow::{bail, Context, Result};
@@ -311,6 +315,21 @@ enum Commands {
         #[command(subcommand)]
         action: CpitdCommands,
     },
+
+    /// Agent identity management
+    Agent {
+        #[command(subcommand)]
+        action: AgentCommands,
+    },
+
+    /// View and manage issue locks
+    Locks {
+        #[command(subcommand)]
+        action: LocksCommands,
+    },
+
+    /// Sync locks and issue state from remote
+    Sync,
 }
 
 #[derive(Subcommand)]
@@ -445,6 +464,31 @@ enum DaemonCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum AgentCommands {
+    /// Initialize agent identity on this machine
+    Init {
+        /// Agent ID (alphanumeric, hyphens, underscores)
+        agent_id: String,
+        /// Agent description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Show current agent identity
+    Status,
+}
+
+#[derive(Subcommand)]
+enum LocksCommands {
+    /// List all active locks
+    List,
+    /// Check if a specific issue is locked
+    Check {
+        /// Issue ID
+        id: i64,
+    },
+}
+
 fn find_chainlink_dir() -> Result<PathBuf> {
     let mut current = env::current_dir()?;
 
@@ -484,10 +528,12 @@ fn main() -> Result<()> {
             work,
         } => {
             let db = get_db()?;
+            let chainlink_dir = find_chainlink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work,
                 quiet: cli.quiet,
+                chainlink_dir: Some(&chainlink_dir),
             };
             commands::create::run(
                 &db,
@@ -507,10 +553,12 @@ fn main() -> Result<()> {
             label,
         } => {
             let db = get_db()?;
+            let chainlink_dir = find_chainlink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work: true,
                 quiet: cli.quiet,
+                chainlink_dir: Some(&chainlink_dir),
             };
             commands::create::run(
                 &db,
@@ -531,10 +579,12 @@ fn main() -> Result<()> {
             work,
         } => {
             let db = get_db()?;
+            let chainlink_dir = find_chainlink_dir()?;
             let opts = commands::create::CreateOpts {
                 labels: &label,
                 work,
                 quiet: cli.quiet,
+                chainlink_dir: Some(&chainlink_dir),
             };
             commands::create::run_subissue(
                 &db,
@@ -681,7 +731,8 @@ fn main() -> Result<()> {
 
         Commands::Next => {
             let db = get_db()?;
-            commands::next::run(&db)
+            let chainlink_dir = find_chainlink_dir()?;
+            commands::next::run(&db, &chainlink_dir)
         }
 
         Commands::Tree { status } => {
@@ -755,11 +806,12 @@ fn main() -> Result<()> {
 
         Commands::Session { action } => {
             let db = get_db()?;
+            let chainlink_dir = find_chainlink_dir()?;
             match action {
-                SessionCommands::Start => commands::session::start(&db),
+                SessionCommands::Start => commands::session::start(&db, &chainlink_dir),
                 SessionCommands::End { notes } => commands::session::end(&db, notes.as_deref()),
                 SessionCommands::Status => commands::session::status(&db),
-                SessionCommands::Work { id } => commands::session::work(&db, id),
+                SessionCommands::Work { id } => commands::session::work(&db, id, &chainlink_dir),
                 SessionCommands::LastHandoff => commands::session::last_handoff(&db),
                 SessionCommands::Action { text } => commands::session::action(&db, &text),
             }
@@ -793,6 +845,35 @@ fn main() -> Result<()> {
                 CpitdCommands::Status => commands::cpitd::status(&db),
                 CpitdCommands::Clear => commands::cpitd::clear(&db),
             }
+        }
+
+        Commands::Agent { action } => {
+            let chainlink_dir = find_chainlink_dir()?;
+            match action {
+                AgentCommands::Init {
+                    agent_id,
+                    description,
+                } => commands::agent::init(&chainlink_dir, &agent_id, description.as_deref()),
+                AgentCommands::Status => commands::agent::status(&chainlink_dir),
+            }
+        }
+
+        Commands::Locks { action } => {
+            let chainlink_dir = find_chainlink_dir()?;
+            let db = get_db()?;
+            match action {
+                LocksCommands::List => {
+                    commands::locks_cmd::list(&chainlink_dir, &db, cli.json)
+                }
+                LocksCommands::Check { id } => {
+                    commands::locks_cmd::check(&chainlink_dir, id)
+                }
+            }
+        }
+
+        Commands::Sync => {
+            let chainlink_dir = find_chainlink_dir()?;
+            commands::locks_cmd::sync_cmd(&chainlink_dir)
         }
     }
 }
