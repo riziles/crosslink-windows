@@ -13,13 +13,25 @@ const HOOK_FILES: &[(&str, &str)] = &[
     ("work-check.py", init::WORK_CHECK_PY),
 ];
 
+/// The marker comment that acknowledges intentional customization.
+const CUSTOM_MARKER: &str = "# crosslink:custom";
+
+/// Result of comparing a deployed file against its embedded default.
+enum CompareResult {
+    /// File matches the embedded default exactly.
+    Matches,
+    /// File differs from the default. Contains a human-readable description.
+    Customized(String),
+    /// File is missing (not deployed).
+    Missing,
+}
+
 /// Compare a deployed file against its embedded default.
-/// Returns a description string.
-fn compare_file(deployed_path: &Path, default_content: &str) -> String {
+fn compare_file(deployed_path: &Path, default_content: &str) -> CompareResult {
     match fs::read_to_string(deployed_path) {
         Ok(content) => {
             if content == default_content {
-                "matches default".to_string()
+                CompareResult::Matches
             } else {
                 let diff_lines = content
                     .lines()
@@ -31,74 +43,156 @@ fn compare_file(deployed_path: &Path, default_content: &str) -> String {
                     .count()
                     .abs_diff(default_content.lines().count());
                 let total_diff = diff_lines + len_diff;
-                format!("customized ({} lines differ)", total_diff)
+                CompareResult::Customized(format!("customized ({} lines differ)", total_diff))
             }
         }
-        Err(_) => "missing (not deployed)".to_string(),
+        Err(_) => CompareResult::Missing,
     }
 }
 
+/// Format a CompareResult as a display string.
+fn compare_display(result: &CompareResult) -> &str {
+    match result {
+        CompareResult::Matches => "matches default",
+        CompareResult::Customized(desc) => desc,
+        CompareResult::Missing => "missing (not deployed)",
+    }
+}
+
+/// Check whether a deployed file contains the `# crosslink:custom` marker.
+fn has_custom_marker(deployed_path: &Path) -> bool {
+    fs::read_to_string(deployed_path)
+        .map(|content| content.contains(CUSTOM_MARKER))
+        .unwrap_or(false)
+}
+
 /// `crosslink review diff` — compare deployed policy files against embedded defaults.
-pub fn diff(crosslink_dir: &Path, claude_dir: &Path, section: Option<&str>) -> Result<()> {
+///
+/// When `check` is true, operates in CI mode: exits 0 if all drifted files are
+/// marked with `# crosslink:custom`, exits 1 with a summary otherwise.
+pub fn diff(
+    crosslink_dir: &Path,
+    claude_dir: &Path,
+    section: Option<&str>,
+    check: bool,
+) -> Result<()> {
     let show_all = section.is_none();
+    let mut drifted: Vec<String> = Vec::new();
 
     // --- Tracking Mode ---
     if show_all || section == Some("tracking") {
-        println!("=== Tracking Mode ===");
         let config_path = crosslink_dir.join("hook-config.json");
-        let status = compare_file(&config_path, init::HOOK_CONFIG_JSON);
-        // Also extract the current tracking mode if customized
-        if status.starts_with("customized") {
-            if let Ok(content) = fs::read_to_string(&config_path) {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let mode = parsed
-                        .get("tracking_mode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let default_mode: serde_json::Value =
-                        serde_json::from_str(init::HOOK_CONFIG_JSON).unwrap_or_default();
-                    let default = default_mode
-                        .get("tracking_mode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("strict");
-                    println!(
-                        "  hook-config.json: {} (tracking_mode: \"{}\", default: \"{}\")",
-                        status, mode, default
-                    );
+        let result = compare_file(&config_path, init::HOOK_CONFIG_JSON);
+
+        if !check {
+            println!("=== Tracking Mode ===");
+            if let CompareResult::Customized(_) = &result {
+                if let Ok(content) = fs::read_to_string(&config_path) {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                        let mode = parsed
+                            .get("tracking_mode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let default_mode: serde_json::Value =
+                            serde_json::from_str(init::HOOK_CONFIG_JSON).unwrap_or_default();
+                        let default = default_mode
+                            .get("tracking_mode")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("strict");
+                        println!(
+                            "  hook-config.json: {} (tracking_mode: \"{}\", default: \"{}\")",
+                            compare_display(&result),
+                            mode,
+                            default
+                        );
+                    } else {
+                        println!("  hook-config.json: {}", compare_display(&result));
+                    }
                 } else {
-                    println!("  hook-config.json: {}", status);
+                    println!("  hook-config.json: {}", compare_display(&result));
                 }
             } else {
-                println!("  hook-config.json: {}", status);
+                println!("  hook-config.json: {}", compare_display(&result));
             }
-        } else {
-            println!("  hook-config.json: {}", status);
+            println!();
         }
-        println!();
+
+        if let CompareResult::Customized(_) = result {
+            if check && !has_custom_marker(&config_path) {
+                drifted.push(".crosslink/hook-config.json".to_string());
+            }
+        }
     }
 
     // --- Rules ---
     if show_all || section == Some("rules") || section == Some("languages") {
-        println!("=== Rules ===");
+        if !check {
+            println!("=== Rules ===");
+        }
         let rules_dir = crosslink_dir.join("rules");
         for (filename, default_content) in init::RULE_FILES {
             let path = rules_dir.join(filename);
-            let status = compare_file(&path, default_content);
-            println!("  rules/{}: {}", filename, status);
+            let result = compare_file(&path, default_content);
+            if !check {
+                println!("  rules/{}: {}", filename, compare_display(&result));
+            }
+            if let CompareResult::Customized(_) = result {
+                if check && !has_custom_marker(&path) {
+                    drifted.push(format!(".crosslink/rules/{}", filename));
+                }
+            }
         }
-        println!();
+        if !check {
+            println!();
+        }
     }
 
     // --- Hooks ---
     if show_all || section == Some("hooks") {
-        println!("=== Hooks ===");
+        if !check {
+            println!("=== Hooks ===");
+        }
         let hooks_dir = claude_dir.join("hooks");
         for (filename, default_content) in HOOK_FILES {
             let path = hooks_dir.join(filename);
-            let status = compare_file(&path, default_content);
-            println!("  .claude/hooks/{}: {}", filename, status);
+            let result = compare_file(&path, default_content);
+            if !check {
+                println!("  .claude/hooks/{}: {}", filename, compare_display(&result));
+            }
+            if let CompareResult::Customized(_) = result {
+                if check && !has_custom_marker(&path) {
+                    drifted.push(format!(".claude/hooks/{}", filename));
+                }
+            }
         }
-        println!();
+        if !check {
+            println!();
+        }
+    }
+
+    if check {
+        if drifted.is_empty() {
+            println!("All policy files are up to date or explicitly customized.");
+        } else {
+            println!(
+                "Policy drift detected ({} file{}):",
+                drifted.len(),
+                if drifted.len() == 1 { "" } else { "s" }
+            );
+            for path in &drifted {
+                println!("  {}", path);
+            }
+            println!();
+            println!(
+                "These files differ from crosslink defaults and are not marked with '{}'.",
+                CUSTOM_MARKER
+            );
+            println!(
+                "Run 'crosslink review diff' for details, or add '{}' to acknowledge.",
+                CUSTOM_MARKER
+            );
+            std::process::exit(1);
+        }
     }
 
     Ok(())
@@ -114,7 +208,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.txt");
         fs::write(&path, "hello world").unwrap();
-        assert_eq!(compare_file(&path, "hello world"), "matches default");
+        assert!(matches!(
+            compare_file(&path, "hello world"),
+            CompareResult::Matches
+        ));
     }
 
     #[test]
@@ -123,15 +220,20 @@ mod tests {
         let path = dir.path().join("test.txt");
         fs::write(&path, "hello modified\nextra line").unwrap();
         let result = compare_file(&path, "hello world");
-        assert!(result.starts_with("customized"));
-        assert!(result.contains("lines differ"));
+        match result {
+            CompareResult::Customized(desc) => assert!(desc.contains("lines differ")),
+            _ => panic!("expected Customized"),
+        }
     }
 
     #[test]
     fn test_compare_file_missing() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("nonexistent.txt");
-        assert_eq!(compare_file(&path, "content"), "missing (not deployed)");
+        assert!(matches!(
+            compare_file(&path, "content"),
+            CompareResult::Missing
+        ));
     }
 
     #[test]
@@ -144,7 +246,7 @@ mod tests {
         let claude_dir = dir.path().join(".claude");
 
         // Should not error
-        diff(&crosslink_dir, &claude_dir, None).unwrap();
+        diff(&crosslink_dir, &claude_dir, None, false).unwrap();
     }
 
     #[test]
@@ -164,7 +266,7 @@ mod tests {
         let claude_dir = dir.path().join(".claude");
 
         // Should not error — just prints customized status
-        diff(&crosslink_dir, &claude_dir, Some("rules")).unwrap();
+        diff(&crosslink_dir, &claude_dir, Some("rules"), false).unwrap();
     }
 
     #[test]
@@ -176,9 +278,9 @@ mod tests {
         let claude_dir = dir.path().join(".claude");
 
         // Each section should work independently
-        diff(&crosslink_dir, &claude_dir, Some("tracking")).unwrap();
-        diff(&crosslink_dir, &claude_dir, Some("hooks")).unwrap();
-        diff(&crosslink_dir, &claude_dir, Some("languages")).unwrap();
+        diff(&crosslink_dir, &claude_dir, Some("tracking"), false).unwrap();
+        diff(&crosslink_dir, &claude_dir, Some("hooks"), false).unwrap();
+        diff(&crosslink_dir, &claude_dir, Some("languages"), false).unwrap();
     }
 
     #[test]
@@ -189,5 +291,60 @@ mod tests {
         assert!(dir.path().join(".claude/commands/review.md").exists());
         let content = fs::read_to_string(dir.path().join(".claude/commands/review.md")).unwrap();
         assert!(content.contains("policy review"));
+    }
+
+    #[test]
+    fn test_check_passes_when_defaults_match() {
+        let dir = tempdir().unwrap();
+        crate::commands::init::run(dir.path(), false).unwrap();
+
+        let crosslink_dir = dir.path().join(".crosslink");
+        let claude_dir = dir.path().join(".claude");
+
+        // All files match defaults, so --check should pass (exit 0)
+        diff(&crosslink_dir, &claude_dir, None, true).unwrap();
+    }
+
+    #[test]
+    fn test_check_passes_with_custom_marker() {
+        let dir = tempdir().unwrap();
+        crate::commands::init::run(dir.path(), false).unwrap();
+
+        // Modify a rule file but add the custom marker
+        let rule_path = dir.path().join(".crosslink/rules/global.md");
+        fs::write(
+            &rule_path,
+            "# crosslink:custom\n# My custom global rules\nDifferent content here.",
+        )
+        .unwrap();
+
+        let crosslink_dir = dir.path().join(".crosslink");
+        let claude_dir = dir.path().join(".claude");
+
+        // Should pass because the file is marked as custom
+        diff(&crosslink_dir, &claude_dir, Some("rules"), true).unwrap();
+    }
+
+    #[test]
+    fn test_has_custom_marker_present() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "some content\n# crosslink:custom\nmore content").unwrap();
+        assert!(has_custom_marker(&path));
+    }
+
+    #[test]
+    fn test_has_custom_marker_absent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "some content\nno marker here").unwrap();
+        assert!(!has_custom_marker(&path));
+    }
+
+    #[test]
+    fn test_has_custom_marker_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nonexistent.txt");
+        assert!(!has_custom_marker(&path));
     }
 }

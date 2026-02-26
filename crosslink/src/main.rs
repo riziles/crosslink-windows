@@ -555,6 +555,9 @@ enum ReviewCommands {
         /// Filter by section: tracking, rules, languages, hooks
         #[arg(short, long)]
         section: Option<String>,
+        /// CI mode: exit 1 if any files have drifted without '# crosslink:custom' marker
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -1041,8 +1044,8 @@ fn main() -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("Cannot determine project root"))?
                 .join(".claude");
             match command {
-                ReviewCommands::Diff { section } => {
-                    commands::review::diff(&crosslink_dir, &claude_dir, section.as_deref())
+                ReviewCommands::Diff { section, check } => {
+                    commands::review::diff(&crosslink_dir, &claude_dir, section.as_deref(), check)
                 }
             }
         }
