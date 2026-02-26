@@ -13,8 +13,8 @@ use crate::db::Database;
 use crate::hydration::hydrate_to_sqlite;
 use crate::identity::AgentConfig;
 use crate::issue_file::{
-    write_counters, write_issue_file, CommentEntry, Counters, IssueFile,
-    MilestoneEntry, MilestonesFile,
+    write_counters, write_issue_file, CommentEntry, Counters, IssueFile, MilestoneEntry,
+    MilestonesFile,
 };
 use crate::sync::SyncManager;
 
@@ -23,8 +23,9 @@ use crate::sync::SyncManager;
 /// Reads all issues, comments, labels, dependencies, relations, milestones
 /// from the local database and writes them as JSON files on the coordination branch.
 pub fn to_shared(crosslink_dir: &Path, db: &Database) -> Result<()> {
-    let agent = AgentConfig::load(crosslink_dir)?
-        .ok_or_else(|| anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first."))?;
+    let agent = AgentConfig::load(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first.")
+    })?;
 
     let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
@@ -292,7 +293,10 @@ mod tests {
 
         let result = to_shared(&crosslink_dir, &db);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No agent configured"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No agent configured"));
     }
 
     #[test]
@@ -311,7 +315,9 @@ mod tests {
         // Test the core conversion logic without git
         let (db, _dir) = setup_test_db();
 
-        let id1 = db.create_issue("Bug fix", Some("Fix the bug"), "high").unwrap();
+        let id1 = db
+            .create_issue("Bug fix", Some("Fix the bug"), "high")
+            .unwrap();
         let id2 = db.create_issue("Feature", None, "medium").unwrap();
         db.add_comment(id1, "First comment").unwrap();
         db.add_label(id1, "bug").unwrap();
@@ -536,9 +542,7 @@ mod tests {
         let (db, _dir) = setup_test_db();
 
         let parent = db.create_issue("Parent", None, "medium").unwrap();
-        let child = db
-            .create_subissue(parent, "Child", None, "medium")
-            .unwrap();
+        let child = db.create_subissue(parent, "Child", None, "medium").unwrap();
 
         let mut id_to_uuid: HashMap<i64, Uuid> = HashMap::new();
         id_to_uuid.insert(parent, Uuid::new_v4());

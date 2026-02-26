@@ -208,7 +208,14 @@ mod tests {
         let issue_id = db.create_issue("Test", None, "medium").unwrap();
         db.close_issue(issue_id).unwrap();
 
-        let result = run(&db, None, issue_id, Some("Updated closed issue"), None, None);
+        let result = run(
+            &db,
+            None,
+            issue_id,
+            Some("Updated closed issue"),
+            None,
+            None,
+        );
         assert!(result.is_ok());
 
         let issue = db.get_issue(issue_id).unwrap().unwrap();

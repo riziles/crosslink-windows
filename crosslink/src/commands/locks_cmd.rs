@@ -92,8 +92,9 @@ pub fn check(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
 
 /// `crosslink locks claim <id>` — claim a lock on an issue
 pub fn claim(crosslink_dir: &Path, issue_id: i64, branch: Option<&str>) -> Result<()> {
-    let agent = AgentConfig::load(crosslink_dir)?
-        .ok_or_else(|| anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first."))?;
+    let agent = AgentConfig::load(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first.")
+    })?;
 
     let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
@@ -115,8 +116,9 @@ pub fn claim(crosslink_dir: &Path, issue_id: i64, branch: Option<&str>) -> Resul
 
 /// `crosslink locks release <id>` — release a lock on an issue
 pub fn release(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
-    let agent = AgentConfig::load(crosslink_dir)?
-        .ok_or_else(|| anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first."))?;
+    let agent = AgentConfig::load(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first.")
+    })?;
 
     let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
@@ -131,8 +133,9 @@ pub fn release(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
 
 /// `crosslink locks steal <id>` — steal a stale lock from another agent
 pub fn steal(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
-    let agent = AgentConfig::load(crosslink_dir)?
-        .ok_or_else(|| anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first."))?;
+    let agent = AgentConfig::load(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!("No agent configured. Run 'crosslink agent init <id>' first.")
+    })?;
 
     let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;

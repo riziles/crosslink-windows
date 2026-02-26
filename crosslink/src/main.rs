@@ -718,7 +718,13 @@ fn main() -> Result<()> {
             let crosslink_dir = find_crosslink_dir()?;
             let writer = get_writer(&crosslink_dir);
             if cli.quiet {
-                commands::status::close_quiet(&db, writer.as_ref(), id, !no_changelog, &crosslink_dir)
+                commands::status::close_quiet(
+                    &db,
+                    writer.as_ref(),
+                    id,
+                    !no_changelog,
+                    &crosslink_dir,
+                )
             } else {
                 commands::status::close(&db, writer.as_ref(), id, !no_changelog, &crosslink_dir)
             }
@@ -900,7 +906,9 @@ fn main() -> Result<()> {
             let crosslink_dir = find_crosslink_dir()?;
             match action {
                 SessionCommands::Start => commands::session::start(&db, &crosslink_dir),
-                SessionCommands::End { notes } => commands::session::end(&db, notes.as_deref(), &crosslink_dir),
+                SessionCommands::End { notes } => {
+                    commands::session::end(&db, notes.as_deref(), &crosslink_dir)
+                }
                 SessionCommands::Status => commands::session::status(&db),
                 SessionCommands::Work { id } => commands::session::work(&db, id, &crosslink_dir),
                 SessionCommands::LastHandoff => commands::session::last_handoff(&db),
@@ -958,12 +966,8 @@ fn main() -> Result<()> {
                 LocksCommands::Claim { id, branch } => {
                     commands::locks_cmd::claim(&crosslink_dir, id, branch.as_deref())
                 }
-                LocksCommands::Release { id } => {
-                    commands::locks_cmd::release(&crosslink_dir, id)
-                }
-                LocksCommands::Steal { id } => {
-                    commands::locks_cmd::steal(&crosslink_dir, id)
-                }
+                LocksCommands::Release { id } => commands::locks_cmd::release(&crosslink_dir, id),
+                LocksCommands::Steal { id } => commands::locks_cmd::steal(&crosslink_dir, id),
             }
         }
 

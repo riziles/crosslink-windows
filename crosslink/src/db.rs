@@ -1129,17 +1129,21 @@ impl Database {
         self.conn.execute(
             "INSERT INTO milestones (id, uuid, name, description, status, created_at, closed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![h.id, h.uuid, h.name, h.description, h.status, h.created_at, h.closed_at],
+            params![
+                h.id,
+                h.uuid,
+                h.name,
+                h.description,
+                h.status,
+                h.created_at,
+                h.closed_at
+            ],
         )?;
         Ok(())
     }
 
     /// Insert a milestone-issue association.
-    pub fn insert_hydrated_milestone_issue(
-        &self,
-        milestone_id: i64,
-        issue_id: i64,
-    ) -> Result<()> {
+    pub fn insert_hydrated_milestone_issue(&self, milestone_id: i64, issue_id: i64) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO milestone_issues (milestone_id, issue_id) VALUES (?1, ?2)",
             params![milestone_id, issue_id],

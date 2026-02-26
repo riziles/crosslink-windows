@@ -234,11 +234,7 @@ impl SharedWriter {
         }
 
         let filename = format!("issues/{}.json", issue.uuid);
-        self.commit_and_push(
-            &[&filename],
-            true,
-            &format!("delete issue #{}", display_id),
-        )?;
+        self.commit_and_push(&[&filename], true, &format!("delete issue #{}", display_id))?;
 
         hydrate_to_sqlite(&self.cache_dir, db)?;
         Ok(())
@@ -247,12 +243,7 @@ impl SharedWriter {
     /// Add a comment to an issue.
     ///
     /// Returns the comment ID.
-    pub fn add_comment(
-        &self,
-        db: &Database,
-        display_id: i64,
-        content: &str,
-    ) -> Result<i64> {
+    pub fn add_comment(&self, db: &Database, display_id: i64, content: &str) -> Result<i64> {
         let mut issue = self.load_issue_by_display_id(display_id)?;
         let mut counters = self.read_counters()?;
 
@@ -317,12 +308,7 @@ impl SharedWriter {
     /// Add a blocker dependency: `blocked_id` is blocked by `blocker_id`.
     ///
     /// Only modifies the blocked issue's file (single-direction storage).
-    pub fn add_blocker(
-        &self,
-        db: &Database,
-        blocked_id: i64,
-        blocker_id: i64,
-    ) -> Result<()> {
+    pub fn add_blocker(&self, db: &Database, blocked_id: i64, blocker_id: i64) -> Result<()> {
         let blocker_uuid = self.resolve_uuid(blocker_id)?;
         let mut issue = self.load_issue_by_display_id(blocked_id)?;
 
@@ -342,12 +328,7 @@ impl SharedWriter {
     }
 
     /// Remove a blocker dependency.
-    pub fn remove_blocker(
-        &self,
-        db: &Database,
-        blocked_id: i64,
-        blocker_id: i64,
-    ) -> Result<()> {
+    pub fn remove_blocker(&self, db: &Database, blocked_id: i64, blocker_id: i64) -> Result<()> {
         let blocker_uuid = self.resolve_uuid(blocker_id)?;
         let mut issue = self.load_issue_by_display_id(blocked_id)?;
 
@@ -367,12 +348,7 @@ impl SharedWriter {
     }
 
     /// Add a relation between two issues (single-direction storage).
-    pub fn add_relation(
-        &self,
-        db: &Database,
-        issue_id: i64,
-        related_id: i64,
-    ) -> Result<()> {
+    pub fn add_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<()> {
         let related_uuid = self.resolve_uuid(related_id)?;
         let mut issue = self.load_issue_by_display_id(issue_id)?;
 
@@ -392,12 +368,7 @@ impl SharedWriter {
     }
 
     /// Remove a relation between two issues.
-    pub fn remove_relation(
-        &self,
-        db: &Database,
-        issue_id: i64,
-        related_id: i64,
-    ) -> Result<()> {
+    pub fn remove_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<()> {
         let related_uuid = self.resolve_uuid(related_id)?;
         let mut issue = self.load_issue_by_display_id(issue_id)?;
 
@@ -508,12 +479,7 @@ impl SharedWriter {
     /// Stage files, commit, and push with rebase-retry.
     ///
     /// If `use_git_rm` is true, stages removals instead of additions.
-    fn commit_and_push(
-        &self,
-        paths: &[&str],
-        use_git_rm: bool,
-        message: &str,
-    ) -> Result<()> {
+    fn commit_and_push(&self, paths: &[&str], use_git_rm: bool, message: &str) -> Result<()> {
         for attempt in 0..MAX_RETRIES {
             // Stage files
             for path in paths {
@@ -541,8 +507,7 @@ impl SharedWriter {
             }
 
             // Push
-            let push_result =
-                self.git_in_cache(&["push", "origin", "crosslink/locks"]);
+            let push_result = self.git_in_cache(&["push", "origin", "crosslink/locks"]);
             match push_result {
                 Ok(_) => return Ok(()),
                 Err(e) => {
@@ -556,12 +521,7 @@ impl SharedWriter {
                     // Conflict — rebase and retry
                     if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
                         if attempt < MAX_RETRIES - 1 {
-                            self.git_in_cache(&[
-                                "pull",
-                                "--rebase",
-                                "origin",
-                                "crosslink/locks",
-                            ])?;
+                            self.git_in_cache(&["pull", "--rebase", "origin", "crosslink/locks"])?;
                             // Re-read counter if it was part of this operation
                             // (caller will re-claim on next attempt via full retry)
                             continue;

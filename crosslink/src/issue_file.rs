@@ -128,7 +128,10 @@ pub fn read_all_issue_files(issues_dir: &std::path::Path) -> anyhow::Result<Vec<
             match read_issue_file(&path) {
                 Ok(issue) => issues.push(issue),
                 Err(e) => {
-                    eprintln!("Warning: skipping malformed issue file {}: {e}", path.display());
+                    eprintln!(
+                        "Warning: skipping malformed issue file {}: {e}",
+                        path.display()
+                    );
                 }
             }
         }

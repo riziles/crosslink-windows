@@ -3,12 +3,7 @@ use anyhow::Result;
 use crate::db::Database;
 use crate::shared_writer::SharedWriter;
 
-pub fn add(
-    db: &Database,
-    writer: Option<&SharedWriter>,
-    issue_id: i64,
-    label: &str,
-) -> Result<()> {
+pub fn add(db: &Database, writer: Option<&SharedWriter>, issue_id: i64, label: &str) -> Result<()> {
     db.require_issue(issue_id)?;
 
     if let Some(w) = writer {
