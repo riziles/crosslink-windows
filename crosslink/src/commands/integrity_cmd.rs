@@ -32,11 +32,7 @@ struct CheckResult {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub fn run(
-    action: Option<&IntegrityCommands>,
-    crosslink_dir: &Path,
-    db: &Database,
-) -> Result<()> {
+pub fn run(action: Option<&IntegrityCommands>, crosslink_dir: &Path, db: &Database) -> Result<()> {
     match action {
         None => run_all(crosslink_dir, db),
         Some(IntegrityCommands::Schema { repair }) => {
@@ -187,10 +183,7 @@ fn check_hydration(crosslink_dir: &Path, db: &Database, repair: bool) -> Result<
         });
     }
 
-    let details = format!(
-        "{} issues in JSON, {} in SQLite",
-        json_count, db_count
-    );
+    let details = format!("{} issues in JSON, {} in SQLite", json_count, db_count);
 
     if !repair {
         return Ok(CheckResult {

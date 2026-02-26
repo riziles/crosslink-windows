@@ -1088,29 +1088,29 @@ impl Database {
 
     /// Get the maximum issue display ID in the database, or 0 if empty.
     pub fn get_max_display_id(&self) -> Result<i64> {
-        let max: i64 = self
-            .conn
-            .query_row("SELECT COALESCE(MAX(id), 0) FROM issues", [], |row| {
-                row.get(0)
-            })?;
+        let max: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(MAX(id), 0) FROM issues", [], |row| {
+                    row.get(0)
+                })?;
         Ok(max)
     }
 
     /// Get the maximum comment ID in the database, or 0 if empty.
     pub fn get_max_comment_id(&self) -> Result<i64> {
-        let max: i64 = self
-            .conn
-            .query_row("SELECT COALESCE(MAX(id), 0) FROM comments", [], |row| {
-                row.get(0)
-            })?;
+        let max: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(MAX(id), 0) FROM comments", [], |row| {
+                    row.get(0)
+                })?;
         Ok(max)
     }
 
     /// Get the current schema version (PRAGMA user_version).
     pub fn get_schema_version(&self) -> Result<i32> {
-        let version: i32 =
-            self.conn
-                .query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let version: i32 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))?;
         Ok(version)
     }
 
