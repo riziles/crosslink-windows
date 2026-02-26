@@ -118,7 +118,10 @@ pub fn run(db: &Database, id: i64) -> Result<()> {
         for sub in subissues {
             println!(
                 "  {} [{}] {} - {}",
-                format_issue_id(sub.id), sub.status, sub.priority, sub.title
+                format_issue_id(sub.id),
+                sub.status,
+                sub.priority,
+                sub.title
             );
         }
     }
@@ -131,7 +134,10 @@ pub fn run(db: &Database, id: i64) -> Result<()> {
             let status_marker = if rel.status == "closed" { "✓" } else { " " };
             println!(
                 "  {} [{}] {} - {}",
-                format_issue_id(rel.id), status_marker, rel.priority, rel.title
+                format_issue_id(rel.id),
+                status_marker,
+                rel.priority,
+                rel.title
             );
         }
     }

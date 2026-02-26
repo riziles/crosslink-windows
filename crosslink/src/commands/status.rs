@@ -60,7 +60,9 @@ fn close_inner(
         if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
             if sync.is_initialized() {
                 match sync.release_lock(&agent, id, false) {
-                    Ok(true) if !quiet => println!("Released lock on issue {}", format_issue_id(id)),
+                    Ok(true) if !quiet => {
+                        println!("Released lock on issue {}", format_issue_id(id))
+                    }
                     _ => {}
                 }
             }
@@ -192,7 +194,11 @@ pub fn close_all(
     for issue in &issues {
         match close(db, writer, issue.id, update_changelog, crosslink_dir) {
             Ok(()) => closed_count += 1,
-            Err(e) => eprintln!("Warning: Failed to close {}: {}", format_issue_id(issue.id), e),
+            Err(e) => eprintln!(
+                "Warning: Failed to close {}: {}",
+                format_issue_id(issue.id),
+                e
+            ),
         }
     }
 

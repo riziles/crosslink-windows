@@ -321,9 +321,11 @@ impl Database {
     /// Look up an issue's display ID by its UUID.
     pub fn get_issue_id_by_uuid(&self, uuid: &str) -> Result<i64> {
         self.conn
-            .query_row("SELECT id FROM issues WHERE uuid = ?1", params![uuid], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT id FROM issues WHERE uuid = ?1",
+                params![uuid],
+                |row| row.get(0),
+            )
             .context("Issue with given UUID not found")
     }
 

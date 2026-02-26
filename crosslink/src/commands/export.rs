@@ -147,7 +147,9 @@ fn write_issue_md(md: &mut String, db: &Database, issue: &Issue) -> Result<()> {
 
     md.push_str(&format!(
         "### {} {}: {}\n\n",
-        checkbox, format_issue_id(issue.id), issue.title
+        checkbox,
+        format_issue_id(issue.id),
+        issue.title
     ));
     md.push_str(&format!("- **Priority:** {}\n", issue.priority));
     md.push_str(&format!("- **Status:** {}\n", issue.status));

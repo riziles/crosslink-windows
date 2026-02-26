@@ -52,7 +52,10 @@ pub fn list(db: &Database) -> Result<()> {
             .unwrap_or_default();
         println!(
             "{:<5} {:8} {}{}",
-            format_issue_id(issue.id), issue.priority, issue.title, parent_str
+            format_issue_id(issue.id),
+            issue.priority,
+            issue.title,
+            parent_str
         );
     }
 

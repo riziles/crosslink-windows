@@ -268,7 +268,10 @@ pub fn scan(
                 db.add_comment(existing_id, &comment)?;
                 updated_count += 1;
                 if !quiet {
-                    println!("  Updated issue {} (clone still present)", format_issue_id(existing_id));
+                    println!(
+                        "  Updated issue {} (clone still present)",
+                        format_issue_id(existing_id)
+                    );
                 }
             }
             None => {

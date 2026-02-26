@@ -85,7 +85,10 @@ pub fn check(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
             }
         }
         None => {
-            println!("Issue {} is not locked. Available for claiming.", format_issue_id(issue_id));
+            println!(
+                "Issue {} is not locked. Available for claiming.",
+                format_issue_id(issue_id)
+            );
         }
     }
     Ok(())
@@ -109,7 +112,10 @@ pub fn claim(crosslink_dir: &Path, issue_id: i64, branch: Option<&str>) -> Resul
             }
         }
         false => {
-            println!("You already hold the lock on issue {}", format_issue_id(issue_id));
+            println!(
+                "You already hold the lock on issue {}",
+                format_issue_id(issue_id)
+            );
         }
     }
     Ok(())
@@ -146,7 +152,10 @@ pub fn steal(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
     let locks = sync.read_locks()?;
     if let Some(existing) = locks.get_lock(issue_id) {
         if existing.agent_id == agent.agent_id {
-            println!("You already hold the lock on issue {}", format_issue_id(issue_id));
+            println!(
+                "You already hold the lock on issue {}",
+                format_issue_id(issue_id)
+            );
             return Ok(());
         }
 
@@ -156,19 +165,24 @@ pub fn steal(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
         if !is_stale {
             eprintln!(
                 "Warning: Lock on {} held by '{}' is NOT stale. Stealing anyway.",
-                format_issue_id(issue_id), existing.agent_id
+                format_issue_id(issue_id),
+                existing.agent_id
             );
         }
 
         sync.claim_lock(&agent, issue_id, None, true)?;
         println!(
             "Stole lock on issue {} from '{}'",
-            format_issue_id(issue_id), existing.agent_id
+            format_issue_id(issue_id),
+            existing.agent_id
         );
     } else {
         // Not locked — just claim it
         sync.claim_lock(&agent, issue_id, None, false)?;
-        println!("Claimed lock on issue {} (was not locked)", format_issue_id(issue_id));
+        println!(
+            "Claimed lock on issue {} (was not locked)",
+            format_issue_id(issue_id)
+        );
     }
 
     Ok(())

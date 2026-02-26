@@ -225,7 +225,11 @@ pub fn run_subissue(
     if opts.quiet {
         println!("{}", id);
     } else {
-        println!("Created subissue {} under {}", format_issue_id(id), format_issue_id(parent_id));
+        println!(
+            "Created subissue {} under {}",
+            format_issue_id(id),
+            format_issue_id(parent_id)
+        );
     }
 
     // Set as active session work item

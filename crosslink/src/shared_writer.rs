@@ -517,10 +517,7 @@ impl SharedWriter {
     /// N sequential IDs, rewrites the JSON files, and pushes.
     ///
     /// Returns a vec of `(old_negative_id, new_display_id, title)` for output.
-    pub fn promote_offline_issues(
-        &self,
-        db: &Database,
-    ) -> Result<Vec<(i64, i64, String)>> {
+    pub fn promote_offline_issues(&self, db: &Database) -> Result<Vec<(i64, i64, String)>> {
         let offline = self.find_offline_issues()?;
         if offline.is_empty() {
             return Ok(vec![]);
@@ -536,10 +533,8 @@ impl SharedWriter {
             }
         }
 
-        let offline_info: Vec<(Uuid, String)> = offline
-            .iter()
-            .map(|i| (i.uuid, i.title.clone()))
-            .collect();
+        let offline_info: Vec<(Uuid, String)> =
+            offline.iter().map(|i| (i.uuid, i.title.clone())).collect();
 
         let first_id = Cell::new(0i64);
 

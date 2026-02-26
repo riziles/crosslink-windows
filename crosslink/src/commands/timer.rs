@@ -14,7 +14,10 @@ pub fn start(db: &Database, issue_id: i64) -> Result<()> {
     // Check if there's already an active timer
     if let Some((active_id, _)) = db.get_active_timer()? {
         if active_id == issue_id {
-            bail!("Timer already running for issue {}", format_issue_id(issue_id));
+            bail!(
+                "Timer already running for issue {}",
+                format_issue_id(issue_id)
+            );
         } else {
             bail!(
                 "Timer already running for issue {}. Stop it first with 'crosslink stop'.",
@@ -24,7 +27,11 @@ pub fn start(db: &Database, issue_id: i64) -> Result<()> {
     }
 
     db.start_timer(issue_id)?;
-    println!("Started timer for {}: {}", format_issue_id(issue_id), issue.title);
+    println!(
+        "Started timer for {}: {}",
+        format_issue_id(issue_id),
+        issue.title
+    );
     println!("Run 'crosslink stop' when done.");
 
     Ok(())

@@ -17,7 +17,11 @@ fn print_issue(issue: &Issue, indent: usize) {
     let icon = status_icon(&issue.status);
     println!(
         "{}[{}] {} {} - {}",
-        prefix, icon, format_issue_id(issue.id), issue.priority, issue.title
+        prefix,
+        icon,
+        format_issue_id(issue.id),
+        issue.priority,
+        issue.title
     );
 }
 

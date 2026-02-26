@@ -57,7 +57,9 @@ pub fn end(db: &Database, notes: Option<&str>, crosslink_dir: &std::path::Path) 
             if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
                 if sync.is_initialized() {
                     match sync.release_lock(&agent, issue_id, false) {
-                        Ok(true) => println!("Released lock on issue {}", format_issue_id(issue_id)),
+                        Ok(true) => {
+                            println!("Released lock on issue {}", format_issue_id(issue_id))
+                        }
                         Ok(false) => {} // Wasn't locked
                         Err(e) => eprintln!("Warning: Could not release lock: {}", e),
                     }
@@ -96,7 +98,10 @@ pub fn status(db: &Database) -> Result<()> {
         if let Some(issue) = db.get_issue(issue_id)? {
             println!("Working on: {} {}", format_issue_id(issue.id), issue.title);
         } else {
-            println!("Working on: {} (issue not found)", format_issue_id(issue_id));
+            println!(
+                "Working on: {} (issue not found)",
+                format_issue_id(issue_id)
+            );
         }
     } else {
         println!("Working on: (none)");
@@ -129,7 +134,9 @@ pub fn work(db: &Database, issue_id: i64, crosslink_dir: &std::path::Path) -> Re
         if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
             if sync.is_initialized() {
                 match sync.claim_lock(&agent, issue_id, None, false) {
-                    Ok(true) => println!("Auto-claimed lock on issue {}", format_issue_id(issue_id)),
+                    Ok(true) => {
+                        println!("Auto-claimed lock on issue {}", format_issue_id(issue_id))
+                    }
                     Ok(false) => {} // Already held
                     Err(e) => eprintln!("Warning: Could not auto-claim lock: {}", e),
                 }
@@ -138,7 +145,11 @@ pub fn work(db: &Database, issue_id: i64, crosslink_dir: &std::path::Path) -> Re
     }
 
     db.set_session_issue(session.id, issue_id)?;
-    println!("Now working on: {} {}", format_issue_id(issue.id), issue.title);
+    println!(
+        "Now working on: {} {}",
+        format_issue_id(issue.id),
+        issue.title
+    );
     Ok(())
 }
 

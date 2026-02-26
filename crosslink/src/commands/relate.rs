@@ -15,13 +15,22 @@ pub fn add(
 
     if let Some(w) = writer {
         w.add_relation(db, issue_id, related_id)?;
-        println!("Linked {} ↔ {}", format_issue_id(issue_id), format_issue_id(related_id));
+        println!(
+            "Linked {} ↔ {}",
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
+        );
     } else if db.add_relation(issue_id, related_id)? {
-        println!("Linked {} ↔ {}", format_issue_id(issue_id), format_issue_id(related_id));
+        println!(
+            "Linked {} ↔ {}",
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
+        );
     } else {
         println!(
             "Issues {} and {} are already related",
-            format_issue_id(issue_id), format_issue_id(related_id)
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
         );
     }
 
@@ -36,13 +45,22 @@ pub fn remove(
 ) -> Result<()> {
     if let Some(w) = writer {
         w.remove_relation(db, issue_id, related_id)?;
-        println!("Unlinked {} ↔ {}", format_issue_id(issue_id), format_issue_id(related_id));
+        println!(
+            "Unlinked {} ↔ {}",
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
+        );
     } else if db.remove_relation(issue_id, related_id)? {
-        println!("Unlinked {} ↔ {}", format_issue_id(issue_id), format_issue_id(related_id));
+        println!(
+            "Unlinked {} ↔ {}",
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
+        );
     } else {
         println!(
             "No relation found between {} and {}",
-            format_issue_id(issue_id), format_issue_id(related_id)
+            format_issue_id(issue_id),
+            format_issue_id(related_id)
         );
     }
 
@@ -64,7 +82,10 @@ pub fn list(db: &Database, issue_id: i64) -> Result<()> {
         let status_marker = if r.status == "closed" { "✓" } else { " " };
         println!(
             "  {:<5} [{}] {:8} {}",
-            format_issue_id(r.id), status_marker, r.priority, r.title
+            format_issue_id(r.id),
+            status_marker,
+            r.priority,
+            r.title
         );
     }
 

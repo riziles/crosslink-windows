@@ -145,8 +145,7 @@ impl SyncManager {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.trim().is_empty() {
                 // Unpushed commits exist — rebase to preserve them
-                let rebase_result =
-                    self.git_in_cache(&["rebase", &remote_ref]);
+                let rebase_result = self.git_in_cache(&["rebase", &remote_ref]);
                 if let Err(e) = &rebase_result {
                     let err_str = e.to_string();
                     if err_str.contains("unknown revision")
@@ -161,8 +160,7 @@ impl SyncManager {
         }
 
         // No unpushed commits — safe to reset to match remote
-        let reset_result =
-            self.git_in_cache(&["reset", "--hard", &remote_ref]);
+        let reset_result = self.git_in_cache(&["reset", "--hard", &remote_ref]);
         if let Err(e) = &reset_result {
             let err_str = e.to_string();
             // If the remote branch doesn't exist yet, that's fine
