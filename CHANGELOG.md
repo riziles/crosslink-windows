@@ -84,6 +84,7 @@ context-compression resilience.
 - Database schema v7→v8 migration (adds `last_action` column to sessions, auto-applied on first use)
 
 ### Added
+- Add git clone fallback for cpitd install (#6)
 - Add `crosslink integrity` subcommand with `--check` and `--repair` modes (#31)
 - Add `--check` flag to `review diff` for CI policy drift detection (#28)
 - Add kickoff workflow skills (`/feature`, `/featree`, `/kickoff`, `/check`) to `crosslink init` (#26)
