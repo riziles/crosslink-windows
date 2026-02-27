@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.2-alpha.1] - 2026-02-27
+
+### Fixed
+- SyncManager now detects when running inside a git worktree and reuses the main repo's hub cache instead of trying to create a duplicate `crosslink/hub` worktree (#41)
+- Set git user config in test helper for CI compatibility
+
+### Changed
+- Kickoff skill (`/kickoff`) now supports `--verify` flag with three levels: `local` (default), `ci`, and `thorough` for post-implementation verification (#39)
+- Updated `/kickoff` and `/featree` skill permissions to cover all tools used during execution (added `Write`, `Read`, `Bash(echo *)`, `Bash(crosslink *)`) (#42)
+- Featree skill now uses `crosslink init --force` and `crosslink sync` instead of manual database symlinking for worktree initialization (#42)
+
+### Removed
+- Stale `.chainlink/` directory (legacy issue tracker artifacts)
+- Tracked `crosslink/.crosslink/issues.db` (should be local-only)
+
 ## [0.1.1-alpha.1] - 2026-02-26
 
 ### Multi-Agent Collaboration
