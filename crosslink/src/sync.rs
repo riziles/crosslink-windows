@@ -857,7 +857,14 @@ mod tests {
             .output()
             .unwrap();
         Command::new("git")
-            .args(["-C", &path.to_string_lossy(), "commit", "--allow-empty", "-m", "init"])
+            .args([
+                "-C",
+                &path.to_string_lossy(),
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ])
             .output()
             .unwrap();
     }
@@ -893,7 +900,12 @@ mod tests {
 
         // Create a branch and worktree
         Command::new("git")
-            .args(["-C", &main_root.to_string_lossy(), "branch", "feature/wt-test"])
+            .args([
+                "-C",
+                &main_root.to_string_lossy(),
+                "branch",
+                "feature/wt-test",
+            ])
             .output()
             .unwrap();
 
@@ -901,8 +913,10 @@ mod tests {
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
         Command::new("git")
             .args([
-                "-C", &main_root.to_string_lossy(),
-                "worktree", "add",
+                "-C",
+                &main_root.to_string_lossy(),
+                "worktree",
+                "add",
                 &wt_path.to_string_lossy(),
                 "feature/wt-test",
             ])
@@ -929,15 +943,22 @@ mod tests {
 
         // Create worktree
         Command::new("git")
-            .args(["-C", &main_root.to_string_lossy(), "branch", "feature/hub-test"])
+            .args([
+                "-C",
+                &main_root.to_string_lossy(),
+                "branch",
+                "feature/hub-test",
+            ])
             .output()
             .unwrap();
         let wt_path = main_root.join(".worktrees").join("hub-test");
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
         Command::new("git")
             .args([
-                "-C", &main_root.to_string_lossy(),
-                "worktree", "add",
+                "-C",
+                &main_root.to_string_lossy(),
+                "worktree",
+                "add",
                 &wt_path.to_string_lossy(),
                 "feature/hub-test",
             ])
@@ -954,10 +975,7 @@ mod tests {
         let expected_parent = main_crosslink.canonicalize().unwrap();
         let actual_parent = manager.cache_dir.parent().unwrap().canonicalize().unwrap();
         assert_eq!(actual_parent, expected_parent);
-        assert_eq!(
-            manager.cache_dir.file_name().unwrap(),
-            HUB_CACHE_DIR
-        );
+        assert_eq!(manager.cache_dir.file_name().unwrap(), HUB_CACHE_DIR);
 
         // repo_root should be the main repo, not the worktree
         assert_eq!(
