@@ -8,6 +8,7 @@ mod lock_check;
 mod locks;
 mod models;
 mod shared_writer;
+mod signing;
 mod sync;
 mod utils;
 
@@ -48,6 +49,12 @@ enum Commands {
         /// Skip automatic cpitd installation
         #[arg(long)]
         skip_cpitd: bool,
+        /// Skip driver SSH signing key setup
+        #[arg(long)]
+        skip_signing: bool,
+        /// Path to SSH key for commit signing (auto-detected if omitted)
+        #[arg(long)]
+        signing_key: Option<String>,
     },
 
     /// Create a new issue
@@ -368,6 +375,12 @@ enum Commands {
         action: AgentCommands,
     },
 
+    /// Manage signing trust (approve/revoke agent keys)
+    Trust {
+        #[command(subcommand)]
+        action: TrustCommands,
+    },
+
     /// View and manage issue locks
     Locks {
         #[command(subcommand)]
@@ -543,9 +556,35 @@ enum AgentCommands {
         /// Agent description
         #[arg(short, long)]
         description: Option<String>,
+        /// Skip SSH key generation
+        #[arg(long)]
+        no_key: bool,
     },
     /// Show current agent identity
     Status,
+}
+
+#[derive(Subcommand)]
+enum TrustCommands {
+    /// Approve an agent's signing key
+    Approve {
+        /// Agent ID to approve
+        agent_id: String,
+    },
+    /// Revoke an agent's signing key
+    Revoke {
+        /// Agent ID to revoke
+        agent_id: String,
+    },
+    /// List all trusted signers
+    List,
+    /// Show agent keys awaiting approval
+    Pending,
+    /// Check trust status of a specific agent
+    Check {
+        /// Agent ID to check
+        agent_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -701,9 +740,18 @@ fn main() -> Result<()> {
             force,
             python_prefix,
             skip_cpitd,
+            skip_signing,
+            signing_key,
         } => {
             let cwd = env::current_dir()?;
-            commands::init::run(&cwd, force, python_prefix.as_deref(), skip_cpitd)
+            commands::init::run(
+                &cwd,
+                force,
+                python_prefix.as_deref(),
+                skip_cpitd,
+                skip_signing,
+                signing_key.as_deref(),
+            )
         }
 
         Commands::Create {
@@ -1103,8 +1151,28 @@ fn main() -> Result<()> {
                 AgentCommands::Init {
                     agent_id,
                     description,
-                } => commands::agent::init(&crosslink_dir, &agent_id, description.as_deref()),
+                    no_key,
+                } => {
+                    commands::agent::init(&crosslink_dir, &agent_id, description.as_deref(), no_key)
+                }
                 AgentCommands::Status => commands::agent::status(&crosslink_dir),
+            }
+        }
+
+        Commands::Trust { action } => {
+            let crosslink_dir = find_crosslink_dir()?;
+            match action {
+                TrustCommands::Approve { agent_id } => {
+                    commands::trust::approve(&crosslink_dir, &agent_id)
+                }
+                TrustCommands::Revoke { agent_id } => {
+                    commands::trust::revoke(&crosslink_dir, &agent_id)
+                }
+                TrustCommands::List => commands::trust::list(&crosslink_dir),
+                TrustCommands::Pending => commands::trust::pending(&crosslink_dir),
+                TrustCommands::Check { agent_id } => {
+                    commands::trust::check(&crosslink_dir, &agent_id)
+                }
             }
         }
 
