@@ -9,8 +9,6 @@
 
 AI coding assistants forget everything between conversations. Crosslink gives them persistent memory — sessions, handoff notes, issue tracking, and breadcrumbs that survive context compression and session restarts.
 
-![Crosslink: The Missing Memory Layer for AI-Assisted Development](images/infographic.png)
-
 ## Why Crosslink?
 
 Every time an AI assistant's context window fills up or you start a new conversation, the AI loses all context about what it was doing, what's done, and what's next. You end up repeating yourself, re-explaining decisions, and watching the AI redo work.
