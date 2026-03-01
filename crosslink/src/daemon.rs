@@ -126,10 +126,20 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
     let mut consecutive_sync_failures: u32 = 0;
     const FAILURE_WARN_THRESHOLD: u32 = 5;
 
+    // Graceful shutdown: set should_exit on SIGTERM/SIGINT and stdin closure.
+    let should_exit = Arc::new(AtomicBool::new(false));
+
+    // Register signal handlers for graceful shutdown
+    #[cfg(unix)]
+    {
+        let flag = Arc::clone(&should_exit);
+        let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag));
+        let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag));
+    }
+
     // Zombie prevention: Monitor stdin for closure.
     // When the parent process (VS Code) dies, stdin will be closed.
     // This thread detects that and signals the main loop to exit.
-    let should_exit = Arc::new(AtomicBool::new(false));
     let should_exit_clone = Arc::clone(&should_exit);
 
     thread::spawn(move || {
