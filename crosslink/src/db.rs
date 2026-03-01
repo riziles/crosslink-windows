@@ -345,9 +345,10 @@ impl Database {
     ) -> Result<i64> {
         validate_priority(priority)?;
         let now = Utc::now().to_rfc3339();
+        let uuid = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
-            "INSERT INTO issues (title, description, priority, parent_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5)",
-            params![title, description, priority, parent_id, now],
+            "INSERT INTO issues (title, description, priority, parent_id, status, created_at, updated_at, uuid) VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5, ?6)",
+            params![title, description, priority, parent_id, now, uuid],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
