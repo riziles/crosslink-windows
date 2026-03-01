@@ -576,9 +576,13 @@ impl SyncManager {
 
         let mut stale = Vec::new();
         for (issue_id_str, lock) in &locks.locks {
-            let has_fresh_heartbeat = heartbeats
-                .iter()
-                .any(|hb| hb.agent_id == lock.agent_id && (now - hb.last_heartbeat) < timeout);
+            let has_fresh_heartbeat = heartbeats.iter().any(|hb| {
+                hb.agent_id == lock.agent_id
+                    && now
+                        .signed_duration_since(hb.last_heartbeat)
+                        .max(chrono::Duration::zero())
+                        < timeout
+            });
             if !has_fresh_heartbeat {
                 if let Ok(id) = issue_id_str.parse::<i64>() {
                     stale.push((id, lock.agent_id.clone()));
