@@ -444,14 +444,23 @@ fn group_matches(indices: &[usize], context: usize) -> Vec<Vec<usize>> {
     let mut groups: Vec<Vec<usize>> = Vec::new();
 
     for &idx in indices {
-        if let Some(last_group) = groups.last_mut() {
-            let last_idx = *last_group.last().unwrap();
-            if idx <= last_idx + 2 * context + 1 {
-                last_group.push(idx);
-                continue;
+        let merged = if let Some(last_group) = groups.last_mut() {
+            if let Some(&last_idx) = last_group.last() {
+                if idx <= last_idx + 2 * context + 1 {
+                    last_group.push(idx);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             }
+        } else {
+            false
+        };
+        if !merged {
+            groups.push(vec![idx]);
         }
-        groups.push(vec![idx]);
     }
 
     groups
