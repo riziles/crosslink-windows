@@ -416,11 +416,21 @@ impl SyncManager {
                             sig,
                         ) {
                             Ok(true) => verified += 1,
-                            Ok(false) => failed += 1,
-                            Err(_) => {
+                            Ok(false) => {
+                                eprintln!(
+                                    "warning: signature verification failed for comment {} by '{}' (signer: {})",
+                                    comment.id, comment.author, fingerprint
+                                );
+                                failed += 1;
+                            }
+                            Err(e) => {
                                 // Verification unavailable (no allowed_signers, no ssh-keygen)
                                 // Treat as unverifiable but not failed
                                 if allowed_signers_path.exists() {
+                                    eprintln!(
+                                        "warning: signature verification error for comment {} by '{}': {}",
+                                        comment.id, comment.author, e
+                                    );
                                     failed += 1;
                                 } else {
                                     // Can't verify without allowed_signers — count as signed but unverifiable
