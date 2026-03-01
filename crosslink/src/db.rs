@@ -79,6 +79,31 @@ impl Database {
         }
     }
 
+    /// Run a migration statement, logging unexpected errors.
+    /// Expected errors (duplicate column, table already exists) are silently ignored.
+    fn migrate(&self, sql: &str) {
+        if let Err(e) = self.conn.execute(sql, []) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column")
+                && !msg.contains("already exists")
+            {
+                eprintln!("warning: migration error ({}): {}", sql.trim(), msg);
+            }
+        }
+    }
+
+    /// Run a batch migration statement, logging unexpected errors.
+    fn migrate_batch(&self, sql: &str) {
+        if let Err(e) = self.conn.execute_batch(sql) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column")
+                && !msg.contains("already exists")
+            {
+                eprintln!("warning: migration batch error: {}", msg);
+            }
+        }
+    }
+
     fn init_schema(&self) -> Result<()> {
         // Check if we need to initialize
         let version: i32 = self
@@ -199,15 +224,14 @@ impl Database {
             )?;
 
             // Migration: add parent_id column if upgrading from v1
-            let _ = self.conn.execute(
+            self.migrate(
                 "ALTER TABLE issues ADD COLUMN parent_id INTEGER REFERENCES issues(id) ON DELETE CASCADE",
-                [],
             );
 
             // Migration v7: Recreate sessions table with ON DELETE SET NULL for active_issue_id
             // This ensures deleting an issue clears the session reference instead of failing
             if version < 7 {
-                let _ = self.conn.execute_batch(
+                self.migrate_batch(
                     r#"
                     CREATE TABLE IF NOT EXISTS sessions_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,62 +250,38 @@ impl Database {
 
             // Migration v8: Add last_action column to sessions table
             if version < 8 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE sessions ADD COLUMN last_action TEXT", []);
+                self.migrate("ALTER TABLE sessions ADD COLUMN last_action TEXT");
             }
 
             // Migration v9: Add agent_id column to sessions table
             if version < 9 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE sessions ADD COLUMN agent_id TEXT", []);
+                self.migrate("ALTER TABLE sessions ADD COLUMN agent_id TEXT");
             }
 
             // Migration v10: Add uuid columns for shared issue coordination
             if version < 10 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE issues ADD COLUMN uuid TEXT", []);
-                let _ = self.conn.execute(
+                self.migrate("ALTER TABLE issues ADD COLUMN uuid TEXT");
+                self.migrate(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_uuid ON issues(uuid)",
-                    [],
                 );
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE issues ADD COLUMN created_by TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN uuid TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN author TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE milestones ADD COLUMN uuid TEXT", []);
-                let _ = self.conn.execute(
+                self.migrate("ALTER TABLE issues ADD COLUMN created_by TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN uuid TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN author TEXT");
+                self.migrate("ALTER TABLE milestones ADD COLUMN uuid TEXT");
+                self.migrate(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_uuid ON milestones(uuid)",
-                    [],
                 );
             }
 
             // Migration v11: Add kind column to comments for typed audit trail
             if version < 11 {
-                let _ = self.conn.execute(
-                    "ALTER TABLE comments ADD COLUMN kind TEXT DEFAULT 'note'",
-                    [],
-                );
+                self.migrate("ALTER TABLE comments ADD COLUMN kind TEXT DEFAULT 'note'");
             }
 
             // Migration v12: Add trigger_type and intervention_context for driver intervention tracking
             if version < 12 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN trigger_type TEXT", []);
-                let _ = self.conn.execute(
-                    "ALTER TABLE comments ADD COLUMN intervention_context TEXT",
-                    [],
-                );
+                self.migrate("ALTER TABLE comments ADD COLUMN trigger_type TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN intervention_context TEXT");
             }
 
             self.conn
