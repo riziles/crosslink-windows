@@ -1328,15 +1328,13 @@ fn main() -> Result<()> {
                     description,
                     no_key,
                     force,
-                } => {
-                    commands::agent::init(
-                        &crosslink_dir,
-                        &agent_id,
-                        description.as_deref(),
-                        no_key,
-                        force,
-                    )
-                }
+                } => commands::agent::init(
+                    &crosslink_dir,
+                    &agent_id,
+                    description.as_deref(),
+                    no_key,
+                    force,
+                ),
                 AgentCommands::Status => commands::agent::status(&crosslink_dir),
             }
         }
