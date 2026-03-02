@@ -18,6 +18,9 @@ include = [
     "build.rs",
     "LICENSE",
 ]
+exclude = [     
+    "**/__pycache__/**",
+]
 
 [lib]
 name = "crosslink"
