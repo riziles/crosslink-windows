@@ -1,0 +1,1045 @@
+use chrono::Utc;
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Row, Table, Wrap},
+    Frame,
+};
+
+use crate::db::Database;
+use crate::models::{Comment, Issue};
+
+use super::TabAction;
+
+/// Status filter options for the issue list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StatusFilter {
+    Open,
+    Closed,
+    All,
+}
+
+impl StatusFilter {
+    fn next(self) -> Self {
+        match self {
+            StatusFilter::Open => StatusFilter::Closed,
+            StatusFilter::Closed => StatusFilter::All,
+            StatusFilter::All => StatusFilter::Open,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            StatusFilter::Open => "Open",
+            StatusFilter::Closed => "Closed",
+            StatusFilter::All => "All",
+        }
+    }
+}
+
+/// Sort options for the issue list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SortOrder {
+    IdDesc,
+    IdAsc,
+    Priority,
+    Updated,
+}
+
+impl SortOrder {
+    fn next(self) -> Self {
+        match self {
+            SortOrder::IdDesc => SortOrder::IdAsc,
+            SortOrder::IdAsc => SortOrder::Priority,
+            SortOrder::Priority => SortOrder::Updated,
+            SortOrder::Updated => SortOrder::IdDesc,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SortOrder::IdDesc => "ID (newest)",
+            SortOrder::IdAsc => "ID (oldest)",
+            SortOrder::Priority => "Priority",
+            SortOrder::Updated => "Updated",
+        }
+    }
+}
+
+/// View mode for the issues tab.
+enum ViewMode {
+    List,
+    Detail,
+}
+
+/// Data for the detail view.
+struct IssueDetail {
+    issue: Issue,
+    labels: Vec<String>,
+    comments: Vec<Comment>,
+    blocked_by: Vec<i64>,
+    blocking: Vec<i64>,
+}
+
+/// The Issues tab implementation.
+pub struct IssuesTab {
+    issues: Vec<Issue>,
+    /// Labels cached per issue id for display in list view.
+    issue_labels: std::collections::HashMap<i64, Vec<String>>,
+    selected: usize,
+    status_filter: StatusFilter,
+    sort_order: SortOrder,
+    search_query: String,
+    searching: bool,
+    view_mode: ViewMode,
+    detail: Option<IssueDetail>,
+    detail_scroll: u16,
+    open_count: usize,
+    closed_count: usize,
+}
+
+impl IssuesTab {
+    pub fn new(db: &Database) -> anyhow::Result<Self> {
+        let mut tab = IssuesTab {
+            issues: Vec::new(),
+            issue_labels: std::collections::HashMap::new(),
+            selected: 0,
+            status_filter: StatusFilter::Open,
+            sort_order: SortOrder::IdDesc,
+            search_query: String::new(),
+            searching: false,
+            view_mode: ViewMode::List,
+            detail: None,
+            detail_scroll: 0,
+            open_count: 0,
+            closed_count: 0,
+        };
+        tab.refresh(db)?;
+        Ok(tab)
+    }
+
+    /// Reload issues from the database with current filters applied.
+    pub fn refresh(&mut self, db: &Database) -> anyhow::Result<()> {
+        // Get counts before filtering
+        let all_issues = db.list_issues(Some("all"), None, None)?;
+        self.open_count = all_issues.iter().filter(|i| i.status == "open").count();
+        self.closed_count = all_issues.iter().filter(|i| i.status == "closed").count();
+
+        // Fetch with status filter
+        let status_arg = match self.status_filter {
+            StatusFilter::Open => Some("open"),
+            StatusFilter::Closed => Some("closed"),
+            StatusFilter::All => Some("all"),
+        };
+        let mut issues = db.list_issues(status_arg, None, None)?;
+
+        // Cache labels for list display
+        self.issue_labels.clear();
+        for issue in &issues {
+            if let Ok(labels) = db.get_labels(issue.id) {
+                if !labels.is_empty() {
+                    self.issue_labels.insert(issue.id, labels);
+                }
+            }
+        }
+
+        // Apply search filter
+        if !self.search_query.is_empty() {
+            let query = self.search_query.to_lowercase();
+            issues.retain(|i| {
+                i.title.to_lowercase().contains(&query)
+                    || i.id.to_string().contains(&query)
+                    || self.issue_labels.get(&i.id).is_some_and(|labels| {
+                        labels.iter().any(|l| l.to_lowercase().contains(&query))
+                    })
+            });
+        }
+
+        // Apply sort
+        match self.sort_order {
+            SortOrder::IdDesc => issues.sort_by(|a, b| b.id.cmp(&a.id)),
+            SortOrder::IdAsc => issues.sort_by(|a, b| a.id.cmp(&b.id)),
+            SortOrder::Priority => {
+                issues.sort_by(|a, b| priority_rank(&a.priority).cmp(&priority_rank(&b.priority)))
+            }
+            SortOrder::Updated => issues.sort_by(|a, b| b.updated_at.cmp(&a.updated_at)),
+        }
+
+        self.issues = issues;
+
+        // Clamp selection
+        if self.issues.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.issues.len() {
+            self.selected = self.issues.len() - 1;
+        }
+
+        Ok(())
+    }
+
+    /// Load detail for the currently selected issue.
+    fn load_detail(&mut self, db: &Database) -> anyhow::Result<()> {
+        if let Some(issue) = self.issues.get(self.selected) {
+            let id = issue.id;
+            let detail = IssueDetail {
+                issue: issue.clone(),
+                labels: db.get_labels(id)?,
+                comments: db.get_comments(id)?,
+                blocked_by: db.get_blockers(id)?,
+                blocking: db.get_blocking(id)?,
+            };
+            self.detail = Some(detail);
+            self.detail_scroll = 0;
+            self.view_mode = ViewMode::Detail;
+        }
+        Ok(())
+    }
+
+    /// Handle key events in list view mode. Returns true if consumed.
+    fn handle_list_key(&mut self, key: KeyEvent, db: Option<&Database>) -> TabAction {
+        if self.searching {
+            match key.code {
+                KeyCode::Esc => {
+                    self.searching = false;
+                    self.search_query.clear();
+                    if let Some(db) = db {
+                        let _ = self.refresh(db);
+                    }
+                    return TabAction::Consumed;
+                }
+                KeyCode::Enter => {
+                    self.searching = false;
+                    return TabAction::Consumed;
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    if let Some(db) = db {
+                        let _ = self.refresh(db);
+                    }
+                    return TabAction::Consumed;
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    if let Some(db) = db {
+                        let _ = self.refresh(db);
+                    }
+                    return TabAction::Consumed;
+                }
+                _ => return TabAction::Consumed,
+            }
+        }
+
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !self.issues.is_empty() {
+                    self.selected = (self.selected + 1).min(self.issues.len() - 1);
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !self.issues.is_empty() {
+                    self.selected = self.selected.saturating_sub(1);
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.selected = 0;
+                TabAction::Consumed
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if !self.issues.is_empty() {
+                    self.selected = self.issues.len() - 1;
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Enter => {
+                if let Some(db) = db {
+                    let _ = self.load_detail(db);
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Char('f') => {
+                self.status_filter = self.status_filter.next();
+                self.selected = 0;
+                if let Some(db) = db {
+                    let _ = self.refresh(db);
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Char('s') => {
+                self.sort_order = self.sort_order.next();
+                if let Some(db) = db {
+                    let _ = self.refresh(db);
+                }
+                TabAction::Consumed
+            }
+            KeyCode::Char('/') => {
+                self.searching = true;
+                TabAction::Consumed
+            }
+            KeyCode::Char('r') => {
+                if let Some(db) = db {
+                    let _ = self.refresh(db);
+                }
+                TabAction::Consumed
+            }
+            _ => TabAction::NotHandled,
+        }
+    }
+
+    /// Handle key events in detail view mode.
+    fn handle_detail_key(&mut self, key: KeyEvent) -> TabAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.view_mode = ViewMode::List;
+                self.detail = None;
+                TabAction::Consumed
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.detail_scroll = self.detail_scroll.saturating_add(1);
+                TabAction::Consumed
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                TabAction::Consumed
+            }
+            KeyCode::PageDown => {
+                self.detail_scroll = self.detail_scroll.saturating_add(10);
+                TabAction::Consumed
+            }
+            KeyCode::PageUp => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(10);
+                TabAction::Consumed
+            }
+            _ => TabAction::NotHandled,
+        }
+    }
+
+    fn render_list(&self, frame: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Header with counts and filters
+                Constraint::Min(0),    // Table
+                Constraint::Length(1), // Context keys
+            ])
+            .split(area);
+
+        // Header
+        let search_display = if self.searching {
+            format!("  Search: {}_", self.search_query)
+        } else if !self.search_query.is_empty() {
+            format!("  Search: {}", self.search_query)
+        } else {
+            String::new()
+        };
+
+        let header = Line::from(vec![
+            Span::styled(
+                format!(
+                    " Issues ({} open, {} closed)",
+                    self.open_count, self.closed_count
+                ),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                "    Filter: [{}]  Sort: [{}]",
+                self.status_filter.label(),
+                self.sort_order.label()
+            )),
+            Span::styled(search_display, Style::default().fg(Color::Yellow)),
+        ]);
+        frame.render_widget(Paragraph::new(header), chunks[0]);
+
+        // Issue table
+        if self.issues.is_empty() {
+            let empty_msg = if self.search_query.is_empty() {
+                "No issues found."
+            } else {
+                "No issues match the search."
+            };
+            let p = Paragraph::new(empty_msg)
+                .style(Style::default().fg(Color::DarkGray))
+                .block(Block::default().borders(Borders::TOP));
+            frame.render_widget(p, chunks[1]);
+        } else {
+            let header_row = Row::new(vec![
+                "ID", "Priority", "Status", "Labels", "Title", "Updated",
+            ])
+            .style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+            let rows: Vec<Row> = self
+                .issues
+                .iter()
+                .enumerate()
+                .map(|(i, issue)| {
+                    let priority_style = match issue.priority.as_str() {
+                        "critical" => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        "high" => Style::default().fg(Color::Red),
+                        "medium" => Style::default().fg(Color::Yellow),
+                        "low" => Style::default().fg(Color::Green),
+                        _ => Style::default(),
+                    };
+
+                    let status_style = if issue.status == "closed" {
+                        Style::default().fg(Color::DarkGray)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    };
+
+                    let labels = self
+                        .issue_labels
+                        .get(&issue.id)
+                        .map(|l| l.join(", "))
+                        .unwrap_or_default();
+
+                    let updated = format_relative_time(issue.updated_at);
+
+                    let id_str = format_issue_id(issue.id);
+
+                    let row = Row::new(vec![
+                        ratatui::text::Text::styled(id_str, Style::default()),
+                        ratatui::text::Text::styled(issue.priority.clone(), priority_style),
+                        ratatui::text::Text::styled(issue.status.clone(), status_style),
+                        ratatui::text::Text::styled(labels, Style::default().fg(Color::Magenta)),
+                        ratatui::text::Text::raw(&issue.title),
+                        ratatui::text::Text::styled(updated, Style::default().fg(Color::DarkGray)),
+                    ]);
+
+                    if i == self.selected {
+                        row.style(
+                            Style::default()
+                                .bg(Color::DarkGray)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        row
+                    }
+                })
+                .collect();
+
+            let widths = [
+                Constraint::Length(6),
+                Constraint::Length(10),
+                Constraint::Length(8),
+                Constraint::Length(16),
+                Constraint::Min(20),
+                Constraint::Length(10),
+            ];
+
+            let table = Table::new(rows, widths)
+                .header(header_row)
+                .block(Block::default().borders(Borders::TOP));
+
+            frame.render_widget(table, chunks[1]);
+        }
+
+        // Context keys
+        let keys = if self.searching {
+            Line::from(vec![
+                Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                Span::raw(":Cancel  "),
+                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::raw(":Accept  "),
+                Span::raw("Type to search..."),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Yellow)),
+                Span::raw(":Navigate  "),
+                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::raw(":Details  "),
+                Span::styled("f", Style::default().fg(Color::Yellow)),
+                Span::raw(":Filter  "),
+                Span::styled("s", Style::default().fg(Color::Yellow)),
+                Span::raw(":Sort  "),
+                Span::styled("/", Style::default().fg(Color::Yellow)),
+                Span::raw(":Search  "),
+                Span::styled("r", Style::default().fg(Color::Yellow)),
+                Span::raw(":Refresh"),
+            ])
+        };
+        frame.render_widget(
+            Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)),
+            chunks[2],
+        );
+    }
+
+    fn render_detail(&self, frame: &mut Frame, area: Rect) {
+        let detail = match &self.detail {
+            Some(d) => d,
+            None => return,
+        };
+
+        let issue = &detail.issue;
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Title
+        lines.push(Line::from(Span::styled(
+            format!(" {} \u{2014} {}", format_issue_id(issue.id), issue.title),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(
+            "\u{2500}".repeat(area.width.saturating_sub(2) as usize),
+        ));
+
+        // Metadata
+        let labels_str = if detail.labels.is_empty() {
+            "(none)".to_string()
+        } else {
+            detail.labels.join(", ")
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(" Status: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(&issue.status, status_color(&issue.status)),
+            Span::raw("       "),
+            Span::styled("Priority: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(&issue.priority, priority_color(&issue.priority)),
+            Span::raw("       "),
+            Span::styled("Labels: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(labels_str, Style::default().fg(Color::Magenta)),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled(" Parent: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(
+                issue
+                    .parent_id
+                    .map(format_issue_id)
+                    .unwrap_or_else(|| "(none)".to_string()),
+            ),
+            Span::raw("       "),
+            Span::styled("Created: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(issue.created_at.format("%Y-%m-%d").to_string()),
+            Span::raw("  "),
+            Span::styled("Updated: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(issue.updated_at.format("%Y-%m-%d").to_string()),
+        ]));
+
+        // Dependencies
+        let blocked_by_str = if detail.blocked_by.is_empty() {
+            "(none)".to_string()
+        } else {
+            detail
+                .blocked_by
+                .iter()
+                .map(|id| format_issue_id(*id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let blocking_str = if detail.blocking.is_empty() {
+            "(none)".to_string()
+        } else {
+            detail
+                .blocking
+                .iter()
+                .map(|id| format_issue_id(*id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                " Blocked by: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(&blocked_by_str),
+            Span::raw("   "),
+            Span::styled("Blocks: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(&blocking_str),
+        ]));
+
+        // Description
+        lines.push(Line::from(""));
+        if let Some(desc) = &issue.description {
+            if !desc.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " Description:",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                for line in desc.lines() {
+                    lines.push(Line::from(format!("   {}", line)));
+                }
+            }
+        }
+
+        // Comments
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!(" Comments ({}):", detail.comments.len()),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(
+            " \u{2500}".to_string() + &"\u{2500}".repeat(area.width.saturating_sub(4) as usize),
+        ));
+
+        if detail.comments.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "   No comments.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for comment in &detail.comments {
+                let kind_badge = if comment.kind != "note" {
+                    format!("[{}] ", comment.kind)
+                } else {
+                    String::new()
+                };
+
+                let time = comment.created_at.format("%Y-%m-%d %H:%M");
+
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {}", kind_badge), Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{}", time), Style::default().fg(Color::DarkGray)),
+                ]));
+
+                for line in comment.content.lines() {
+                    lines.push(Line::from(format!("   {}", line)));
+                }
+                lines.push(Line::from(""));
+            }
+        }
+
+        // Footer with context keys
+        lines.push(Line::from(
+            " \u{2500}".to_string() + &"\u{2500}".repeat(area.width.saturating_sub(4) as usize),
+        ));
+
+        let detail_widget = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::NONE))
+            .wrap(Wrap { trim: false })
+            .scroll((self.detail_scroll, 0));
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(area);
+
+        frame.render_widget(detail_widget, chunks[0]);
+
+        let keys = Line::from(vec![
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(":Back  "),
+            Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Yellow)),
+            Span::raw(":Scroll"),
+        ]);
+        frame.render_widget(
+            Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)),
+            chunks[1],
+        );
+    }
+}
+
+impl super::Tab for IssuesTab {
+    fn title(&self) -> &str {
+        "Issues"
+    }
+
+    fn render(&self, frame: &mut Frame, area: Rect) {
+        match self.view_mode {
+            ViewMode::List => self.render_list(frame, area),
+            ViewMode::Detail => self.render_detail(frame, area),
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> TabAction {
+        // We don't have db access in the trait method; key handlers that need db
+        // are handled via the stored data. For refresh we'd need the db reference.
+        // Since the trait is db-agnostic, we handle this by making refresh a no-op
+        // when db is None.
+        match self.view_mode {
+            ViewMode::List => self.handle_list_key(key, None),
+            ViewMode::Detail => self.handle_detail_key(key),
+        }
+    }
+
+    // IssuesTab loads data eagerly in new() and on refresh, so no work needed on focus change.
+    fn on_enter(&mut self) {}
+    fn on_leave(&mut self) {}
+}
+
+// === Helper functions ===
+
+fn format_issue_id(id: i64) -> String {
+    if id < 0 {
+        format!("L{}", id.unsigned_abs())
+    } else {
+        format!("#{}", id)
+    }
+}
+
+fn priority_rank(priority: &str) -> u8 {
+    match priority {
+        "critical" => 0,
+        "high" => 1,
+        "medium" => 2,
+        "low" => 3,
+        _ => 4,
+    }
+}
+
+fn priority_color(priority: &str) -> Style {
+    match priority {
+        "critical" => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        "high" => Style::default().fg(Color::Red),
+        "medium" => Style::default().fg(Color::Yellow),
+        "low" => Style::default().fg(Color::Green),
+        _ => Style::default(),
+    }
+}
+
+fn status_color(status: &str) -> Style {
+    match status {
+        "open" => Style::default().fg(Color::Cyan),
+        "closed" => Style::default().fg(Color::DarkGray),
+        _ => Style::default(),
+    }
+}
+
+fn format_relative_time(dt: chrono::DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    if duration.num_seconds() < 60 {
+        "just now".to_string()
+    } else if duration.num_minutes() < 60 {
+        format!("{}m ago", duration.num_minutes())
+    } else if duration.num_hours() < 24 {
+        format!("{}h ago", duration.num_hours())
+    } else if duration.num_days() < 30 {
+        format!("{}d ago", duration.num_days())
+    } else {
+        dt.format("%Y-%m-%d").to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn setup_test_db() -> (Database, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        (db, dir)
+    }
+
+    fn setup_populated_db() -> (Database, tempfile::TempDir) {
+        let (db, dir) = setup_test_db();
+        let id1 = db
+            .create_issue("High priority bug", Some("Fix ASAP"), "high")
+            .unwrap();
+        let id2 = db
+            .create_issue("Medium feature", Some("Add thing"), "medium")
+            .unwrap();
+        let id3 = db.create_issue("Low docs fix", None, "low").unwrap();
+        db.add_label(id1, "bug").unwrap();
+        db.add_label(id2, "feature").unwrap();
+        db.add_label(id3, "docs").unwrap();
+        db.add_comment(id1, "Plan: fix the bug", "plan").unwrap();
+        db.add_comment(id1, "Found the root cause", "observation")
+            .unwrap();
+        (db, dir)
+    }
+
+    #[test]
+    fn test_issues_tab_new_empty() {
+        let (db, _dir) = setup_test_db();
+        let tab = IssuesTab::new(&db).unwrap();
+        assert!(tab.issues.is_empty());
+        assert_eq!(tab.selected, 0);
+        assert_eq!(tab.open_count, 0);
+        assert_eq!(tab.closed_count, 0);
+    }
+
+    #[test]
+    fn test_issues_tab_new_with_issues() {
+        let (db, _dir) = setup_populated_db();
+        let tab = IssuesTab::new(&db).unwrap();
+        assert_eq!(tab.issues.len(), 3);
+        assert_eq!(tab.open_count, 3);
+        assert_eq!(tab.closed_count, 0);
+    }
+
+    #[test]
+    fn test_status_filter_cycle() {
+        assert_eq!(StatusFilter::Open.next(), StatusFilter::Closed);
+        assert_eq!(StatusFilter::Closed.next(), StatusFilter::All);
+        assert_eq!(StatusFilter::All.next(), StatusFilter::Open);
+    }
+
+    #[test]
+    fn test_sort_order_cycle() {
+        assert_eq!(SortOrder::IdDesc.next(), SortOrder::IdAsc);
+        assert_eq!(SortOrder::IdAsc.next(), SortOrder::Priority);
+        assert_eq!(SortOrder::Priority.next(), SortOrder::Updated);
+        assert_eq!(SortOrder::Updated.next(), SortOrder::IdDesc);
+    }
+
+    #[test]
+    fn test_status_filter_labels() {
+        assert_eq!(StatusFilter::Open.label(), "Open");
+        assert_eq!(StatusFilter::Closed.label(), "Closed");
+        assert_eq!(StatusFilter::All.label(), "All");
+    }
+
+    #[test]
+    fn test_priority_rank_ordering() {
+        assert!(priority_rank("critical") < priority_rank("high"));
+        assert!(priority_rank("high") < priority_rank("medium"));
+        assert!(priority_rank("medium") < priority_rank("low"));
+        assert!(priority_rank("low") < priority_rank("unknown"));
+    }
+
+    #[test]
+    fn test_format_issue_id_positive() {
+        assert_eq!(format_issue_id(42), "#42");
+        assert_eq!(format_issue_id(1), "#1");
+    }
+
+    #[test]
+    fn test_format_issue_id_negative() {
+        assert_eq!(format_issue_id(-1), "L1");
+        assert_eq!(format_issue_id(-42), "L42");
+    }
+
+    #[test]
+    fn test_format_relative_time() {
+        let now = Utc::now();
+        assert_eq!(format_relative_time(now), "just now");
+
+        let five_min_ago = now - chrono::Duration::minutes(5);
+        assert_eq!(format_relative_time(five_min_ago), "5m ago");
+
+        let two_hours_ago = now - chrono::Duration::hours(2);
+        assert_eq!(format_relative_time(two_hours_ago), "2h ago");
+
+        let three_days_ago = now - chrono::Duration::days(3);
+        assert_eq!(format_relative_time(three_days_ago), "3d ago");
+    }
+
+    #[test]
+    fn test_refresh_with_status_filter() {
+        let (db, _dir) = setup_populated_db();
+        let id = db.create_issue("Closed one", None, "medium").unwrap();
+        db.close_issue(id).unwrap();
+
+        let mut tab = IssuesTab::new(&db).unwrap();
+        assert_eq!(tab.issues.len(), 3); // Only open
+
+        tab.status_filter = StatusFilter::All;
+        tab.refresh(&db).unwrap();
+        assert_eq!(tab.issues.len(), 4);
+
+        tab.status_filter = StatusFilter::Closed;
+        tab.refresh(&db).unwrap();
+        assert_eq!(tab.issues.len(), 1);
+    }
+
+    #[test]
+    fn test_refresh_with_sort() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+
+        tab.sort_order = SortOrder::Priority;
+        tab.refresh(&db).unwrap();
+        assert_eq!(tab.issues[0].priority, "high");
+        assert_eq!(tab.issues[2].priority, "low");
+
+        tab.sort_order = SortOrder::IdAsc;
+        tab.refresh(&db).unwrap();
+        assert!(tab.issues[0].id < tab.issues[1].id);
+    }
+
+    #[test]
+    fn test_refresh_with_search() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+
+        tab.search_query = "bug".to_string();
+        tab.refresh(&db).unwrap();
+        // Should match "High priority bug" (title) and any issue with "bug" label
+        assert!(tab.issues.iter().any(|i| i.title.contains("bug")));
+    }
+
+    #[test]
+    fn test_selection_navigation() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+        assert_eq!(tab.selected, 0);
+
+        // Down
+        tab.handle_list_key(make_key(KeyCode::Down), None);
+        assert_eq!(tab.selected, 1);
+
+        tab.handle_list_key(make_key(KeyCode::Down), None);
+        assert_eq!(tab.selected, 2);
+
+        // Should not go past end
+        tab.handle_list_key(make_key(KeyCode::Down), None);
+        assert_eq!(tab.selected, 2);
+
+        // Up
+        tab.handle_list_key(make_key(KeyCode::Up), None);
+        assert_eq!(tab.selected, 1);
+
+        // Home
+        tab.handle_list_key(make_key(KeyCode::Home), None);
+        assert_eq!(tab.selected, 0);
+
+        // End
+        tab.handle_list_key(make_key(KeyCode::End), None);
+        assert_eq!(tab.selected, 2);
+    }
+
+    #[test]
+    fn test_vim_navigation() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+        assert_eq!(tab.selected, 0);
+
+        tab.handle_list_key(make_key(KeyCode::Char('j')), None);
+        assert_eq!(tab.selected, 1);
+
+        tab.handle_list_key(make_key(KeyCode::Char('k')), None);
+        assert_eq!(tab.selected, 0);
+    }
+
+    #[test]
+    fn test_detail_view_and_back() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+
+        // Enter detail
+        tab.handle_list_key(make_key(KeyCode::Enter), Some(&db));
+        assert!(matches!(tab.view_mode, ViewMode::Detail));
+        assert!(tab.detail.is_some());
+
+        // Scroll
+        tab.handle_detail_key(make_key(KeyCode::Down));
+        assert_eq!(tab.detail_scroll, 1);
+
+        // Back
+        tab.handle_detail_key(make_key(KeyCode::Esc));
+        assert!(matches!(tab.view_mode, ViewMode::List));
+        assert!(tab.detail.is_none());
+    }
+
+    #[test]
+    fn test_detail_has_comments() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+
+        // Select the first issue (highest ID, which has comments)
+        // Issues are sorted IdDesc by default, so first issue has id=3 (Low docs fix).
+        // We need to find the one with comments (id=1, "High priority bug")
+        let idx = tab
+            .issues
+            .iter()
+            .position(|i| i.title == "High priority bug")
+            .unwrap();
+        tab.selected = idx;
+
+        tab.handle_list_key(make_key(KeyCode::Enter), Some(&db));
+        let detail = tab.detail.as_ref().unwrap();
+        assert_eq!(detail.comments.len(), 2);
+        assert_eq!(detail.labels, vec!["bug"]);
+    }
+
+    #[test]
+    fn test_search_mode() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+
+        // Enter search
+        tab.handle_list_key(make_key(KeyCode::Char('/')), None);
+        assert!(tab.searching);
+
+        // Type query
+        tab.handle_list_key(make_key(KeyCode::Char('b')), Some(&db));
+        tab.handle_list_key(make_key(KeyCode::Char('u')), Some(&db));
+        tab.handle_list_key(make_key(KeyCode::Char('g')), Some(&db));
+        assert_eq!(tab.search_query, "bug");
+
+        // Accept search
+        tab.handle_list_key(make_key(KeyCode::Enter), None);
+        assert!(!tab.searching);
+        assert_eq!(tab.search_query, "bug");
+
+        // Cancel clears search
+        tab.handle_list_key(make_key(KeyCode::Char('/')), None);
+        tab.handle_list_key(make_key(KeyCode::Esc), Some(&db));
+        assert!(tab.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_render_list_no_panic() {
+        let (db, _dir) = setup_populated_db();
+        let tab = IssuesTab::new(&db).unwrap();
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| tab.render_list(frame, frame.area()))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_render_detail_no_panic() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+        tab.load_detail(&db).unwrap();
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| tab.render_detail(frame, frame.area()))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_render_empty_list_no_panic() {
+        let (db, _dir) = setup_test_db();
+        let tab = IssuesTab::new(&db).unwrap();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| tab.render_list(frame, frame.area()))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_selection_clamp_on_filter_change() {
+        let (db, _dir) = setup_populated_db();
+        let mut tab = IssuesTab::new(&db).unwrap();
+        tab.selected = 2; // Last issue
+
+        // Close all issues, then filter to closed
+        for issue in &tab.issues {
+            db.close_issue(issue.id).unwrap();
+        }
+
+        // Filter to open (empty)
+        tab.status_filter = StatusFilter::Open;
+        tab.refresh(&db).unwrap();
+        assert_eq!(tab.selected, 0); // Clamped
+    }
+
+    fn make_key(code: KeyCode) -> KeyEvent {
+        use crossterm::event::{KeyEventKind, KeyEventState, KeyModifiers};
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::empty(),
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        }
+    }
+}

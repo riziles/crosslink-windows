@@ -18,6 +18,7 @@ mod models;
 mod shared_writer;
 mod signing;
 mod sync;
+mod tui;
 mod utils;
 
 use anyhow::{bail, Context, Result};
@@ -452,6 +453,9 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+
+    /// Interactive terminal dashboard (read-only)
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -1592,6 +1596,11 @@ fn main() -> Result<()> {
                     commands::workflow::trail(&db, id, kind.as_deref(), json)
                 }
             }
+        }
+
+        Commands::Tui => {
+            let db = get_db()?;
+            commands::tui::run(&db)
         }
     }
 }
