@@ -503,6 +503,89 @@ fn write_mcp_json_merged(mcp_path: &Path) -> Result<Vec<String>> {
     Ok(warnings)
 }
 
+/// Merge crosslink's default `allowedTools` into an existing `.claude/settings.json`,
+/// or create it fresh.  Hooks are always overwritten (they are crosslink-managed),
+/// but user-added `allowedTools` entries are preserved.
+///
+/// The `python_prefix` is substituted into hook commands via the `__PYTHON_PREFIX__`
+/// placeholder in the embedded template.
+fn write_settings_json_merged(settings_path: &Path, python_prefix: &str) -> Result<()> {
+    let template_raw = SETTINGS_JSON.replace(PYTHON_PREFIX_PLACEHOLDER, python_prefix);
+    let template: serde_json::Value = serde_json::from_str(&template_raw).context(
+        "embedded SETTINGS_JSON is not valid JSON after substitution — this is a build defect",
+    )?;
+
+    let embedded_tools: Vec<String> = template
+        .get("allowedTools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut obj = match fs::read_to_string(settings_path) {
+        Ok(raw) => {
+            let parsed: serde_json::Value = serde_json::from_str(&raw).with_context(|| {
+                format!(
+                    "Existing settings.json at {} contains invalid JSON — \
+                         refusing to overwrite. Fix or remove it, then retry.",
+                    settings_path.display()
+                )
+            })?;
+            match parsed {
+                serde_json::Value::Object(map) => map,
+                _ => anyhow::bail!(
+                    "Existing settings.json at {} is not a JSON object — \
+                     refusing to overwrite. Fix or remove it, then retry.",
+                    settings_path.display()
+                ),
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => {
+            return Err(anyhow::Error::from(e).context("Failed to read existing settings.json"))
+        }
+    };
+
+    // Merge allowedTools: union of existing entries + embedded defaults (no duplicates)
+    let mut tools: Vec<String> = obj
+        .get("allowedTools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for tool in &embedded_tools {
+        if !tools.contains(tool) {
+            tools.push(tool.clone());
+        }
+    }
+
+    obj.insert(
+        "allowedTools".into(),
+        serde_json::Value::Array(tools.into_iter().map(serde_json::Value::String).collect()),
+    );
+
+    // Overwrite hooks (crosslink-managed) and enableAllProjectMcpServers
+    if let Some(hooks) = template.get("hooks") {
+        obj.insert("hooks".into(), hooks.clone());
+    }
+    if let Some(enable) = template.get("enableAllProjectMcpServers") {
+        obj.insert("enableAllProjectMcpServers".into(), enable.clone());
+    }
+
+    let mut output = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .context("Failed to serialize settings.json")?;
+    output.push('\n');
+    fs::write(settings_path, output).context("Failed to write settings.json")?;
+    Ok(())
+}
+
 /// TUI walkthrough choices for `crosslink init`.
 struct TuiChoices {
     tracking_mode: String,
@@ -797,8 +880,9 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
     // Create .claude directory and hooks (or update if force)
     if !claude_exists || force {
         fs::create_dir_all(&hooks_dir).context("Failed to create .claude/hooks directory")?;
-        let settings_content = SETTINGS_JSON.replace(PYTHON_PREFIX_PLACEHOLDER, &prefix);
-        fs::write(claude_dir.join("settings.json"), settings_content)
+
+        // Merge settings.json (preserves user-added allowedTools, updates hooks)
+        write_settings_json_merged(&claude_dir.join("settings.json"), &prefix)
             .context("Failed to write settings.json")?;
 
         // Write hook scripts
@@ -1531,6 +1615,214 @@ mod tests {
             content.contains("uv run python3"),
             "Force re-init should re-detect toolchain"
         );
+    }
+
+    // --- Settings.json allowedTools merge tests ---
+
+    /// The default allowedTools entries that the embedded template provides.
+    fn embedded_allowed_tools() -> Vec<String> {
+        let template: serde_json::Value = serde_json::from_str(SETTINGS_JSON).unwrap();
+        template
+            .get("allowedTools")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_settings_json_includes_allowed_tools() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let tools = parsed["allowedTools"]
+            .as_array()
+            .expect("allowedTools should be an array");
+
+        for expected in embedded_allowed_tools() {
+            assert!(
+                tools.iter().any(|v| v.as_str() == Some(&expected)),
+                "allowedTools should contain \"{}\"",
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_settings_json_includes_tmux_and_worktree_permissions() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let tools: Vec<&str> = parsed["allowedTools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+
+        assert!(
+            tools.contains(&"Bash(tmux *)"),
+            "allowedTools should include tmux permission"
+        );
+        assert!(
+            tools.contains(&"Bash(git worktree *)"),
+            "allowedTools should include git worktree permission"
+        );
+    }
+
+    #[test]
+    fn test_force_init_preserves_user_allowed_tools() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        // Add a custom allowedTools entry
+        let settings_path = dir.path().join(".claude/settings.json");
+        let mut content: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        content["allowedTools"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::String("Bash(my-custom-tool *)".into()));
+        fs::write(
+            &settings_path,
+            serde_json::to_string_pretty(&content).unwrap(),
+        )
+        .unwrap();
+
+        // Force re-init
+        run(dir.path(), &test_opts(true)).unwrap();
+
+        let result: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        let tools: Vec<&str> = result["allowedTools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+
+        // Should have embedded tools AND the custom one
+        for expected in embedded_allowed_tools() {
+            assert!(
+                tools.contains(&expected.as_str()),
+                "embedded tool \"{}\" should be preserved after force re-init",
+                expected
+            );
+        }
+        assert!(
+            tools.contains(&"Bash(my-custom-tool *)"),
+            "custom allowedTools entry should be preserved after force re-init"
+        );
+    }
+
+    #[test]
+    fn test_force_init_no_duplicate_allowed_tools() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        // Force re-init multiple times
+        run(dir.path(), &test_opts(true)).unwrap();
+        run(dir.path(), &test_opts(true)).unwrap();
+
+        let settings_path = dir.path().join(".claude/settings.json");
+        let content: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        let tools: Vec<&str> = content["allowedTools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+
+        // Each embedded tool should appear exactly once (no duplicates)
+        for expected in embedded_allowed_tools() {
+            let count = tools.iter().filter(|&&t| t == expected.as_str()).count();
+            assert_eq!(
+                count, 1,
+                "\"{}\" should appear exactly once, found {}",
+                expected, count
+            );
+        }
+    }
+
+    #[test]
+    fn test_settings_json_merge_fails_on_malformed_json() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        // Write invalid JSON to settings.json
+        let settings_path = dir.path().join(".claude/settings.json");
+        fs::write(&settings_path, "not json {{{").unwrap();
+
+        // Force init should fail, not silently overwrite
+        let result = run(dir.path(), &test_opts(true));
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("invalid JSON"),
+            "Error should mention invalid JSON, got: {}",
+            err
+        );
+
+        // Original (broken) content should be untouched
+        let content = fs::read_to_string(&settings_path).unwrap();
+        assert_eq!(content, "not json {{{");
+    }
+
+    #[test]
+    fn test_settings_json_merge_fails_on_non_object() {
+        let dir = tempdir().unwrap();
+        run(dir.path(), &test_opts(false)).unwrap();
+
+        // Write a JSON array to settings.json
+        let settings_path = dir.path().join(".claude/settings.json");
+        fs::write(&settings_path, "[1, 2, 3]").unwrap();
+
+        // Force init should fail, not silently overwrite
+        let result = run(dir.path(), &test_opts(true));
+        assert!(result.is_err());
+        let err = format!("{:#}", result.unwrap_err());
+        assert!(
+            err.contains("not a JSON object"),
+            "Error should mention not a JSON object, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_settings_json_merge_creates_fresh_file() {
+        let dir = tempdir().unwrap();
+        let settings_path = dir.path().join(".claude/settings.json");
+        fs::create_dir_all(dir.path().join(".claude")).unwrap();
+
+        // No pre-existing file
+        assert!(!settings_path.exists());
+
+        write_settings_json_merged(&settings_path, "python3").unwrap();
+
+        let content: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&settings_path).unwrap()).unwrap();
+        let tools: Vec<&str> = content["allowedTools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+
+        for expected in embedded_allowed_tools() {
+            assert!(
+                tools.contains(&expected.as_str()),
+                "fresh file should contain \"{}\"",
+                expected
+            );
+        }
     }
 
     // --- Root .gitignore tests ---
