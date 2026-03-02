@@ -6,6 +6,7 @@ use std::process::Command;
 use crate::identity::AgentConfig;
 use crate::locks::{Heartbeat, Keyring, LocksFile};
 use crate::signing;
+use crate::utils::resolve_main_repo_root;
 
 /// Directory name under .crosslink for the hub cache worktree.
 pub(crate) const HUB_CACHE_DIR: &str = ".hub-cache";
@@ -416,11 +417,21 @@ impl SyncManager {
                             sig,
                         ) {
                             Ok(true) => verified += 1,
-                            Ok(false) => failed += 1,
-                            Err(_) => {
+                            Ok(false) => {
+                                eprintln!(
+                                    "warning: signature verification failed for comment {} by '{}' (signer: {})",
+                                    comment.id, comment.author, fingerprint
+                                );
+                                failed += 1;
+                            }
+                            Err(e) => {
                                 // Verification unavailable (no allowed_signers, no ssh-keygen)
                                 // Treat as unverifiable but not failed
                                 if allowed_signers_path.exists() {
+                                    eprintln!(
+                                        "warning: signature verification error for comment {} by '{}': {}",
+                                        comment.id, comment.author, e
+                                    );
                                     failed += 1;
                                 } else {
                                     // Can't verify without allowed_signers — count as signed but unverifiable
@@ -566,9 +577,13 @@ impl SyncManager {
 
         let mut stale = Vec::new();
         for (issue_id_str, lock) in &locks.locks {
-            let has_fresh_heartbeat = heartbeats
-                .iter()
-                .any(|hb| hb.agent_id == lock.agent_id && (now - hb.last_heartbeat) < timeout);
+            let has_fresh_heartbeat = heartbeats.iter().any(|hb| {
+                hb.agent_id == lock.agent_id
+                    && now
+                        .signed_duration_since(hb.last_heartbeat)
+                        .max(chrono::Duration::zero())
+                        < timeout
+            });
             if !has_fresh_heartbeat {
                 if let Ok(id) = issue_id_str.parse::<i64>() {
                     stale.push((id, lock.agent_id.clone()));
@@ -581,6 +596,8 @@ impl SyncManager {
     /// Claim a lock on an issue for the given agent.
     ///
     /// Writes the lock to `locks.json`, commits, and pushes with retry.
+    /// After a push conflict, re-reads locks to verify another agent didn't
+    /// claim the same lock during the race window.
     /// Returns `Ok(true)` if newly claimed, `Ok(false)` if already held by self.
     /// Fails if locked by another agent (unless `force` is true for steal).
     pub fn claim_lock(
@@ -590,42 +607,61 @@ impl SyncManager {
         branch: Option<&str>,
         force: bool,
     ) -> Result<bool> {
-        let mut locks = self.read_locks()?;
+        // Retry loop: re-check lock ownership after push conflicts
+        for attempt in 0..3 {
+            let mut locks = self.read_locks()?;
 
-        // Check existing lock
-        if let Some(existing) = locks.get_lock(issue_id) {
-            if existing.agent_id == agent.agent_id {
-                return Ok(false); // Already held by self
+            // Check existing lock
+            if let Some(existing) = locks.get_lock(issue_id) {
+                if existing.agent_id == agent.agent_id {
+                    return Ok(false); // Already held by self
+                }
+                if !force {
+                    bail!(
+                        "Issue #{} is locked by '{}' (claimed {}). \
+                         Use 'crosslink locks steal {}' if the lock is stale.",
+                        issue_id,
+                        existing.agent_id,
+                        existing.claimed_at.format("%Y-%m-%d %H:%M"),
+                        issue_id
+                    );
+                }
+                // force=true: steal the lock
             }
-            if !force {
-                bail!(
-                    "Issue #{} is locked by '{}' (claimed {}). \
-                     Use 'crosslink locks steal {}' if the lock is stale.",
-                    issue_id,
-                    existing.agent_id,
-                    existing.claimed_at.format("%Y-%m-%d %H:%M"),
-                    issue_id
-                );
+
+            let lock = crate::locks::Lock {
+                agent_id: agent.agent_id.clone(),
+                branch: branch.map(|s| s.to_string()),
+                claimed_at: Utc::now(),
+                signed_by: agent
+                    .ssh_fingerprint
+                    .clone()
+                    .unwrap_or_else(|| agent.agent_id.clone()),
+            };
+
+            locks.locks.insert(issue_id.to_string(), lock);
+            locks.save(&self.cache_dir.join("locks.json"))?;
+
+            match self
+                .commit_and_push_locks(&format!("{}: claim lock on #{}", agent.agent_id, issue_id))
+            {
+                Ok(()) => return Ok(true),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Push failed after") && attempt < 2 {
+                        // Push conflict — pull latest and re-check lock ownership
+                        let _ = self.git_in_cache(&["pull", "--rebase", "origin", HUB_BRANCH]);
+                        continue;
+                    }
+                    return Err(e);
+                }
             }
-            // force=true: steal the lock
         }
 
-        let lock = crate::locks::Lock {
-            agent_id: agent.agent_id.clone(),
-            branch: branch.map(|s| s.to_string()),
-            claimed_at: Utc::now(),
-            signed_by: agent
-                .ssh_fingerprint
-                .clone()
-                .unwrap_or_else(|| agent.agent_id.clone()),
-        };
-
-        locks.locks.insert(issue_id.to_string(), lock);
-        locks.save(&self.cache_dir.join("locks.json"))?;
-
-        self.commit_and_push_locks(&format!("{}: claim lock on #{}", agent.agent_id, issue_id))?;
-
-        Ok(true)
+        bail!(
+            "Failed to claim lock on #{} after 3 attempts due to concurrent updates",
+            issue_id
+        )
     }
 
     /// Release a lock on an issue.
@@ -739,63 +775,6 @@ impl SyncManager {
             bail!("git {:?} in cache failed: {}", args, stderr);
         }
         Ok(output)
-    }
-}
-
-/// Resolve the main repository root when running inside a git worktree.
-///
-/// Compares `git rev-parse --git-common-dir` with `--git-dir`. If they
-/// differ, we're in a worktree and the main repo root is the parent of
-/// `git-common-dir`. Returns `None` if not in a git repo or if git
-/// commands fail (e.g. in unit tests with plain temp directories).
-fn resolve_main_repo_root(repo_root: &Path) -> Option<PathBuf> {
-    let repo_str = repo_root.to_string_lossy();
-
-    let common_output = Command::new("git")
-        .args(["-C", &repo_str, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
-
-    let git_dir_output = Command::new("git")
-        .args(["-C", &repo_str, "rev-parse", "--git-dir"])
-        .output()
-        .ok()?;
-
-    if !common_output.status.success() || !git_dir_output.status.success() {
-        return None;
-    }
-
-    let common_raw = String::from_utf8_lossy(&common_output.stdout)
-        .trim()
-        .to_string();
-    let git_dir_raw = String::from_utf8_lossy(&git_dir_output.stdout)
-        .trim()
-        .to_string();
-
-    // Resolve to absolute paths for reliable comparison
-    let common_path = if Path::new(&common_raw).is_absolute() {
-        PathBuf::from(&common_raw)
-    } else {
-        repo_root.join(&common_raw)
-    };
-
-    let git_dir_path = if Path::new(&git_dir_raw).is_absolute() {
-        PathBuf::from(&git_dir_raw)
-    } else {
-        repo_root.join(&git_dir_raw)
-    };
-
-    // Canonicalize to handle symlinks and ".." components
-    let common_canonical = common_path.canonicalize().unwrap_or(common_path);
-    let git_dir_canonical = git_dir_path.canonicalize().unwrap_or(git_dir_path);
-
-    if common_canonical != git_dir_canonical {
-        // We're in a worktree — git-common-dir points to the main .git directory.
-        // Its parent is the main repo root.
-        common_canonical.parent().map(|p| p.to_path_buf())
-    } else {
-        // Not in a worktree — use the given repo root as-is.
-        Some(repo_root.to_path_buf())
     }
 }
 
@@ -992,67 +971,7 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn test_resolve_main_repo_root_not_a_repo() {
-        let dir = tempdir().unwrap();
-        // Plain directory, no git repo — should return None
-        let result = resolve_main_repo_root(dir.path());
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_main_repo_root_normal_repo() {
-        let dir = tempdir().unwrap();
-        init_git_repo(dir.path());
-
-        let result = resolve_main_repo_root(dir.path());
-        assert!(result.is_some());
-        // Canonicalize both sides for reliable comparison on macOS (/private/var/...)
-        assert_eq!(
-            result.unwrap().canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
-        );
-    }
-
-    #[test]
-    fn test_resolve_main_repo_root_in_worktree() {
-        let dir = tempdir().unwrap();
-        let main_root = dir.path().join("main");
-        std::fs::create_dir_all(&main_root).unwrap();
-        init_git_repo(&main_root);
-
-        // Create a branch and worktree
-        Command::new("git")
-            .args([
-                "-C",
-                &main_root.to_string_lossy(),
-                "branch",
-                "feature/wt-test",
-            ])
-            .output()
-            .unwrap();
-
-        let wt_path = main_root.join(".worktrees").join("wt-test");
-        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
-        Command::new("git")
-            .args([
-                "-C",
-                &main_root.to_string_lossy(),
-                "worktree",
-                "add",
-                &wt_path.to_string_lossy(),
-                "feature/wt-test",
-            ])
-            .output()
-            .unwrap();
-
-        let result = resolve_main_repo_root(&wt_path);
-        assert!(result.is_some());
-        assert_eq!(
-            result.unwrap().canonicalize().unwrap(),
-            main_root.canonicalize().unwrap()
-        );
-    }
+    // resolve_main_repo_root tests are in utils::tests
 
     #[test]
     fn test_sync_manager_in_worktree_uses_main_hub_cache() {

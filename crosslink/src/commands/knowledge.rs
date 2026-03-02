@@ -341,11 +341,7 @@ fn extract_body(content: &str) -> &str {
 
 /// Truncate a string to a max length, adding "..." if truncated.
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
-    }
+    crate::utils::truncate(s, max)
 }
 
 #[cfg(test)]

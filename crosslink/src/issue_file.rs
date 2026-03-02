@@ -57,6 +57,8 @@ pub struct CommentEntry {
     pub trigger_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intervention_context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_key_fingerprint: Option<String>,
     /// SSH fingerprint of the signer (e.g. "SHA256:..."), if signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_by: Option<String>,
@@ -162,10 +164,10 @@ pub fn read_issue_file(path: &std::path::Path) -> anyhow::Result<IssueFile> {
 }
 
 /// Write an issue file to disk (pretty-printed JSON).
+/// Uses atomic write (temp file + rename) to prevent corruption from interrupted writes.
 pub fn write_issue_file(path: &std::path::Path, issue: &IssueFile) -> anyhow::Result<()> {
     let content = serde_json::to_string_pretty(issue)?;
-    std::fs::write(path, content)
-        .with_context(|| format!("Failed to write issue file: {}", path.display()))
+    crate::utils::atomic_write(path, content.as_bytes())
 }
 
 /// Read all issue files from a directory.
@@ -293,6 +295,7 @@ mod tests {
                 kind: "note".to_string(),
                 trigger_type: None,
                 intervention_context: None,
+                driver_key_fingerprint: None,
                 signed_by: None,
                 signature: None,
             }],

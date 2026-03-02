@@ -5,7 +5,33 @@ use std::path::Path;
 
 use crate::models::{Comment, Issue, Session};
 
-pub const SCHEMA_VERSION: i32 = 12;
+pub const SCHEMA_VERSION: i32 = 13;
+
+/// Valid values for issue priority.
+pub const VALID_PRIORITIES: &[&str] = &["low", "medium", "high", "critical"];
+
+/// Valid values for issue status (used for future validation).
+#[allow(dead_code)]
+pub const VALID_STATUSES: &[&str] = &["open", "closed", "archived"];
+
+/// Maximum lengths for string inputs.
+pub const MAX_TITLE_LEN: usize = 512;
+pub const MAX_LABEL_LEN: usize = 128;
+pub const MAX_DESCRIPTION_LEN: usize = 64 * 1024; // 64KB
+pub const MAX_COMMENT_LEN: usize = 1024 * 1024; // 1MB
+
+/// Validate that a priority value is known, returning an error if not.
+pub fn validate_priority(priority: &str) -> Result<()> {
+    if VALID_PRIORITIES.contains(&priority) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Invalid priority '{}'. Valid values: {}",
+            priority,
+            VALID_PRIORITIES.join(", ")
+        )
+    }
+}
 
 /// Row from `get_comments_with_author`: (id, author, content, created_at, kind, trigger_type, intervention_context).
 pub type CommentAuthorRow = (
@@ -14,6 +40,7 @@ pub type CommentAuthorRow = (
     String,
     DateTime<Utc>,
     String,
+    Option<String>,
     Option<String>,
     Option<String>,
 );
@@ -73,8 +100,31 @@ impl Database {
                 Ok(result)
             }
             Err(e) => {
-                let _ = self.conn.execute("ROLLBACK", []);
+                if let Err(rollback_err) = self.conn.execute("ROLLBACK", []) {
+                    eprintln!("warning: ROLLBACK failed: {}", rollback_err);
+                }
                 Err(e)
+            }
+        }
+    }
+
+    /// Run a migration statement, logging unexpected errors.
+    /// Expected errors (duplicate column, table already exists) are silently ignored.
+    fn migrate(&self, sql: &str) {
+        if let Err(e) = self.conn.execute(sql, []) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") && !msg.contains("already exists") {
+                eprintln!("warning: migration error ({}): {}", sql.trim(), msg);
+            }
+        }
+    }
+
+    /// Run a batch migration statement, logging unexpected errors.
+    fn migrate_batch(&self, sql: &str) {
+        if let Err(e) = self.conn.execute_batch(sql) {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") && !msg.contains("already exists") {
+                eprintln!("warning: migration batch error: {}", msg);
             }
         }
     }
@@ -199,15 +249,14 @@ impl Database {
             )?;
 
             // Migration: add parent_id column if upgrading from v1
-            let _ = self.conn.execute(
+            self.migrate(
                 "ALTER TABLE issues ADD COLUMN parent_id INTEGER REFERENCES issues(id) ON DELETE CASCADE",
-                [],
             );
 
             // Migration v7: Recreate sessions table with ON DELETE SET NULL for active_issue_id
             // This ensures deleting an issue clears the session reference instead of failing
             if version < 7 {
-                let _ = self.conn.execute_batch(
+                self.migrate_batch(
                     r#"
                     CREATE TABLE IF NOT EXISTS sessions_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -226,60 +275,42 @@ impl Database {
 
             // Migration v8: Add last_action column to sessions table
             if version < 8 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE sessions ADD COLUMN last_action TEXT", []);
+                self.migrate("ALTER TABLE sessions ADD COLUMN last_action TEXT");
             }
 
             // Migration v9: Add agent_id column to sessions table
             if version < 9 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE sessions ADD COLUMN agent_id TEXT", []);
+                self.migrate("ALTER TABLE sessions ADD COLUMN agent_id TEXT");
             }
 
             // Migration v10: Add uuid columns for shared issue coordination
             if version < 10 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE issues ADD COLUMN uuid TEXT", []);
-                let _ = self.conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_uuid ON issues(uuid)",
-                    [],
-                );
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE issues ADD COLUMN created_by TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN uuid TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN author TEXT", []);
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE milestones ADD COLUMN uuid TEXT", []);
-                let _ = self.conn.execute(
+                self.migrate("ALTER TABLE issues ADD COLUMN uuid TEXT");
+                self.migrate("CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_uuid ON issues(uuid)");
+                self.migrate("ALTER TABLE issues ADD COLUMN created_by TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN uuid TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN author TEXT");
+                self.migrate("ALTER TABLE milestones ADD COLUMN uuid TEXT");
+                self.migrate(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_uuid ON milestones(uuid)",
-                    [],
                 );
             }
 
             // Migration v11: Add kind column to comments for typed audit trail
             if version < 11 {
-                let _ = self.conn.execute(
-                    "ALTER TABLE comments ADD COLUMN kind TEXT DEFAULT 'note'",
-                    [],
-                );
+                self.migrate("ALTER TABLE comments ADD COLUMN kind TEXT DEFAULT 'note'");
             }
 
             // Migration v12: Add trigger_type and intervention_context for driver intervention tracking
             if version < 12 {
-                let _ = self
-                    .conn
-                    .execute("ALTER TABLE comments ADD COLUMN trigger_type TEXT", []);
+                self.migrate("ALTER TABLE comments ADD COLUMN trigger_type TEXT");
+                self.migrate("ALTER TABLE comments ADD COLUMN intervention_context TEXT");
+            }
+
+            // Migration v13: Add driver_key_fingerprint to comments for audit trail
+            if version < 13 {
                 let _ = self.conn.execute(
-                    "ALTER TABLE comments ADD COLUMN intervention_context TEXT",
+                    "ALTER TABLE comments ADD COLUMN driver_key_fingerprint TEXT",
                     [],
                 );
             }
@@ -321,10 +352,26 @@ impl Database {
         priority: &str,
         parent_id: Option<i64>,
     ) -> Result<i64> {
+        validate_priority(priority)?;
+        if title.len() > MAX_TITLE_LEN {
+            anyhow::bail!(
+                "Title exceeds maximum length of {} characters",
+                MAX_TITLE_LEN
+            );
+        }
+        if let Some(d) = description {
+            if d.len() > MAX_DESCRIPTION_LEN {
+                anyhow::bail!(
+                    "Description exceeds maximum length of {} bytes",
+                    MAX_DESCRIPTION_LEN
+                );
+            }
+        }
         let now = Utc::now().to_rfc3339();
+        let uuid = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
-            "INSERT INTO issues (title, description, priority, parent_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5)",
-            params![title, description, priority, parent_id, now],
+            "INSERT INTO issues (title, description, priority, parent_id, status, created_at, updated_at, uuid) VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5, ?6)",
+            params![title, description, priority, parent_id, now, uuid],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -438,6 +485,22 @@ impl Database {
         description: Option<&str>,
         priority: Option<&str>,
     ) -> Result<bool> {
+        if let Some(t) = title {
+            if t.len() > MAX_TITLE_LEN {
+                anyhow::bail!(
+                    "Title exceeds maximum length of {} characters",
+                    MAX_TITLE_LEN
+                );
+            }
+        }
+        if let Some(d) = description {
+            if d.len() > MAX_DESCRIPTION_LEN {
+                anyhow::bail!(
+                    "Description exceeds maximum length of {} bytes",
+                    MAX_DESCRIPTION_LEN
+                );
+            }
+        }
         let now = Utc::now().to_rfc3339();
         let mut updates = vec!["updated_at = ?1".to_string()];
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
@@ -453,6 +516,7 @@ impl Database {
         }
 
         if let Some(p) = priority {
+            validate_priority(p)?;
             updates.push(format!("priority = ?{}", params_vec.len() + 1));
             params_vec.push(Box::new(p.to_string()));
         }
@@ -497,6 +561,12 @@ impl Database {
 
     // Labels
     pub fn add_label(&self, issue_id: i64, label: &str) -> Result<bool> {
+        if label.len() > MAX_LABEL_LEN {
+            anyhow::bail!(
+                "Label exceeds maximum length of {} characters",
+                MAX_LABEL_LEN
+            );
+        }
         let result = self.conn.execute(
             "INSERT OR IGNORE INTO labels (issue_id, label) VALUES (?1, ?2)",
             params![issue_id, label],
@@ -524,6 +594,12 @@ impl Database {
 
     // Comments
     pub fn add_comment(&self, issue_id: i64, content: &str, kind: &str) -> Result<i64> {
+        if content.len() > MAX_COMMENT_LEN {
+            anyhow::bail!(
+                "Comment exceeds maximum length of {} bytes",
+                MAX_COMMENT_LEN
+            );
+        }
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO comments (issue_id, content, created_at, kind) VALUES (?1, ?2, ?3, ?4)",
@@ -538,19 +614,20 @@ impl Database {
         content: &str,
         trigger_type: &str,
         intervention_context: Option<&str>,
+        driver_key_fingerprint: Option<&str>,
     ) -> Result<i64> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO comments (issue_id, content, created_at, kind, trigger_type, intervention_context)
-             VALUES (?1, ?2, ?3, 'intervention', ?4, ?5)",
-            params![issue_id, content, now, trigger_type, intervention_context],
+            "INSERT INTO comments (issue_id, content, created_at, kind, trigger_type, intervention_context, driver_key_fingerprint)
+             VALUES (?1, ?2, ?3, 'intervention', ?4, ?5, ?6)",
+            params![issue_id, content, now, trigger_type, intervention_context, driver_key_fingerprint],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn get_comments(&self, issue_id: i64) -> Result<Vec<Comment>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, issue_id, content, created_at, COALESCE(kind, 'note'), trigger_type, intervention_context FROM comments WHERE issue_id = ?1 ORDER BY created_at",
+            "SELECT id, issue_id, content, created_at, COALESCE(kind, 'note'), trigger_type, intervention_context, driver_key_fingerprint FROM comments WHERE issue_id = ?1 ORDER BY created_at",
         )?;
         let comments = stmt
             .query_map([issue_id], |row| {
@@ -562,6 +639,7 @@ impl Database {
                     kind: row.get(4)?,
                     trigger_type: row.get(5)?,
                     intervention_context: row.get(6)?,
+                    driver_key_fingerprint: row.get(7)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -671,7 +749,7 @@ impl Database {
     /// Get comments with author field for an issue (author added in migration v10).
     pub fn get_comments_with_author(&self, issue_id: i64) -> Result<Vec<CommentAuthorRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, author, content, created_at, COALESCE(kind, 'note'), trigger_type, intervention_context FROM comments WHERE issue_id = ?1 ORDER BY created_at",
+            "SELECT id, author, content, created_at, COALESCE(kind, 'note'), trigger_type, intervention_context, driver_key_fingerprint FROM comments WHERE issue_id = ?1 ORDER BY created_at",
         )?;
         let comments = stmt
             .query_map([issue_id], |row| {
@@ -683,6 +761,7 @@ impl Database {
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1311,11 +1390,12 @@ impl Database {
         kind: &str,
         trigger_type: Option<&str>,
         intervention_context: Option<&str>,
+        driver_key_fingerprint: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO comments (id, issue_id, uuid, author, content, created_at, kind, trigger_type, intervention_context)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![id, issue_id, uuid, author, content, created_at, kind, trigger_type, intervention_context],
+            "INSERT INTO comments (id, issue_id, uuid, author, content, created_at, kind, trigger_type, intervention_context, driver_key_fingerprint)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![id, issue_id, uuid, author, content, created_at, kind, trigger_type, intervention_context, driver_key_fingerprint],
         )?;
         Ok(())
     }
@@ -1392,7 +1472,13 @@ impl Database {
 fn parse_datetime(s: String) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(&s)
         .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "warning: failed to parse datetime '{}': {}, using current time",
+                s, e
+            );
+            chrono::Utc::now()
+        })
 }
 
 /// Maps a database row to an Issue struct.
@@ -2280,16 +2366,26 @@ mod tests {
     fn test_very_long_strings() {
         let (db, _dir) = setup_test_db();
 
-        let long_title = "a".repeat(10000);
-        let long_desc = "b".repeat(100000);
+        // Within limits: should succeed
+        let long_title = "a".repeat(MAX_TITLE_LEN);
+        let long_desc = "b".repeat(MAX_DESCRIPTION_LEN);
 
         let id = db
             .create_issue(&long_title, Some(&long_desc), "medium")
             .unwrap();
 
         let issue = db.get_issue(id).unwrap().unwrap();
-        assert_eq!(issue.title.len(), 10000);
-        assert_eq!(issue.description.unwrap().len(), 100000);
+        assert_eq!(issue.title.len(), MAX_TITLE_LEN);
+        assert_eq!(issue.description.unwrap().len(), MAX_DESCRIPTION_LEN);
+
+        // Exceeding limits: should fail
+        let too_long_title = "a".repeat(MAX_TITLE_LEN + 1);
+        assert!(db.create_issue(&too_long_title, None, "medium").is_err());
+
+        let too_long_desc = "b".repeat(MAX_DESCRIPTION_LEN + 1);
+        assert!(db
+            .create_issue("ok", Some(&too_long_desc), "medium")
+            .is_err());
     }
 
     #[test]
@@ -2510,8 +2606,8 @@ mod proptest_tests {
 
     // Generate arbitrary (but safe) strings for titles
     fn safe_string() -> impl Strategy<Value = String> {
-        // Avoid null bytes and extremely long strings
-        "[a-zA-Z0-9 _\\-\\.!?]{0,1000}".prop_map(|s| s)
+        // Avoid null bytes; limit to MAX_TITLE_LEN so strings are valid as titles
+        "[a-zA-Z0-9 _\\-\\.!?]{0,512}".prop_map(|s| s)
     }
 
     proptest! {

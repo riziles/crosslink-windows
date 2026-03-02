@@ -3,6 +3,8 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::utils::resolve_main_repo_root;
+
 /// Directory name under .crosslink for the knowledge cache worktree.
 pub(crate) const KNOWLEDGE_CACHE_DIR: &str = ".knowledge-cache";
 
@@ -284,9 +286,41 @@ impl KnowledgeManager {
         Ok(pages)
     }
 
+    /// Validate a slug and return the safe path within the cache directory.
+    ///
+    /// Rejects slugs containing path separators, parent-directory traversals,
+    /// or characters that are unsafe for filenames.
+    fn safe_page_path(&self, slug: &str) -> Result<PathBuf> {
+        if slug.is_empty() {
+            bail!("Page slug cannot be empty");
+        }
+        if slug.contains('/') || slug.contains('\\') || slug.contains('\0') || slug.contains("..") {
+            bail!(
+                "Invalid page slug '{}': must not contain path separators or '..'",
+                slug
+            );
+        }
+        let path = self.cache_dir.join(format!("{}.md", slug));
+        // Defense in depth: verify the resolved path is within cache_dir
+        let canonical_cache = self
+            .cache_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.cache_dir.clone());
+        let canonical_parent = path.parent().and_then(|p| p.canonicalize().ok());
+        if let Some(parent) = canonical_parent {
+            if !parent.starts_with(&canonical_cache) {
+                bail!(
+                    "Invalid page slug '{}': resolves outside knowledge cache",
+                    slug
+                );
+            }
+        }
+        Ok(path)
+    }
+
     /// Read a page by its filename slug (without `.md` extension).
     pub fn read_page(&self, slug: &str) -> Result<String> {
-        let path = self.cache_dir.join(format!("{}.md", slug));
+        let path = self.safe_page_path(slug)?;
         if !path.exists() {
             bail!("Page '{}' not found", slug);
         }
@@ -298,18 +332,20 @@ impl KnowledgeManager {
         if !self.cache_dir.exists() {
             bail!("Knowledge cache not initialized. Run init_cache() first.");
         }
-        let path = self.cache_dir.join(format!("{}.md", slug));
+        let path = self.safe_page_path(slug)?;
         std::fs::write(&path, content).context("Failed to write page")
     }
 
     /// Check if a page exists by slug.
     pub fn page_exists(&self, slug: &str) -> bool {
-        self.cache_dir.join(format!("{}.md", slug)).exists()
+        self.safe_page_path(slug)
+            .map(|path| path.exists())
+            .unwrap_or(false)
     }
 
     /// Delete a page by slug.
     pub fn delete_page(&self, slug: &str) -> Result<()> {
-        let path = self.cache_dir.join(format!("{}.md", slug));
+        let path = self.safe_page_path(slug)?;
         if !path.exists() {
             bail!("Page '{}' not found", slug);
         }
@@ -464,57 +500,6 @@ fn group_matches(indices: &[usize], context: usize) -> Vec<Vec<usize>> {
     }
 
     groups
-}
-
-/// Resolve the main repository root when running inside a git worktree.
-///
-/// This is the same logic used by `SyncManager` — if `git-common-dir` differs
-/// from `git-dir`, we're in a worktree and the main repo root is the parent
-/// of the common dir.
-fn resolve_main_repo_root(repo_root: &Path) -> Option<PathBuf> {
-    let repo_str = repo_root.to_string_lossy();
-
-    let common_output = Command::new("git")
-        .args(["-C", &repo_str, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
-
-    let git_dir_output = Command::new("git")
-        .args(["-C", &repo_str, "rev-parse", "--git-dir"])
-        .output()
-        .ok()?;
-
-    if !common_output.status.success() || !git_dir_output.status.success() {
-        return None;
-    }
-
-    let common_raw = String::from_utf8_lossy(&common_output.stdout)
-        .trim()
-        .to_string();
-    let git_dir_raw = String::from_utf8_lossy(&git_dir_output.stdout)
-        .trim()
-        .to_string();
-
-    let common_path = if Path::new(&common_raw).is_absolute() {
-        PathBuf::from(&common_raw)
-    } else {
-        repo_root.join(&common_raw)
-    };
-
-    let git_dir_path = if Path::new(&git_dir_raw).is_absolute() {
-        PathBuf::from(&git_dir_raw)
-    } else {
-        repo_root.join(&git_dir_raw)
-    };
-
-    let common_canonical = common_path.canonicalize().unwrap_or(common_path);
-    let git_dir_canonical = git_dir_path.canonicalize().unwrap_or(git_dir_path);
-
-    if common_canonical != git_dir_canonical {
-        common_canonical.parent().map(|p| p.to_path_buf())
-    } else {
-        Some(repo_root.to_path_buf())
-    }
 }
 
 // --- Frontmatter parsing ---
@@ -1145,25 +1130,7 @@ updated: 2026-01-01
             .unwrap();
     }
 
-    #[test]
-    fn test_resolve_main_repo_root_not_a_repo() {
-        let dir = tempdir().unwrap();
-        let result = resolve_main_repo_root(dir.path());
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_resolve_main_repo_root_normal_repo() {
-        let dir = tempdir().unwrap();
-        init_git_repo(dir.path());
-
-        let result = resolve_main_repo_root(dir.path());
-        assert!(result.is_some());
-        assert_eq!(
-            result.unwrap().canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
-        );
-    }
+    // resolve_main_repo_root tests are in utils::tests
 
     #[test]
     fn test_knowledge_manager_in_worktree_uses_main_cache() {
@@ -1341,5 +1308,92 @@ updated: 2026-01-01
     fn test_group_matches_empty() {
         let groups = group_matches(&[], 0);
         assert!(groups.is_empty());
+    }
+
+    // --- Slug validation / path traversal tests ---
+
+    #[test]
+    fn test_safe_page_path_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        assert!(manager.safe_page_path("../etc/passwd").is_err());
+        assert!(manager.safe_page_path("../../sensitive").is_err());
+        assert!(manager.safe_page_path("foo/bar").is_err());
+        assert!(manager.safe_page_path("foo\\bar").is_err());
+        assert!(manager.safe_page_path("..").is_err());
+        assert!(manager.safe_page_path("").is_err());
+    }
+
+    #[test]
+    fn test_safe_page_path_allows_valid_slugs() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        assert!(manager.safe_page_path("my-page").is_ok());
+        assert!(manager.safe_page_path("test_page").is_ok());
+        assert!(manager.safe_page_path("page123").is_ok());
+        assert!(manager.safe_page_path("a").is_ok());
+    }
+
+    #[test]
+    fn test_write_page_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        let result = manager.write_page("../escape", "malicious content");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("path separators"));
+    }
+
+    #[test]
+    fn test_read_page_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        let result = manager.read_page("../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete_page_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        let result = manager.delete_page("../../../important-file");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_page_exists_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        // Should return false (not panic or escape) for traversal slugs
+        assert!(!manager.page_exists("../etc/passwd"));
     }
 }

@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::signing;
+
 /// Machine-local agent identity. Lives at `.crosslink/agent.json`.
 /// This file is gitignored — each machine has its own.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -58,6 +60,10 @@ impl AgentConfig {
     fn validate(&self) -> Result<()> {
         anyhow::ensure!(!self.agent_id.is_empty(), "agent_id cannot be empty");
         anyhow::ensure!(
+            self.agent_id.len() >= 3,
+            "agent_id must be at least 3 characters"
+        );
+        anyhow::ensure!(
             self.agent_id
                 .chars()
                 .all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
@@ -91,6 +97,17 @@ fn detect_hostname() -> String {
         }
     }
     "unknown".to_string()
+}
+
+/// Resolve the current driver's SSH key fingerprint from `.crosslink/driver-key.pub`.
+///
+/// Returns `None` if the driver key file doesn't exist or the fingerprint can't be computed.
+pub fn resolve_driver_fingerprint(crosslink_dir: &Path) -> Option<String> {
+    let driver_pub = crosslink_dir.join("driver-key.pub");
+    if !driver_pub.exists() {
+        return None;
+    }
+    signing::get_key_fingerprint(&driver_pub).ok()
 }
 
 #[cfg(test)]
@@ -156,14 +173,21 @@ mod tests {
     fn test_validate_too_long() {
         let config = AgentConfig {
             agent_id: "a".repeat(65),
-            ..test_config("x")
+            ..test_config("xxx")
         };
         assert!(config.validate().is_err());
     }
 
     #[test]
+    fn test_validate_too_short() {
+        assert!(test_config("a").validate().is_err());
+        assert!(test_config("ab").validate().is_err());
+        assert!(test_config("abc").validate().is_ok());
+    }
+
+    #[test]
     fn test_validate_valid_ids() {
-        for id in &["worker-1", "agent_2", "MyAgent", "a", "test-agent-42"] {
+        for id in &["worker-1", "agent_2", "MyAgent", "abc", "test-agent-42"] {
             assert!(test_config(id).validate().is_ok(), "Failed for id: {}", id);
         }
     }
@@ -219,9 +243,23 @@ mod tests {
         assert!(!hostname.is_empty());
     }
 
+    #[test]
+    fn test_resolve_driver_fingerprint_missing_file() {
+        let dir = tempdir().unwrap();
+        assert!(resolve_driver_fingerprint(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_resolve_driver_fingerprint_invalid_content() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("driver-key.pub"), "not a key").unwrap();
+        // ssh-keygen will fail on invalid content
+        assert!(resolve_driver_fingerprint(dir.path()).is_none());
+    }
+
     proptest! {
         #[test]
-        fn prop_valid_ids_roundtrip(id in "[a-zA-Z0-9_-]{1,64}") {
+        fn prop_valid_ids_roundtrip(id in "[a-zA-Z0-9_-]{3,64}") {
             let config = test_config(&id);
             prop_assert!(config.validate().is_ok());
             let json = serde_json::to_string(&config).unwrap();
