@@ -153,13 +153,23 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" crosslink tui "),
+                    .border_style(Style::default().fg(Color::DarkGray))
+                    .title(Line::from(vec![
+                        Span::raw(" "),
+                        Span::styled(
+                            "crosslink",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(" tui ", Style::default().fg(Color::DarkGray)),
+                    ])),
             )
             .select(self.active_tab)
-            .style(Style::default().fg(Color::Gray))
+            .style(Style::default().fg(Color::DarkGray))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             );
 
@@ -168,17 +178,17 @@ impl App {
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
         let keys = vec![
-            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::styled("q", Style::default().fg(Color::Cyan)),
             Span::raw(":Quit  "),
-            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::styled("Tab", Style::default().fg(Color::Cyan)),
             Span::raw(":Next  "),
-            Span::styled("S-Tab", Style::default().fg(Color::Yellow)),
+            Span::styled("S-Tab", Style::default().fg(Color::Cyan)),
             Span::raw(":Prev  "),
-            Span::styled("1-5", Style::default().fg(Color::Yellow)),
+            Span::styled("1-5", Style::default().fg(Color::Cyan)),
             Span::raw(":Jump  "),
-            Span::styled("?", Style::default().fg(Color::Yellow)),
+            Span::styled("?", Style::default().fg(Color::Cyan)),
             Span::raw(":Help  "),
-            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
             Span::raw(":Refresh"),
         ];
 
@@ -197,7 +207,7 @@ impl App {
             Line::from(Span::styled(
                 "Keyboard Shortcuts",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
@@ -240,8 +250,17 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Help ")
-                    .style(Style::default().fg(Color::White)),
+                    .border_style(Style::default().fg(Color::DarkGray))
+                    .title(Line::from(vec![
+                        Span::raw(" "),
+                        Span::styled(
+                            "Help",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" "),
+                    ])),
             )
             .wrap(Wrap { trim: false })
             .style(Style::default().fg(Color::White).bg(Color::Black));

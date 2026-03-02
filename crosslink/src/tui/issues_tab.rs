@@ -349,7 +349,7 @@ impl IssuesTab {
                 self.status_filter.label(),
                 self.sort_order.label()
             )),
-            Span::styled(search_display, Style::default().fg(Color::Yellow)),
+            Span::styled(search_display, Style::default().fg(Color::Cyan)),
         ]);
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
@@ -370,7 +370,7 @@ impl IssuesTab {
             ])
             .style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             );
 
@@ -382,7 +382,7 @@ impl IssuesTab {
                     let priority_style = match issue.priority.as_str() {
                         "critical" => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                         "high" => Style::default().fg(Color::Red),
-                        "medium" => Style::default().fg(Color::Yellow),
+                        "medium" => Style::default().fg(Color::Cyan),
                         "low" => Style::default().fg(Color::Green),
                         _ => Style::default(),
                     };
@@ -390,7 +390,7 @@ impl IssuesTab {
                     let status_style = if issue.status == "closed" {
                         Style::default().fg(Color::DarkGray)
                     } else {
-                        Style::default().fg(Color::Cyan)
+                        Style::default().fg(Color::Green)
                     };
 
                     let labels = self
@@ -443,25 +443,25 @@ impl IssuesTab {
         // Context keys
         let keys = if self.searching {
             Line::from(vec![
-                Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                Span::styled("Esc", Style::default().fg(Color::Cyan)),
                 Span::raw(":Cancel  "),
-                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::styled("Enter", Style::default().fg(Color::Cyan)),
                 Span::raw(":Accept  "),
                 Span::raw("Type to search..."),
             ])
         } else {
             Line::from(vec![
-                Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Yellow)),
+                Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Cyan)),
                 Span::raw(":Navigate  "),
-                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::styled("Enter", Style::default().fg(Color::Cyan)),
                 Span::raw(":Details  "),
-                Span::styled("f", Style::default().fg(Color::Yellow)),
+                Span::styled("f", Style::default().fg(Color::Cyan)),
                 Span::raw(":Filter  "),
-                Span::styled("s", Style::default().fg(Color::Yellow)),
+                Span::styled("s", Style::default().fg(Color::Cyan)),
                 Span::raw(":Sort  "),
-                Span::styled("/", Style::default().fg(Color::Yellow)),
+                Span::styled("/", Style::default().fg(Color::Cyan)),
                 Span::raw(":Search  "),
-                Span::styled("r", Style::default().fg(Color::Yellow)),
+                Span::styled("r", Style::default().fg(Color::Cyan)),
                 Span::raw(":Refresh"),
             ])
         };
@@ -627,9 +627,9 @@ impl IssuesTab {
         frame.render_widget(detail_widget, chunks[0]);
 
         let keys = Line::from(vec![
-            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
             Span::raw(":Back  "),
-            Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Yellow)),
+            Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Cyan)),
             Span::raw(":Scroll"),
         ]);
         frame.render_widget(
@@ -691,7 +691,7 @@ fn priority_color(priority: &str) -> Style {
     match priority {
         "critical" => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         "high" => Style::default().fg(Color::Red),
-        "medium" => Style::default().fg(Color::Yellow),
+        "medium" => Style::default().fg(Color::Cyan),
         "low" => Style::default().fg(Color::Green),
         _ => Style::default(),
     }
@@ -699,7 +699,7 @@ fn priority_color(priority: &str) -> Style {
 
 fn status_color(status: &str) -> Style {
     match status {
-        "open" => Style::default().fg(Color::Cyan),
+        "open" => Style::default().fg(Color::Green),
         "closed" => Style::default().fg(Color::DarkGray),
         _ => Style::default(),
     }

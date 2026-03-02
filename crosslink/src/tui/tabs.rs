@@ -36,7 +36,7 @@ impl super::Tab for PlaceholderTab {
             Line::from(Span::styled(
                 format!("  {} Tab", self.title),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
