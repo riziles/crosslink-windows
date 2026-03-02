@@ -34,6 +34,8 @@ pub enum TabAction {
     /// Request the app to quit (available for future tab use).
     #[allow(dead_code)]
     Quit,
+    /// Show a flash message to the user.
+    Flash(String),
 }
 
 /// Trait that each tab panel must implement.
@@ -92,8 +94,6 @@ pub struct App {
     flash_message: Option<String>,
     /// Tracks the tab bar area for mouse click detection.
     tab_bar_area: Rect,
-    /// Tracks the content area for forwarding mouse events.
-    content_area: Rect,
 }
 
 impl App {
@@ -122,7 +122,6 @@ impl App {
             command_input: String::new(),
             flash_message: None,
             tab_bar_area: Rect::default(),
-            content_area: Rect::default(),
         };
         app.tabs[0].on_enter();
         Ok(app)
@@ -168,6 +167,10 @@ impl App {
             TabAction::Consumed => return,
             TabAction::Quit => {
                 self.should_quit = true;
+                return;
+            }
+            TabAction::Flash(msg) => {
+                self.flash_message = Some(msg);
                 return;
             }
             TabAction::NotHandled => {}
@@ -250,11 +253,9 @@ impl App {
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
-        // Clear flash on mouse action
-        self.flash_message = None;
-
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                self.flash_message = None;
                 // Click on tab bar → switch tabs
                 if mouse.row >= self.tab_bar_area.y
                     && mouse.row < self.tab_bar_area.y + self.tab_bar_area.height
@@ -289,7 +290,7 @@ impl App {
         // ratatui::TabsWidget uses " <title> │" for each tab.
         let mut offset: u16 = 0;
         for (idx, tab) in self.tabs.iter().enumerate() {
-            let tab_width = tab.title().len() as u16 + 2; // " title " padding
+            let tab_width = tab.title().chars().count() as u16 + 2; // " title " padding
             let with_divider = tab_width + 1; // + "│"
             if rel_col >= offset && rel_col < offset + with_divider {
                 if idx != self.active_tab {
@@ -315,7 +316,6 @@ impl App {
 
         // Store areas for mouse hit detection
         self.tab_bar_area = chunks[0];
-        self.content_area = chunks[1];
 
         self.render_tab_bar(frame, chunks[0]);
         self.tabs[self.active_tab].render(frame, chunks[1]);
@@ -527,16 +527,44 @@ impl App {
     }
 }
 
-/// Run the TUI application. Sets up terminal, runs event loop, cleans up on exit.
-pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
-    // Install panic hook that restores terminal before printing panic
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
+/// RAII guard that restores the terminal on drop — ensures cleanup even on `?` errors.
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+struct TerminalGuard {
+    original_hook: Option<PanicHook>,
+}
+
+impl TerminalGuard {
+    fn new() -> Self {
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|panic_info| {
+            let _ = io::stdout().execute(DisableMouseCapture);
+            let _ = disable_raw_mode();
+            let _ = io::stdout().execute(LeaveAlternateScreen);
+            // Print the panic info manually since we can't call the original hook here
+            eprintln!("{panic_info}");
+        }));
+        TerminalGuard {
+            original_hook: Some(original_hook),
+        }
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
         let _ = io::stdout().execute(DisableMouseCapture);
         let _ = disable_raw_mode();
         let _ = io::stdout().execute(LeaveAlternateScreen);
-        original_hook(panic_info);
-    }));
+        // Restore the original panic hook (fixes H4: hook chaining)
+        if let Some(hook) = self.original_hook.take() {
+            std::panic::set_hook(hook);
+        }
+    }
+}
+
+/// Run the TUI application. Sets up terminal, runs event loop, cleans up on exit.
+pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
+    let _guard = TerminalGuard::new();
 
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
@@ -570,11 +598,7 @@ pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Restore terminal
-    io::stdout().execute(DisableMouseCapture)?;
-    disable_raw_mode()?;
-    io::stdout().execute(LeaveAlternateScreen)?;
-
+    // _guard dropped here → cleanup runs automatically
     Ok(())
 }
 

@@ -35,7 +35,7 @@ pub struct ConfigTab {
     crosslink_dir: PathBuf,
     db_path: PathBuf,
     view_mode: ViewMode,
-    main_scroll: u16,
+    main_scroll: usize,
 
     // Agent identity
     agent_id: String,
@@ -60,7 +60,7 @@ pub struct ConfigTab {
     // Events
     recent_events: Vec<EventSummary>,
     all_events: Vec<EventSummary>,
-    event_scroll: u16,
+    event_scroll: usize,
 
     error_msg: Option<String>,
 }
@@ -422,7 +422,7 @@ impl ConfigTab {
 
         let para = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL))
-            .scroll((self.main_scroll, 0))
+            .scroll((self.main_scroll as u16, 0))
             .wrap(Wrap { trim: false });
 
         frame.render_widget(para, area);
@@ -477,7 +477,7 @@ impl ConfigTab {
         let visible_rows: Vec<Row> = self
             .all_events
             .iter()
-            .skip(self.event_scroll as usize)
+            .skip(self.event_scroll)
             .map(|evt| {
                 Row::new(vec![
                     ratatui::widgets::Cell::from(evt.timestamp.clone())
@@ -544,7 +544,7 @@ impl ConfigTab {
                     self.event_scroll = self
                         .event_scroll
                         .saturating_add(1)
-                        .min((self.all_events.len() - 1) as u16);
+                        .min(self.all_events.len() - 1);
                 }
                 TabAction::Consumed
             }
@@ -557,7 +557,7 @@ impl ConfigTab {
                     self.event_scroll = self
                         .event_scroll
                         .saturating_add(10)
-                        .min((self.all_events.len() - 1) as u16);
+                        .min(self.all_events.len() - 1);
                 }
                 TabAction::Consumed
             }
@@ -571,7 +571,7 @@ impl ConfigTab {
             }
             KeyCode::Char('G') => {
                 if !self.all_events.is_empty() {
-                    self.event_scroll = (self.all_events.len() - 1) as u16;
+                    self.event_scroll = self.all_events.len() - 1;
                 }
                 TabAction::Consumed
             }
@@ -643,10 +643,12 @@ fn format_json_value(v: &serde_json::Value) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max - 3])
+        let end = max.saturating_sub(3);
+        let truncated: String = s.chars().take(end).collect();
+        format!("{truncated}...")
     }
 }
 

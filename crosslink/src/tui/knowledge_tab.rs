@@ -292,18 +292,18 @@ impl KnowledgeTab {
                 self.reader_scroll = 0;
                 TabAction::Consumed
             }
-            KeyCode::Char('y') => {
-                self.copy_page_to_clipboard();
-                TabAction::Consumed
-            }
+            KeyCode::Char('y') => self.copy_page_to_clipboard(),
             _ => TabAction::NotHandled,
         }
     }
 
-    fn copy_page_to_clipboard(&self) {
+    fn copy_page_to_clipboard(&self) -> TabAction {
         if let Some(ref content) = self.reader_content {
-            super::copy_to_clipboard(content);
+            let ok = super::copy_to_clipboard(content);
+            let msg = if ok { "Copied to clipboard" } else { "Clipboard copy failed" };
+            return TabAction::Flash(msg.to_string());
         }
+        TabAction::Consumed
     }
 
     // ── Renderers ─────────────────────────────────────────────────────
@@ -611,7 +611,9 @@ impl KnowledgeTab {
             Span::styled("G", Style::default().fg(Color::Cyan)),
             Span::raw(":Bottom  "),
             Span::styled("Home", Style::default().fg(Color::Cyan)),
-            Span::raw(":Top"),
+            Span::raw(":Top  "),
+            Span::styled("y", Style::default().fg(Color::Cyan)),
+            Span::raw(":Copy"),
         ]);
         frame.render_widget(
             Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)),

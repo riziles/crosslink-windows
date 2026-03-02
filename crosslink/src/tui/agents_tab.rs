@@ -76,7 +76,7 @@ pub struct AgentsTab {
     trust_selected: usize,
     /// Detail for a specific agent.
     detail: Option<AgentDetail>,
-    detail_scroll: u16,
+    detail_scroll: usize,
     /// Status message (e.g. "Last sync: 12s ago").
     status_msg: String,
     /// Error message if data load failed.
@@ -895,7 +895,7 @@ impl AgentsTab {
         let paragraph = Paragraph::new(lines)
             .block(Block::default().borders(Borders::NONE))
             .wrap(Wrap { trim: false })
-            .scroll((self.detail_scroll, 0));
+            .scroll((self.detail_scroll as u16, 0));
 
         frame.render_widget(paragraph, area);
 
@@ -955,7 +955,9 @@ fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
     let now = chrono::Utc::now();
     let diff = now.signed_duration_since(*dt);
 
-    if diff.num_seconds() < 60 {
+    if diff.num_seconds() < 0 {
+        "just now".to_string()
+    } else if diff.num_seconds() < 60 {
         format!("{}s ago", diff.num_seconds())
     } else if diff.num_minutes() < 60 {
         format!("{}m ago", diff.num_minutes())
@@ -967,10 +969,12 @@ fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        let end = max_len.saturating_sub(3);
+        let truncated: String = s.chars().take(end).collect();
+        format!("{truncated}...")
     }
 }
 

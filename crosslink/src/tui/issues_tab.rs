@@ -75,6 +75,7 @@ impl SortOrder {
 }
 
 /// View mode for the issues tab.
+#[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
     List,
     Detail,
@@ -114,6 +115,8 @@ pub struct IssuesTab {
     search_query: String,
     searching: bool,
     view_mode: ViewMode,
+    /// View mode to return to when leaving detail view.
+    prev_view_mode: ViewMode,
     detail: Option<IssueDetail>,
     detail_scroll: u16,
     open_count: usize,
@@ -135,6 +138,7 @@ impl IssuesTab {
             search_query: String::new(),
             searching: false,
             view_mode: ViewMode::List,
+            prev_view_mode: ViewMode::List,
             detail: None,
             detail_scroll: 0,
             open_count: 0,
@@ -226,6 +230,7 @@ impl IssuesTab {
             };
             self.detail = Some(detail);
             self.detail_scroll = 0;
+            self.prev_view_mode = self.view_mode;
             self.view_mode = ViewMode::Detail;
         }
         Ok(())
@@ -334,7 +339,7 @@ impl IssuesTab {
     fn handle_detail_key(&mut self, key: KeyEvent) -> TabAction {
         match key.code {
             KeyCode::Esc => {
-                self.view_mode = ViewMode::List;
+                self.view_mode = self.prev_view_mode;
                 self.detail = None;
                 TabAction::Consumed
             }
@@ -354,15 +359,12 @@ impl IssuesTab {
                 self.detail_scroll = self.detail_scroll.saturating_sub(10);
                 TabAction::Consumed
             }
-            KeyCode::Char('y') => {
-                self.copy_detail_to_clipboard();
-                TabAction::Consumed
-            }
+            KeyCode::Char('y') => self.copy_detail_to_clipboard(),
             _ => TabAction::NotHandled,
         }
     }
 
-    fn copy_detail_to_clipboard(&self) {
+    fn copy_detail_to_clipboard(&self) -> TabAction {
         if let Some(ref d) = self.detail {
             let mut text = format!(
                 "#{} — {}\nStatus: {}  Priority: {}  Labels: {}\n",
@@ -395,8 +397,11 @@ impl IssuesTab {
                     ));
                 }
             }
-            super::copy_to_clipboard(&text);
+            let ok = super::copy_to_clipboard(&text);
+            let msg = if ok { "Copied to clipboard" } else { "Clipboard copy failed" };
+            return TabAction::Flash(msg.to_string());
         }
+        TabAction::Consumed
     }
 
     /// Build flattened tree from issue hierarchy.
@@ -430,6 +435,11 @@ impl IssuesTab {
         issue: Issue,
         depth: usize,
     ) -> anyhow::Result<()> {
+        // Guard against cycles or extremely deep hierarchies
+        const MAX_DEPTH: usize = 32;
+        if depth > MAX_DEPTH {
+            return Ok(());
+        }
         let labels = db.get_labels(issue.id).unwrap_or_default();
         let id = issue.id;
         self.tree_nodes.push(TreeNode {
@@ -997,7 +1007,9 @@ impl IssuesTab {
             Span::styled("Esc", Style::default().fg(Color::Cyan)),
             Span::raw(":Back  "),
             Span::styled("\u{2191}\u{2193}", Style::default().fg(Color::Cyan)),
-            Span::raw(":Scroll"),
+            Span::raw(":Scroll  "),
+            Span::styled("y", Style::default().fg(Color::Cyan)),
+            Span::raw(":Copy"),
         ]);
         frame.render_widget(
             Paragraph::new(keys).style(Style::default().fg(Color::DarkGray)),
@@ -1020,12 +1032,16 @@ impl super::Tab for IssuesTab {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> TabAction {
-        let db = self.open_db().ok();
-        let db_ref = db.as_ref();
         match self.view_mode {
-            ViewMode::List => self.handle_list_key(key, db_ref),
+            ViewMode::List => {
+                let db = self.open_db().ok();
+                self.handle_list_key(key, db.as_ref())
+            }
             ViewMode::Detail => self.handle_detail_key(key),
-            ViewMode::Tree => self.handle_tree_key(key, db_ref),
+            ViewMode::Tree => {
+                let db = self.open_db().ok();
+                self.handle_tree_key(key, db.as_ref())
+            }
         }
     }
 

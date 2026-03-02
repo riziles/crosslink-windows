@@ -456,7 +456,7 @@ impl MilestonesTab {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " Esc:Back  ↑↓/j/k:Scroll",
+            " Esc:Back  ↑↓/j/k:Scroll  y:Copy",
             Style::default().fg(Color::DarkGray),
         )));
 
@@ -538,15 +538,12 @@ impl MilestonesTab {
                 self.detail_scroll = 0;
                 TabAction::Consumed
             }
-            KeyCode::Char('y') => {
-                self.copy_detail_to_clipboard();
-                TabAction::Consumed
-            }
+            KeyCode::Char('y') => self.copy_detail_to_clipboard(),
             _ => TabAction::NotHandled,
         }
     }
 
-    fn copy_detail_to_clipboard(&self) {
+    fn copy_detail_to_clipboard(&self) -> TabAction {
         if let Some(ref d) = self.detail {
             let mut text = format!(
                 "Milestone #{} — {}\nStatus: {}  Progress: {}/{}\n",
@@ -569,8 +566,11 @@ impl MilestonesTab {
                     ));
                 }
             }
-            super::copy_to_clipboard(&text);
+            let ok = super::copy_to_clipboard(&text);
+            let msg = if ok { "Copied to clipboard" } else { "Clipboard copy failed" };
+            return TabAction::Flash(msg.to_string());
         }
+        TabAction::Consumed
     }
 }
 
