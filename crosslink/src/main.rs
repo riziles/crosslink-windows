@@ -1,6 +1,12 @@
+#[allow(dead_code)]
+mod checkpoint;
 mod commands;
+#[allow(dead_code)]
+mod compaction;
 mod daemon;
 mod db;
+#[allow(dead_code)]
+mod events;
 mod hydration;
 mod identity;
 mod issue_file;
@@ -8,6 +14,7 @@ mod knowledge;
 mod lock_check;
 mod locks;
 mod models;
+#[allow(dead_code)]
 mod shared_writer;
 mod signing;
 mod sync;

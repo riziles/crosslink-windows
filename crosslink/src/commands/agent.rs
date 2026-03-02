@@ -91,7 +91,7 @@ pub fn status(crosslink_dir: &Path) -> Result<()> {
             if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
                 let _ = sync.init_cache();
                 let _ = sync.fetch();
-                if let Ok(locks) = sync.read_locks() {
+                if let Ok(locks) = sync.read_locks_auto() {
                     let my_locks = locks.agent_locks(&config.agent_id);
                     if my_locks.is_empty() {
                         println!("Locks: none");

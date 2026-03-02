@@ -93,6 +93,17 @@ enum PushOutcome {
     LocalOnly,
 }
 
+/// Result of a V2 lock claim attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockClaimResult {
+    /// Lock successfully claimed.
+    Claimed,
+    /// Lock already held by this agent.
+    AlreadyHeld,
+    /// Another agent won the lock.
+    Contended { winner_agent_id: String },
+}
+
 /// Write-side coordinator for multi-agent shared issue tracking.
 ///
 /// Handles: generate UUID → claim display ID → write JSON → commit →
@@ -101,6 +112,8 @@ pub struct SharedWriter {
     sync: SyncManager,
     agent: AgentConfig,
     cache_dir: PathBuf,
+    /// Per-session event sequence counter, monotonically increasing.
+    event_seq: Cell<u64>,
 }
 
 impl SharedWriter {
@@ -122,10 +135,14 @@ impl SharedWriter {
         std::fs::create_dir_all(cache_dir.join("issues"))?;
         std::fs::create_dir_all(cache_dir.join("meta").join("milestones"))?;
 
+        // Initialize event sequence counter from existing log
+        let event_seq = Cell::new(Self::read_max_event_seq(&cache_dir, &agent.agent_id));
+
         Ok(Some(SharedWriter {
             sync,
             agent,
             cache_dir,
+            event_seq,
         }))
     }
 
@@ -137,6 +154,139 @@ impl SharedWriter {
     fn layout_version(&self) -> u32 {
         let meta_dir = self.sync.cache_path().join("meta");
         crate::issue_file::read_layout_version(&meta_dir).unwrap_or(1)
+    }
+
+    // ─────────────── Event emission infrastructure ───────────────
+
+    /// Read the max agent_seq from an existing event log.
+    fn read_max_event_seq(cache_dir: &Path, agent_id: &str) -> u64 {
+        let log_path = cache_dir.join("agents").join(agent_id).join("events.log");
+        match crate::events::read_events(&log_path) {
+            Ok(events) => events.iter().map(|e| e.agent_seq).max().unwrap_or(0),
+            Err(_) => 0,
+        }
+    }
+
+    /// Get the next event sequence number and increment the counter.
+    fn next_event_seq(&self) -> u64 {
+        let seq = self.event_seq.get() + 1;
+        self.event_seq.set(seq);
+        seq
+    }
+
+    /// Path to this agent's event log file.
+    fn event_log_path(&self) -> PathBuf {
+        self.cache_dir
+            .join("agents")
+            .join(&self.agent.agent_id)
+            .join("events.log")
+    }
+
+    /// Resolve the agent's SSH private key to an absolute path, if configured.
+    fn resolve_ssh_key_path(&self) -> Option<PathBuf> {
+        let rel = self.agent.ssh_key_path.as_ref()?;
+        let crosslink_dir = self
+            .sync
+            .cache_path()
+            .parent()
+            .unwrap_or(self.sync.cache_path());
+        let abs = crosslink_dir.join(rel);
+        if abs.exists() {
+            Some(abs)
+        } else {
+            None
+        }
+    }
+
+    /// Create and optionally sign an event envelope.
+    fn create_envelope(&self, event: crate::events::Event) -> crate::events::EventEnvelope {
+        let seq = self.next_event_seq();
+        let mut envelope = crate::events::EventEnvelope {
+            agent_id: self.agent.agent_id.clone(),
+            agent_seq: seq,
+            timestamp: Utc::now(),
+            event,
+            signed_by: None,
+            signature: None,
+        };
+
+        // Sign if key is available
+        if let (Some(key_path), Some(fingerprint)) = (
+            self.resolve_ssh_key_path(),
+            self.agent.ssh_fingerprint.as_ref(),
+        ) {
+            let _ = crate::events::sign_event(&mut envelope, &key_path, fingerprint);
+        }
+
+        envelope
+    }
+
+    /// Emit an event, run compaction, and push all changes.
+    ///
+    /// The event is appended once to the log before the retry loop.
+    /// On push conflict, compaction is re-run after rebase to incorporate
+    /// any new remote events.
+    fn emit_compact_push(&self, event: crate::events::Event, message: &str) -> Result<PushOutcome> {
+        let envelope = self.create_envelope(event);
+        let log_path = self.event_log_path();
+        crate::events::append_event(&log_path, &envelope)?;
+
+        for attempt in 0..MAX_RETRIES {
+            // Run compaction (force=true since we own the write path)
+            let _ = crate::compaction::compact(&self.cache_dir, &self.agent.agent_id, true)?;
+
+            // Stage event log + compaction output
+            let rel_log = format!("agents/{}/events.log", self.agent.agent_id);
+            self.git_in_cache(&["add", &rel_log])?;
+            let _ = self.git_in_cache(&["add", "checkpoint/"]);
+            let _ = self.git_in_cache(&["add", "issues/"]);
+            let _ = self.git_in_cache(&["add", "locks/"]);
+
+            // Commit
+            let commit_msg = format!(
+                "{}: {} at {}",
+                self.agent.agent_id,
+                message,
+                Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
+            );
+            let commit_result = self.git_in_cache(&["commit", "-m", &commit_msg]);
+            if let Err(ref e) = commit_result {
+                let err_str = e.to_string();
+                if err_str.contains("nothing to commit") || err_str.contains("no changes added") {
+                    return Ok(PushOutcome::Pushed);
+                }
+            }
+            commit_result?;
+
+            // Push
+            let push_result = self.git_in_cache(&["push", "origin", crate::sync::HUB_BRANCH]);
+            match push_result {
+                Ok(_) => return Ok(PushOutcome::Pushed),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Could not resolve host")
+                        || err_str.contains("Could not read from remote")
+                    {
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
+                        if attempt < MAX_RETRIES - 1 {
+                            let _ = self.git_in_cache(&["reset", "HEAD~1"]);
+                            self.git_in_cache(&[
+                                "pull",
+                                "--rebase",
+                                "origin",
+                                crate::sync::HUB_BRANCH,
+                            ])?;
+                            continue;
+                        }
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(PushOutcome::Pushed)
     }
 
     /// Create a new issue: generate UUID, claim display ID, write JSON, push, hydrate.
@@ -1371,6 +1521,132 @@ impl SharedWriter {
         Ok(PushOutcome::Pushed)
     }
 
+    // ─────────────── V2 Lock Protocol (event-based) ───────────────
+
+    /// Claim a lock on an issue using the V2 event-based protocol.
+    ///
+    /// 1. Check if already held by self → AlreadyHeld
+    /// 2. Emit LockClaimed event → append to event log
+    /// 3. Push event log (conflict-free per-agent file)
+    /// 4. Compact with force=true
+    /// 5. Stage + commit + push compaction output (rebase-retry)
+    /// 6. Read materialized lock file
+    /// 7. If winner is self → Claimed; else → emit LockReleased cleanup → Contended
+    pub fn claim_lock_v2(
+        &self,
+        issue_display_id: i64,
+        branch: Option<&str>,
+    ) -> Result<LockClaimResult> {
+        // Check if already held
+        if let Some(lock) = self.read_lock_v2(issue_display_id)? {
+            if lock.agent_id == self.agent.agent_id {
+                return Ok(LockClaimResult::AlreadyHeld);
+            }
+        }
+
+        // Emit LockClaimed event
+        let event = crate::events::Event::LockClaimed {
+            issue_display_id,
+            branch: branch.map(|s| s.to_string()),
+        };
+        self.emit_compact_push(event, &format!("claim lock on #{}", issue_display_id))?;
+
+        // Re-read materialized lock to see who won
+        match self.read_lock_v2(issue_display_id)? {
+            Some(lock) if lock.agent_id == self.agent.agent_id => Ok(LockClaimResult::Claimed),
+            Some(lock) => {
+                // We lost — clean up by emitting LockReleased
+                let release = crate::events::Event::LockReleased { issue_display_id };
+                let _ = self.emit_compact_push(
+                    release,
+                    &format!("release lock on #{} (contention cleanup)", issue_display_id),
+                );
+                Ok(LockClaimResult::Contended {
+                    winner_agent_id: lock.agent_id,
+                })
+            }
+            None => {
+                // Lock wasn't materialized — shouldn't happen, but treat as claimed
+                Ok(LockClaimResult::Claimed)
+            }
+        }
+    }
+
+    /// Release a lock on an issue using the V2 event-based protocol.
+    ///
+    /// Returns Ok(true) if released, Ok(false) if not held.
+    pub fn release_lock_v2(&self, issue_display_id: i64) -> Result<bool> {
+        // Check if we actually hold it
+        match self.read_lock_v2(issue_display_id)? {
+            Some(lock) if lock.agent_id == self.agent.agent_id => {
+                // We hold it — release
+                let event = crate::events::Event::LockReleased { issue_display_id };
+                self.emit_compact_push(event, &format!("release lock on #{}", issue_display_id))?;
+                Ok(true)
+            }
+            Some(_) => {
+                // Held by someone else — can't release
+                Ok(false)
+            }
+            None => {
+                // Not locked
+                Ok(false)
+            }
+        }
+    }
+
+    /// Steal a lock from a stale agent using the V2 event-based protocol.
+    ///
+    /// Prunes the stale agent's events, clears checkpoint lock state,
+    /// then claims normally.
+    pub fn steal_lock_v2(
+        &self,
+        issue_display_id: i64,
+        stale_agent_id: &str,
+        branch: Option<&str>,
+    ) -> Result<LockClaimResult> {
+        // Prune stale agent's compacted events so they don't replay
+        crate::compaction::prune_events(&self.cache_dir, stale_agent_id)?;
+
+        // Clear lock from checkpoint state
+        let mut state = crate::checkpoint::read_checkpoint(&self.cache_dir)?;
+        state.locks.remove(&issue_display_id);
+        crate::checkpoint::write_checkpoint(&self.cache_dir, &state)?;
+
+        // Remove materialized lock file
+        let lock_path = self
+            .cache_dir
+            .join("locks")
+            .join(format!("{}.json", issue_display_id));
+        if lock_path.exists() {
+            std::fs::remove_file(&lock_path)?;
+        }
+
+        // Now claim normally
+        self.claim_lock_v2(issue_display_id, branch)
+    }
+
+    /// Read a V2 lock file for a specific issue.
+    ///
+    /// Returns None if the lock file doesn't exist.
+    pub fn read_lock_v2(
+        &self,
+        issue_display_id: i64,
+    ) -> Result<Option<crate::issue_file::LockFileV2>> {
+        let lock_path = self
+            .cache_dir
+            .join("locks")
+            .join(format!("{}.json", issue_display_id));
+        if !lock_path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&lock_path)
+            .with_context(|| format!("Failed to read lock file: {}", lock_path.display()))?;
+        let lock: crate::issue_file::LockFileV2 = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse lock file: {}", lock_path.display()))?;
+        Ok(Some(lock))
+    }
+
     /// Run a git command in the cache worktree.
     fn git_in_cache(&self, args: &[&str]) -> Result<std::process::Output> {
         let output = std::process::Command::new("git")
@@ -1713,5 +1989,238 @@ mod tests {
             parsed.driver_key_fingerprint,
             Some("SHA256:abc123".to_string())
         );
+    }
+
+    mod lock_v2_tests {
+        use super::*;
+        use crate::issue_file::LockFileV2;
+        use tempfile::tempdir;
+
+        #[test]
+        fn test_lock_claim_result_variants() {
+            let claimed = LockClaimResult::Claimed;
+            let already = LockClaimResult::AlreadyHeld;
+            let contended = LockClaimResult::Contended {
+                winner_agent_id: "agent-2".to_string(),
+            };
+            assert_eq!(claimed, LockClaimResult::Claimed);
+            assert_eq!(already, LockClaimResult::AlreadyHeld);
+            assert_ne!(claimed, already);
+            assert_ne!(claimed, contended.clone());
+            assert_eq!(
+                contended,
+                LockClaimResult::Contended {
+                    winner_agent_id: "agent-2".to_string(),
+                }
+            );
+            // Verify Debug
+            let _ = format!("{:?}", claimed);
+            let _ = format!("{:?}", contended);
+        }
+
+        #[test]
+        fn test_read_lock_v2_file() {
+            let dir = tempdir().unwrap();
+            let locks_dir = dir.path().join("locks");
+            std::fs::create_dir_all(&locks_dir).unwrap();
+
+            let lock = LockFileV2 {
+                issue_id: 42,
+                agent_id: "agent-1".to_string(),
+                branch: Some("feature/x".to_string()),
+                claimed_at: chrono::Utc::now(),
+                signed_by: Some("SHA256:abc".to_string()),
+            };
+            let json = serde_json::to_string_pretty(&lock).unwrap();
+            std::fs::write(locks_dir.join("42.json"), &json).unwrap();
+
+            // Read it back
+            let content = std::fs::read_to_string(locks_dir.join("42.json")).unwrap();
+            let parsed: LockFileV2 = serde_json::from_str(&content).unwrap();
+            assert_eq!(parsed.issue_id, 42);
+            assert_eq!(parsed.agent_id, "agent-1");
+            assert_eq!(parsed.branch, Some("feature/x".to_string()));
+        }
+
+        #[test]
+        fn test_read_lock_v2_missing() {
+            let dir = tempdir().unwrap();
+            let lock_path = dir.path().join("locks").join("99.json");
+            assert!(!lock_path.exists());
+        }
+
+        #[test]
+        fn test_lock_v2_file_roundtrip() {
+            let dir = tempdir().unwrap();
+            let locks_dir = dir.path().join("locks");
+            std::fs::create_dir_all(&locks_dir).unwrap();
+
+            let lock = LockFileV2 {
+                issue_id: 5,
+                agent_id: "worker-1".to_string(),
+                branch: None,
+                claimed_at: chrono::Utc::now(),
+                signed_by: None,
+            };
+            let json = serde_json::to_string_pretty(&lock).unwrap();
+            let path = locks_dir.join("5.json");
+            std::fs::write(&path, &json).unwrap();
+
+            let content = std::fs::read_to_string(&path).unwrap();
+            let parsed: LockFileV2 = serde_json::from_str(&content).unwrap();
+            assert_eq!(parsed.issue_id, lock.issue_id);
+            assert_eq!(parsed.agent_id, lock.agent_id);
+            assert!(parsed.branch.is_none());
+            assert!(parsed.signed_by.is_none());
+        }
+
+        #[test]
+        fn test_lock_contention_deterministic_winner() {
+            // Verify that compaction's first-claim-wins rule works
+            use crate::checkpoint::{read_checkpoint, write_checkpoint, CheckpointState};
+            use crate::events::{append_event, Event, EventEnvelope};
+            use chrono::Utc;
+
+            let dir = tempdir().unwrap();
+            let cache = dir.path();
+
+            // Set up checkpoint
+            std::fs::create_dir_all(cache.join("checkpoint")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-a")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-b")).unwrap();
+            std::fs::create_dir_all(cache.join("locks")).unwrap();
+            std::fs::create_dir_all(cache.join("issues")).unwrap();
+
+            let state = CheckpointState::default();
+            write_checkpoint(cache, &state).unwrap();
+
+            let now = Utc::now();
+
+            // Agent A claims first (earlier timestamp)
+            let e1 = EventEnvelope {
+                agent_id: "agent-a".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(1),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: None,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-a/events.log"), &e1).unwrap();
+
+            // Agent B claims second (later timestamp)
+            let e2 = EventEnvelope {
+                agent_id: "agent-b".to_string(),
+                agent_seq: 1,
+                timestamp: now,
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: None,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-b/events.log"), &e2).unwrap();
+
+            // Run compaction
+            let result = crate::compaction::compact(cache, "agent-a", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.locks_materialized, 1);
+
+            // Read checkpoint — agent-a should win (earlier timestamp)
+            let state = read_checkpoint(cache).unwrap();
+            let lock = state.locks.get(&1).unwrap();
+            assert_eq!(lock.agent_id, "agent-a");
+        }
+
+        #[test]
+        fn test_prune_then_checkpoint_clear() {
+            use crate::checkpoint::{
+                write_checkpoint, write_watermark, CheckpointState, LockEntry,
+            };
+            use crate::events::{append_event, Event, EventEnvelope, OrderingKey};
+            use chrono::Utc;
+
+            let dir = tempdir().unwrap();
+            let cache = dir.path();
+
+            std::fs::create_dir_all(cache.join("checkpoint")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/stale-agent")).unwrap();
+            std::fs::create_dir_all(cache.join("locks")).unwrap();
+            std::fs::create_dir_all(cache.join("issues")).unwrap();
+
+            let now = Utc::now();
+
+            // Write an event for the stale agent
+            let e = EventEnvelope {
+                agent_id: "stale-agent".to_string(),
+                agent_seq: 1,
+                timestamp: now,
+                event: Event::LockClaimed {
+                    issue_display_id: 5,
+                    branch: None,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/stale-agent/events.log"), &e).unwrap();
+
+            // Write a watermark that covers the event so prune_events will prune it
+            let watermark = OrderingKey {
+                timestamp: now + chrono::Duration::seconds(1),
+                agent_id: "stale-agent".to_string(),
+                agent_seq: 1,
+            };
+            write_watermark(cache, &watermark).unwrap();
+
+            // Compact to materialize
+            let mut state = CheckpointState::default();
+            state.locks.insert(
+                5,
+                LockEntry {
+                    agent_id: "stale-agent".to_string(),
+                    branch: None,
+                    claimed_at: now,
+                },
+            );
+            write_checkpoint(cache, &state).unwrap();
+
+            // Write materialized lock file
+            let lock = crate::issue_file::LockFileV2 {
+                issue_id: 5,
+                agent_id: "stale-agent".to_string(),
+                branch: None,
+                claimed_at: now,
+                signed_by: None,
+            };
+            std::fs::write(
+                cache.join("locks/5.json"),
+                serde_json::to_string_pretty(&lock).unwrap(),
+            )
+            .unwrap();
+
+            // Prune stale agent events
+            let pruned = crate::compaction::prune_events(cache, "stale-agent").unwrap();
+            assert!(pruned > 0);
+
+            // Clear checkpoint lock
+            let mut state = crate::checkpoint::read_checkpoint(cache).unwrap();
+            state.locks.remove(&5);
+            write_checkpoint(cache, &state).unwrap();
+
+            // Remove lock file
+            let lock_path = cache.join("locks/5.json");
+            if lock_path.exists() {
+                std::fs::remove_file(&lock_path).unwrap();
+            }
+
+            // Verify clean state
+            let state = crate::checkpoint::read_checkpoint(cache).unwrap();
+            assert!(state.locks.is_empty());
+            assert!(!cache.join("locks/5.json").exists());
+        }
     }
 }

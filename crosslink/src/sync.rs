@@ -318,6 +318,62 @@ impl SyncManager {
         LocksFile::load(&path)
     }
 
+    /// Read locks from V2 per-issue lock files at `locks/*.json`.
+    ///
+    /// Converts to LocksFile format for backward compatibility with existing code.
+    pub fn read_locks_v2(&self) -> Result<LocksFile> {
+        use crate::issue_file::LockFileV2;
+        use crate::locks::Lock;
+        use std::collections::HashMap;
+
+        let locks_dir = self.cache_dir.join("locks");
+        if !locks_dir.exists() {
+            return Ok(LocksFile::empty());
+        }
+
+        let mut locks = HashMap::new();
+        for entry in std::fs::read_dir(&locks_dir)
+            .with_context(|| format!("Failed to read locks dir: {}", locks_dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read lock file: {}", path.display()))?;
+            let lock_v2: LockFileV2 = serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse lock file: {}", path.display()))?;
+            let lock = Lock {
+                agent_id: lock_v2.agent_id,
+                branch: lock_v2.branch,
+                claimed_at: lock_v2.claimed_at,
+                signed_by: lock_v2.signed_by.unwrap_or_default(),
+            };
+            locks.insert(lock_v2.issue_id.to_string(), lock);
+        }
+
+        Ok(LocksFile {
+            version: 2,
+            locks,
+            settings: crate::locks::LockSettings::default(),
+        })
+    }
+
+    /// Read locks using the appropriate method based on hub layout version.
+    ///
+    /// V1: reads `locks.json` (single file)
+    /// V2: reads `locks/*.json` (per-issue files)
+    pub fn read_locks_auto(&self) -> Result<LocksFile> {
+        let meta_dir = self.cache_dir.join("meta");
+        let version = crate::issue_file::read_layout_version(&meta_dir).unwrap_or(1);
+        if version >= 2 {
+            self.read_locks_v2()
+        } else {
+            self.read_locks()
+        }
+    }
+
     /// Read the trust keyring from the cache (deprecated — use `read_allowed_signers`).
     pub fn read_keyring(&self) -> Result<Option<Keyring>> {
         let path = self.cache_dir.join("trust").join("keyring.json");
@@ -570,7 +626,7 @@ impl SyncManager {
 
     /// Find locks that have gone stale (no heartbeat within the timeout).
     pub fn find_stale_locks(&self) -> Result<Vec<(i64, String)>> {
-        let locks = self.read_locks()?;
+        let locks = self.read_locks_auto()?;
         let heartbeats = self.read_heartbeats()?;
         let timeout = chrono::Duration::minutes(locks.settings.stale_lock_timeout_minutes as i64);
         let now = Utc::now();
@@ -743,6 +799,12 @@ impl SyncManager {
     /// Get the path to the cache directory.
     pub fn cache_path(&self) -> &Path {
         &self.cache_dir
+    }
+
+    /// Check if the hub uses V2 layout (per-entity lock files in `locks/`).
+    pub fn is_v2_layout(&self) -> bool {
+        let meta_dir = self.cache_dir.join("meta");
+        crate::issue_file::read_layout_version(&meta_dir).unwrap_or(1) >= 2
     }
 
     // --- Private helpers ---
@@ -969,6 +1031,183 @@ mod tests {
             .args(["-C", &p, "commit", "--allow-empty", "-m", "init"])
             .output()
             .unwrap();
+    }
+
+    #[test]
+    fn test_read_locks_v2_empty_dir() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(cache_dir.join("locks")).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_v2().unwrap();
+        assert!(locks.locks.is_empty());
+        assert_eq!(locks.version, 2);
+    }
+
+    #[test]
+    fn test_read_locks_v2_no_locks_dir() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&crosslink_dir).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_v2().unwrap();
+        assert!(locks.locks.is_empty());
+    }
+
+    #[test]
+    fn test_read_locks_v2_with_files() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        let locks_dir = cache_dir.join("locks");
+        std::fs::create_dir_all(&locks_dir).unwrap();
+
+        let lock = crate::issue_file::LockFileV2 {
+            issue_id: 5,
+            agent_id: "worker-1".to_string(),
+            branch: Some("feature/x".to_string()),
+            claimed_at: Utc::now(),
+            signed_by: Some("SHA256:abc".to_string()),
+        };
+        let json = serde_json::to_string_pretty(&lock).unwrap();
+        std::fs::write(locks_dir.join("5.json"), &json).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_v2().unwrap();
+        assert_eq!(locks.locks.len(), 1);
+        assert!(locks.is_locked(5));
+        let l = locks.get_lock(5).unwrap();
+        assert_eq!(l.agent_id, "worker-1");
+        assert_eq!(l.branch, Some("feature/x".to_string()));
+        assert_eq!(l.signed_by, "SHA256:abc");
+    }
+
+    #[test]
+    fn test_read_locks_v2_skips_non_json() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        let locks_dir = cache_dir.join("locks");
+        std::fs::create_dir_all(&locks_dir).unwrap();
+
+        // Write a non-json file that should be ignored
+        std::fs::write(locks_dir.join("README.md"), "ignore me").unwrap();
+
+        let lock = crate::issue_file::LockFileV2 {
+            issue_id: 3,
+            agent_id: "worker-2".to_string(),
+            branch: None,
+            claimed_at: Utc::now(),
+            signed_by: None,
+        };
+        std::fs::write(
+            locks_dir.join("3.json"),
+            serde_json::to_string_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_v2().unwrap();
+        assert_eq!(locks.locks.len(), 1);
+        assert!(locks.is_locked(3));
+    }
+
+    #[test]
+    fn test_read_locks_v2_signed_by_none_defaults_empty() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        let locks_dir = cache_dir.join("locks");
+        std::fs::create_dir_all(&locks_dir).unwrap();
+
+        let lock = crate::issue_file::LockFileV2 {
+            issue_id: 7,
+            agent_id: "worker-3".to_string(),
+            branch: None,
+            claimed_at: Utc::now(),
+            signed_by: None,
+        };
+        std::fs::write(
+            locks_dir.join("7.json"),
+            serde_json::to_string_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_v2().unwrap();
+        let l = locks.get_lock(7).unwrap();
+        assert_eq!(l.signed_by, "");
+    }
+
+    #[test]
+    fn test_read_locks_auto_v1_default() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        // No meta/version.json -> defaults to V1 -> reads locks.json
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_auto().unwrap();
+        assert!(locks.locks.is_empty());
+    }
+
+    #[test]
+    fn test_read_locks_auto_v2_dispatch() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        // Write V2 layout version
+        let meta_dir = cache_dir.join("meta");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        crate::issue_file::write_layout_version(&meta_dir, 2).unwrap();
+
+        // Write a lock file
+        let locks_dir = cache_dir.join("locks");
+        std::fs::create_dir_all(&locks_dir).unwrap();
+        let lock = crate::issue_file::LockFileV2 {
+            issue_id: 3,
+            agent_id: "worker-2".to_string(),
+            branch: None,
+            claimed_at: Utc::now(),
+            signed_by: None,
+        };
+        std::fs::write(
+            locks_dir.join("3.json"),
+            serde_json::to_string_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let locks = manager.read_locks_auto().unwrap();
+        assert_eq!(locks.locks.len(), 1);
+        assert!(locks.is_locked(3));
+    }
+
+    #[test]
+    fn test_read_locks_auto_v1_explicit() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        // Write V1 layout version explicitly
+        let meta_dir = cache_dir.join("meta");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        crate::issue_file::write_layout_version(&meta_dir, 1).unwrap();
+
+        // Write a locks.json (V1 format)
+        let locks = LocksFile::empty();
+        locks.save(&cache_dir.join("locks.json")).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let result = manager.read_locks_auto().unwrap();
+        assert!(result.locks.is_empty());
     }
 
     // resolve_main_repo_root tests are in utils::tests
