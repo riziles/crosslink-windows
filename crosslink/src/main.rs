@@ -594,6 +594,27 @@ enum AgentCommands {
     },
     /// Show current agent identity
     Status,
+    /// Bootstrap agent identity in a new or existing repo clone
+    Bootstrap {
+        /// Git repository URL to clone
+        #[arg(long)]
+        repo: String,
+        /// Agent ID (alphanumeric, hyphens, underscores)
+        #[arg(long)]
+        identity: String,
+        /// Branch to checkout after cloning
+        #[arg(long)]
+        branch: Option<String>,
+        /// Agent description
+        #[arg(short, long)]
+        description: Option<String>,
+        /// Skip SSH key generation
+        #[arg(long)]
+        no_key: bool,
+        /// Target directory (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1335,6 +1356,31 @@ fn main() -> Result<()> {
                     commands::agent::init(&crosslink_dir, &agent_id, description.as_deref(), no_key)
                 }
                 AgentCommands::Status => commands::agent::status(&crosslink_dir),
+                AgentCommands::Bootstrap {
+                    repo,
+                    identity,
+                    branch,
+                    description,
+                    no_key,
+                    target,
+                } => {
+                    let target_path = std::path::PathBuf::from(&target);
+                    commands::agent::bootstrap(
+                        &target_path,
+                        &repo,
+                        &identity,
+                        branch.as_deref(),
+                        description.as_deref(),
+                        no_key,
+                    )?;
+                    // Ensure the agent directory exists on the hub branch
+                    // (idempotent — safe if bootstrap already created it)
+                    let cl_dir = target_path.join(".crosslink");
+                    if let Ok(sync) = sync::SyncManager::new(&cl_dir) {
+                        let _ = sync.ensure_agent_dir(&identity);
+                    }
+                    Ok(())
+                }
             }
         }
 

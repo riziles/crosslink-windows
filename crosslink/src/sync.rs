@@ -807,6 +807,75 @@ impl SyncManager {
         crate::issue_file::read_layout_version(&meta_dir).unwrap_or(1) >= 2
     }
 
+    /// Create the agent directory on the hub branch if it doesn't exist.
+    ///
+    /// Creates `agents/{agent_id}/heartbeat.json` with an initial heartbeat.
+    /// Returns `Ok(true)` if the directory was created, `Ok(false)` if it already existed.
+    pub fn ensure_agent_dir(&self, agent_id: &str) -> Result<bool> {
+        if !self.create_agent_dir_files(agent_id)? {
+            return Ok(false);
+        }
+
+        // Stage and commit
+        self.git_in_cache(&["add", &format!("agents/{}/heartbeat.json", agent_id)])?;
+        self.git_in_cache(&[
+            "commit",
+            "-m",
+            &format!("bootstrap: initialize agent directory for {}", agent_id),
+        ])?;
+
+        // Push with retry on rebase conflict
+        for attempt in 0..3 {
+            let push_result = self.git_in_cache(&["push", "origin", HUB_BRANCH]);
+            match push_result {
+                Ok(_) => return Ok(true),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Could not resolve host")
+                        || err_str.contains("Could not read from remote")
+                    {
+                        return Ok(true); // Offline — commit is local
+                    }
+                    if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
+                        if attempt < 2 {
+                            let _ = self.git_in_cache(&["pull", "--rebase", "origin", HUB_BRANCH]);
+                            continue;
+                        }
+                        bail!("Push failed after 3 retries for agent dir {}", agent_id);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Create the agent directory and heartbeat file on disk (no git ops).
+    ///
+    /// Returns `Ok(true)` if created, `Ok(false)` if the directory already exists.
+    fn create_agent_dir_files(&self, agent_id: &str) -> Result<bool> {
+        let agents_dir = self.cache_dir.join("agents").join(agent_id);
+        if agents_dir.exists() {
+            return Ok(false);
+        }
+
+        std::fs::create_dir_all(&agents_dir)
+            .with_context(|| format!("Failed to create agent directory for {}", agent_id))?;
+
+        // Write initial heartbeat
+        let heartbeat = serde_json::json!({
+            "agent_id": agent_id,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "status": "active"
+        });
+        let heartbeat_path = agents_dir.join("heartbeat.json");
+        std::fs::write(&heartbeat_path, serde_json::to_string_pretty(&heartbeat)?)
+            .with_context(|| "Failed to write initial heartbeat")?;
+
+        Ok(true)
+    }
+
     // --- Private helpers ---
 
     fn cache_path_str(&self) -> String {
@@ -1208,6 +1277,62 @@ mod tests {
         let manager = SyncManager::new(&crosslink_dir).unwrap();
         let result = manager.read_locks_auto().unwrap();
         assert!(result.locks.is_empty());
+    }
+
+    #[test]
+    fn test_ensure_agent_dir_creates_directory() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let created = manager.create_agent_dir_files("worker-42").unwrap();
+        assert!(created);
+
+        let agent_dir = cache_dir.join("agents").join("worker-42");
+        assert!(agent_dir.exists());
+        assert!(agent_dir.join("heartbeat.json").exists());
+    }
+
+    #[test]
+    fn test_ensure_agent_dir_idempotent() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        let first = manager.create_agent_dir_files("worker-42").unwrap();
+        assert!(first);
+
+        let second = manager.create_agent_dir_files("worker-42").unwrap();
+        assert!(!second);
+    }
+
+    #[test]
+    fn test_ensure_agent_dir_heartbeat_valid_json() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(HUB_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = SyncManager::new(&crosslink_dir).unwrap();
+        manager.create_agent_dir_files("test-agent").unwrap();
+
+        let heartbeat_path = cache_dir
+            .join("agents")
+            .join("test-agent")
+            .join("heartbeat.json");
+        let content = std::fs::read_to_string(&heartbeat_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(parsed["agent_id"], "test-agent");
+        assert_eq!(parsed["status"], "active");
+        assert!(parsed["timestamp"].is_string());
+        // Verify timestamp is valid RFC3339
+        let ts = parsed["timestamp"].as_str().unwrap();
+        chrono::DateTime::parse_from_rfc3339(ts).expect("timestamp should be valid RFC3339");
     }
 
     // resolve_main_repo_root tests are in utils::tests
