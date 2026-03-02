@@ -1,14 +1,14 @@
 name: CI
 
-# Triggers: develop branch validation + reusable workflow for publish pipeline.
+# Triggers: develop branch validation only.
 # Feature branches use ci-feature.yml (fast path) instead.
-# PRs to main are handled by publish.yml which calls this via workflow_call.
+# PRs to main rely on branch protection requiring this check suite to pass
+# on the source branch before merge — no need for workflow_call.
 on:
   push:
     branches: [develop]
   pull_request:
     branches: [develop]
-  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
