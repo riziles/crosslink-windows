@@ -466,30 +466,94 @@ impl KnowledgeTab {
 
         // Metadata
         if let Some(ref fm) = self.reader_frontmatter {
-            let tags_str = if fm.tags.is_empty() {
-                "(none)".to_string()
+            // Tags line — each tag as a separate colored pill
+            let mut tag_spans = vec![Span::styled(
+                " Tags: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            )];
+            if fm.tags.is_empty() {
+                tag_spans.push(Span::styled(
+                    "(none)",
+                    Style::default().fg(Color::DarkGray),
+                ));
             } else {
-                fm.tags.join(", ")
-            };
-            let contributors_str = if fm.contributors.is_empty() {
-                "(none)".to_string()
-            } else {
-                fm.contributors.join(", ")
-            };
+                for (i, tag) in fm.tags.iter().enumerate() {
+                    if i > 0 {
+                        tag_spans.push(Span::styled(
+                            " \u{2022} ",
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                    tag_spans.push(Span::styled(
+                        tag.clone(),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
+            lines.push(Line::from(tag_spans));
 
-            lines.push(Line::from(vec![
-                Span::styled(" Tags: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(tags_str, Style::default().fg(Color::Magenta)),
-                Span::raw("    "),
-                Span::styled("Sources: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("{}", fm.sources.len())),
-                Span::raw("    "),
-                Span::styled(
-                    "Contributors: ",
+            // Sources line — list each source with title and URL
+            if fm.sources.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        " Sources: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("(none)", Style::default().fg(Color::DarkGray)),
+                ]));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    format!(" Sources ({}):", fm.sources.len()),
                     Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(contributors_str),
-            ]));
+                )));
+                for src in &fm.sources {
+                    lines.push(Line::from(vec![
+                        Span::raw("   "),
+                        Span::styled(
+                            "\u{2192} ",
+                            Style::default().fg(Color::Cyan),
+                        ),
+                        Span::styled(
+                            src.title.clone(),
+                            Style::default().fg(Color::Cyan),
+                        ),
+                        Span::styled(
+                            format!("  {}", src.url),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]));
+                }
+            }
+
+            // Contributors line
+            let mut contrib_spans = vec![Span::styled(
+                " Contributors: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            )];
+            if fm.contributors.is_empty() {
+                contrib_spans.push(Span::styled(
+                    "(none)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                for (i, contrib) in fm.contributors.iter().enumerate() {
+                    if i > 0 {
+                        contrib_spans.push(Span::styled(
+                            ", ",
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                    contrib_spans.push(Span::styled(
+                        contrib.clone(),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+            }
+            lines.push(Line::from(contrib_spans));
+
+            // Dates line
             lines.push(Line::from(vec![
                 Span::styled(" Created: ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::styled(fm.created.clone(), Style::default().fg(Color::DarkGray)),
@@ -589,18 +653,52 @@ fn strip_frontmatter(content: &str) -> &str {
 }
 
 /// Render markdown body text into styled Lines for the TUI.
-/// Handles headings, code blocks, bullet lists, and plain text.
+/// Handles headings, code blocks (with language labels), bullet and numbered
+/// lists, blockquotes, horizontal rules, and inline formatting (`code`,
+/// **bold**, *italic*).
 fn render_markdown_lines(body: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut in_code_block = false;
 
     for raw_line in body.lines() {
-        if raw_line.trim_start().starts_with("```") {
+        let trimmed = raw_line.trim_start();
+
+        // ── Code fences ──────────────────────────────────────────
+        if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
-            lines.push(Line::from(Span::styled(
-                format!("  {raw_line}"),
-                Style::default().fg(Color::DarkGray),
-            )));
+            if in_code_block {
+                // Opening fence — show language label if present
+                let lang = trimmed.strip_prefix("```").unwrap_or("").trim();
+                if lang.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  \u{2500}\u{2500}\u{2500} code \u{2500}\u{2500}\u{2500}",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            "  \u{2500}\u{2500}\u{2500} ",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::styled(
+                            lang.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " \u{2500}\u{2500}\u{2500}",
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]));
+                }
+            } else {
+                // Closing fence
+                lines.push(Line::from(Span::styled(
+                    "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
             continue;
         }
 
@@ -608,42 +706,245 @@ fn render_markdown_lines(body: &str) -> Vec<Line<'static>> {
             lines.push(Line::from(Span::styled(
                 format!("  {raw_line}"),
                 Style::default()
-                    .fg(Color::White)
+                    .fg(Color::Green)
                     .bg(Color::Indexed(235)),
             )));
             continue;
         }
 
-        let trimmed = raw_line.trim_start();
-
-        if let Some(rest) = trimmed.strip_prefix("### ") {
-            lines.push(Line::from(Span::styled(
-                format!("  {rest}"),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )));
+        // ── Headings ─────────────────────────────────────────────
+        if let Some(rest) = trimmed.strip_prefix("#### ") {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  \u{25b8} ",
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    rest.to_string(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        } else if let Some(rest) = trimmed.strip_prefix("### ") {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  \u{25b6} ",
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled(
+                    rest.to_string(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
         } else if let Some(rest) = trimmed.strip_prefix("## ") {
-            lines.push(Line::from(Span::styled(
-                format!("  {rest}"),
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-        } else if let Some(rest) = trimmed.strip_prefix("# ") {
             lines.push(Line::from(Span::styled(
                 format!("  {rest}"),
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )));
-        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            lines.push(Line::from(format!("  \u{2022} {}", &trimmed[2..])));
-        } else if trimmed.is_empty() {
+        } else if let Some(rest) = trimmed.strip_prefix("# ") {
+            lines.push(Line::from(Span::styled(
+                format!("  {rest}"),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+        // ── Horizontal rules ─────────────────────────────────────
+        else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            lines.push(Line::from(Span::styled(
+                "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        // ── Blockquotes ──────────────────────────────────────────
+        else if let Some(rest) = trimmed.strip_prefix("> ") {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "  \u{2502} ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    rest.to_string(),
+                    Style::default()
+                        .fg(Color::Indexed(250))
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+        }
+        // ── Bullet lists ─────────────────────────────────────────
+        else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            let content = &trimmed[2..];
+            let mut spans = vec![Span::styled(
+                "  \u{2022} ",
+                Style::default().fg(Color::Cyan),
+            )];
+            spans.extend(parse_inline_formatting(content));
+            lines.push(Line::from(spans));
+        }
+        // ── Numbered lists ───────────────────────────────────────
+        else if is_numbered_list(trimmed) {
+            let (num, content) = split_numbered_list(trimmed);
+            let mut spans = vec![Span::styled(
+                format!("  {num} "),
+                Style::default().fg(Color::Cyan),
+            )];
+            spans.extend(parse_inline_formatting(content));
+            lines.push(Line::from(spans));
+        }
+        // ── Empty lines ──────────────────────────────────────────
+        else if trimmed.is_empty() {
             lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(format!("  {raw_line}")));
+        }
+        // ── Plain text with inline formatting ────────────────────
+        else {
+            let mut spans = vec![Span::raw("  ".to_string())];
+            spans.extend(parse_inline_formatting(trimmed));
+            lines.push(Line::from(spans));
         }
     }
     lines
+}
+
+/// Parse inline formatting: `code`, **bold**, *italic*.
+/// Returns a Vec of styled Spans.
+fn parse_inline_formatting(text: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        // Find the next formatting marker
+        let next_backtick = remaining.find('`');
+        let next_double_star = remaining.find("**");
+        let next_single_star = find_single_star(remaining);
+
+        // Find the earliest marker
+        let earliest = [
+            next_backtick.map(|i| (i, '`')),
+            next_double_star.map(|i| (i, 'B')), // B for bold
+            next_single_star.map(|i| (i, 'I')),  // I for italic
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(pos, _)| *pos);
+
+        match earliest {
+            None => {
+                // No more markers — push the rest as plain text
+                spans.push(Span::raw(remaining.to_string()));
+                break;
+            }
+            Some((pos, marker)) => {
+                // Push text before the marker
+                if pos > 0 {
+                    spans.push(Span::raw(remaining[..pos].to_string()));
+                }
+
+                match marker {
+                    '`' => {
+                        let after = &remaining[pos + 1..];
+                        if let Some(end) = after.find('`') {
+                            let code = &after[..end];
+                            spans.push(Span::styled(
+                                code.to_string(),
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .bg(Color::Indexed(235)),
+                            ));
+                            remaining = &after[end + 1..];
+                        } else {
+                            // Unmatched backtick — treat as plain text
+                            spans.push(Span::raw("`".to_string()));
+                            remaining = after;
+                        }
+                    }
+                    'B' => {
+                        let after = &remaining[pos + 2..];
+                        if let Some(end) = after.find("**") {
+                            let bold_text = &after[..end];
+                            spans.push(Span::styled(
+                                bold_text.to_string(),
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                            remaining = &after[end + 2..];
+                        } else {
+                            spans.push(Span::raw("**".to_string()));
+                            remaining = after;
+                        }
+                    }
+                    'I' => {
+                        let after = &remaining[pos + 1..];
+                        if let Some(end) = find_single_star(after) {
+                            let italic_text = &after[..end];
+                            spans.push(Span::styled(
+                                italic_text.to_string(),
+                                Style::default()
+                                    .fg(Color::Indexed(250))
+                                    .add_modifier(Modifier::ITALIC),
+                            ));
+                            remaining = &after[end + 1..];
+                        } else {
+                            spans.push(Span::raw("*".to_string()));
+                            remaining = after;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    spans
+}
+
+/// Find position of a single `*` that is NOT part of `**`.
+fn find_single_star(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b'*' {
+            let is_double_before = i > 0 && bytes[i - 1] == b'*';
+            let is_double_after = i + 1 < bytes.len() && bytes[i + 1] == b'*';
+            if !is_double_before && !is_double_after {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Check if a line looks like a numbered list item (e.g. "1. text").
+fn is_numbered_list(s: &str) -> bool {
+    let mut chars = s.chars();
+    // Must start with digits
+    let mut has_digit = false;
+    for c in chars.by_ref() {
+        if c.is_ascii_digit() {
+            has_digit = true;
+        } else if c == '.' && has_digit {
+            // Must be followed by a space
+            return chars.next() == Some(' ');
+        } else {
+            return false;
+        }
+    }
+    false
+}
+
+/// Split a numbered list line into the number part and content.
+fn split_numbered_list(s: &str) -> (&str, &str) {
+    if let Some(dot_pos) = s.find(". ") {
+        (&s[..=dot_pos], s[dot_pos + 2..].trim_start())
+    } else {
+        ("", s)
+    }
 }
 
 /// Format a date string (YYYY-MM-DD) as a relative time (e.g. "3d ago").
