@@ -322,6 +322,41 @@ pub fn start(
     // Mount .git common dir (shared git objects)
     cmd.args(["-v", &format!("{}:/repo/.git:rw", git_common_dir.display())]);
 
+    // --- Worktree git fixup ---
+    // A git worktree's `.git` file and the corresponding `gitdir` back-pointer
+    // contain absolute host paths. Inside the container these paths don't exist.
+    // We create temp files with container-side paths and bind-mount them *over*
+    // the originals so the host files stay untouched.
+    let dot_git_path = worktree_abs.join(".git");
+    if dot_git_path.is_file() {
+        // Store fixup files in the worktree's .crosslink/ dir so they persist
+        // for the lifetime of the container (bind mounts need the source files alive).
+        let fixup_dir = worktree_abs.join(".crosslink").join("container-git-fixup");
+        std::fs::create_dir_all(&fixup_dir).context("Failed to create git fixup dir")?;
+
+        let container_workspace = format!("/workspaces/{}", worktree_slug);
+        let container_gitdir = format!("/repo/.git/worktrees/{}", worktree_slug);
+
+        // Override the worktree's .git file → point to container-side gitdir
+        let override_dot_git = fixup_dir.join("dot-git");
+        std::fs::write(&override_dot_git, format!("gitdir: {}\n", container_gitdir))?;
+
+        // Override the gitdir back-pointer → point to container-side worktree
+        let override_gitdir = fixup_dir.join("gitdir");
+        std::fs::write(&override_gitdir, format!("{}/.git\n", container_workspace))?;
+
+        // Mount overrides (shadows originals inside container only)
+        cmd.args([
+            "-v",
+            &format!("{}:{}/.git:ro", override_dot_git.display(), container_workspace),
+        ]);
+        cmd.args([
+            "-v",
+            &format!("{}:{}/gitdir:ro", override_gitdir.display(), container_gitdir),
+        ]);
+
+    }
+
     // Mount hub cache if it exists
     if hub_cache.exists() {
         cmd.args([
@@ -342,6 +377,21 @@ pub fn start(
     // Environment
     cmd.args(["-e", &format!("AGENT_ID={}", agent_id)]);
     cmd.args(["-e", "CLAUDE_CONFIG_DIR=/home/agent/.claude"]);
+
+    // Pass host UID/GID so the entrypoint can remap the agent user to match,
+    // avoiding permission issues with bind-mounted files.
+    if let Ok(uid_output) = Command::new("id").arg("-u").output() {
+        if uid_output.status.success() {
+            let uid = String::from_utf8_lossy(&uid_output.stdout).trim().to_string();
+            cmd.args(["-e", &format!("HOST_UID={}", uid)]);
+        }
+    }
+    if let Ok(gid_output) = Command::new("id").arg("-g").output() {
+        if gid_output.status.success() {
+            let gid = String::from_utf8_lossy(&gid_output.stdout).trim().to_string();
+            cmd.args(["-e", &format!("HOST_GID={}", gid)]);
+        }
+    }
 
     // Image and command
     cmd.arg(&image);
