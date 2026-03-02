@@ -248,8 +248,15 @@ impl SyncManager {
             // Commit the initial state so the branch has at least one commit.
             // Without this, `git log` and other commands fail on the empty orphan.
             self.git_in_cache(&["add", "locks.json"])?;
+            // Ensure git identity before first commit — CI/containers may lack
+            // a global gitconfig.
+            self.ensure_cache_git_identity()?;
             self.git_in_cache(&["commit", "-m", "Initialize crosslink/hub branch"])?;
         }
+
+        // Also ensure identity for the has_remote path so callers that commit
+        // in the cache (e.g. bootstrap step 7) don't fail in CI.
+        self.ensure_cache_git_identity()?;
 
         Ok(())
     }
@@ -955,6 +962,28 @@ impl SyncManager {
             bail!("git {:?} failed: {}", args, stderr);
         }
         Ok(output)
+    }
+
+    /// Ensure the cache worktree has a git identity configured so commits
+    /// succeed even in environments without a global git config (e.g. CI).
+    fn ensure_cache_git_identity(&self) -> Result<()> {
+        let has_email = Command::new("git")
+            .current_dir(&self.cache_dir)
+            .args(["config", "user.email"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !has_email {
+            let _ = Command::new("git")
+                .current_dir(&self.cache_dir)
+                .args(["config", "user.email", "crosslink@localhost"])
+                .output();
+            let _ = Command::new("git")
+                .current_dir(&self.cache_dir)
+                .args(["config", "user.name", "crosslink"])
+                .output();
+        }
+        Ok(())
     }
 
     fn git_in_cache(&self, args: &[&str]) -> Result<std::process::Output> {
