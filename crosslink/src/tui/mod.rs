@@ -6,7 +6,10 @@ pub mod milestones_tab;
 pub mod tabs;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -44,12 +47,53 @@ pub trait Tab {
     fn on_leave(&mut self);
 }
 
+/// Copy text to the system clipboard using platform-native commands.
+pub fn copy_to_clipboard(text: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()
+        });
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()
+        });
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let result: Result<std::process::ExitStatus, std::io::Error> =
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported platform"));
+
+    result.map(|s| s.success()).unwrap_or(false)
+}
+
 /// Top-level TUI application state.
 pub struct App {
     tabs: Vec<Box<dyn Tab>>,
     active_tab: usize,
     show_help: bool,
     should_quit: bool,
+    /// Command palette state.
+    command_mode: bool,
+    command_input: String,
+    /// Transient status message (e.g. "Copied!", "Unknown command").
+    flash_message: Option<String>,
+    /// Tracks the tab bar area for mouse click detection.
+    tab_bar_area: Rect,
+    /// Tracks the content area for forwarding mouse events.
+    content_area: Rect,
 }
 
 impl App {
@@ -74,6 +118,11 @@ impl App {
             active_tab: 0,
             show_help: false,
             should_quit: false,
+            command_mode: false,
+            command_input: String::new(),
+            flash_message: None,
+            tab_bar_area: Rect::default(),
+            content_area: Rect::default(),
         };
         app.tabs[0].on_enter();
         Ok(app)
@@ -96,12 +145,21 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        // Clear flash message on any keypress
+        self.flash_message = None;
+
         // Help overlay consumes all keys except ? and Esc to dismiss
         if self.show_help {
             match key.code {
                 KeyCode::Char('?') | KeyCode::Esc => self.show_help = false,
                 _ => {}
             }
+            return;
+        }
+
+        // Command palette mode
+        if self.command_mode {
+            self.handle_command_key(key);
             return;
         }
 
@@ -124,6 +182,10 @@ impl App {
             KeyCode::Tab => self.next_tab(),
             KeyCode::BackTab => self.prev_tab(),
             KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char(':') => {
+                self.command_mode = true;
+                self.command_input.clear();
+            }
             // Number keys 1-5 for direct tab selection
             KeyCode::Char(c @ '1'..='5') => {
                 let idx = (c as usize) - ('1' as usize);
@@ -137,7 +199,111 @@ impl App {
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
+    fn handle_command_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.command_mode = false;
+                self.command_input.clear();
+            }
+            KeyCode::Enter => {
+                let cmd = self.command_input.trim().to_string();
+                self.command_mode = false;
+                self.command_input.clear();
+                self.execute_command(&cmd);
+            }
+            KeyCode::Backspace => {
+                self.command_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.command_input.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_command(&mut self, cmd: &str) {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        match parts.first().copied() {
+            Some("q" | "quit") => self.should_quit = true,
+            Some("help" | "?") => self.show_help = true,
+            Some("r" | "refresh") => {
+                self.tabs[self.active_tab].on_leave();
+                self.tabs[self.active_tab].on_enter();
+                self.flash_message = Some("Refreshed".to_string());
+            }
+            Some("tab" | "t") => {
+                if let Some(n) = parts.get(1).and_then(|s| s.parse::<usize>().ok()) {
+                    if n >= 1 && n <= self.tabs.len() && (n - 1) != self.active_tab {
+                        self.tabs[self.active_tab].on_leave();
+                        self.active_tab = n - 1;
+                        self.tabs[self.active_tab].on_enter();
+                    }
+                } else {
+                    self.flash_message = Some("Usage: :tab <1-5>".to_string());
+                }
+            }
+            Some(other) => {
+                self.flash_message = Some(format!("Unknown command: {other}"));
+            }
+            None => {}
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        // Clear flash on mouse action
+        self.flash_message = None;
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Click on tab bar → switch tabs
+                if mouse.row >= self.tab_bar_area.y
+                    && mouse.row < self.tab_bar_area.y + self.tab_bar_area.height
+                {
+                    self.click_tab_bar(mouse.column);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                // Forward scroll as Up key to active tab
+                let up = KeyEvent::new(KeyCode::Up, KeyModifiers::empty());
+                let _ = self.tabs[self.active_tab].handle_key(up);
+            }
+            MouseEventKind::ScrollDown => {
+                // Forward scroll as Down key to active tab
+                let down = KeyEvent::new(KeyCode::Down, KeyModifiers::empty());
+                let _ = self.tabs[self.active_tab].handle_key(down);
+            }
+            _ => {}
+        }
+    }
+
+    fn click_tab_bar(&mut self, col: u16) {
+        // Tab bar has borders (1 col each side) and tabs are rendered as
+        // " Title " with dividers. Approximate positions by measuring tab titles.
+        let inner_x = self.tab_bar_area.x + 1; // skip left border
+        if col < inner_x {
+            return;
+        }
+        let rel_col = col - inner_x;
+
+        // Each tab is rendered as " <title> " with a divider character between them.
+        // ratatui::TabsWidget uses " <title> │" for each tab.
+        let mut offset: u16 = 0;
+        for (idx, tab) in self.tabs.iter().enumerate() {
+            let tab_width = tab.title().len() as u16 + 2; // " title " padding
+            let with_divider = tab_width + 1; // + "│"
+            if rel_col >= offset && rel_col < offset + with_divider {
+                if idx != self.active_tab {
+                    self.tabs[self.active_tab].on_leave();
+                    self.active_tab = idx;
+                    self.tabs[self.active_tab].on_enter();
+                }
+                return;
+            }
+            offset += with_divider;
+        }
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -147,9 +313,25 @@ impl App {
             ])
             .split(frame.area());
 
+        // Store areas for mouse hit detection
+        self.tab_bar_area = chunks[0];
+        self.content_area = chunks[1];
+
         self.render_tab_bar(frame, chunks[0]);
         self.tabs[self.active_tab].render(frame, chunks[1]);
-        self.render_status_bar(frame, chunks[2]);
+
+        if self.command_mode {
+            self.render_command_bar(frame, chunks[2]);
+        } else if let Some(ref msg) = self.flash_message {
+            let flash = Paragraph::new(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(msg.as_str(), Style::default().fg(Color::Yellow)),
+            ]))
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+            frame.render_widget(flash, chunks[2]);
+        } else {
+            self.render_status_bar(frame, chunks[2]);
+        }
 
         if self.show_help {
             self.render_help_overlay(frame);
@@ -184,6 +366,17 @@ impl App {
             );
 
         frame.render_widget(tabs, area);
+    }
+
+    fn render_command_bar(&self, frame: &mut Frame, area: Rect) {
+        let input_spans = vec![
+            Span::styled(":", Style::default().fg(Color::Cyan)),
+            Span::raw(&self.command_input),
+            Span::styled("█", Style::default().fg(Color::White)),
+        ];
+        let bar = Paragraph::new(Line::from(input_spans))
+            .style(Style::default().bg(Color::Black).fg(Color::White));
+        frame.render_widget(bar, area);
     }
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
@@ -229,7 +422,9 @@ impl App {
             Line::from("  Tab           Next tab"),
             Line::from("  Shift-Tab     Previous tab"),
             Line::from("  1-5           Jump to tab"),
+            Line::from("  :             Command palette"),
             Line::from("  ?             Toggle this help"),
+            Line::from("  Mouse         Click tabs, scroll wheel"),
             Line::from(""),
             Line::from(Span::styled(
                 "Issues List",
@@ -250,6 +445,7 @@ impl App {
             )),
             Line::from("  Esc           Back to list"),
             Line::from("  Up/Down / j/k Scroll"),
+            Line::from("  y             Copy to clipboard"),
             Line::from(""),
             Line::from(Span::styled(
                 "Agents Tab",
@@ -269,6 +465,7 @@ impl App {
             Line::from("  Enter         Read page"),
             Line::from("  /             Search pages"),
             Line::from("  t             Cycle tag filter"),
+            Line::from("  y             Copy page to clipboard"),
             Line::from("  r             Refresh"),
             Line::from("  Esc           Back to list"),
             Line::from(""),
@@ -279,6 +476,7 @@ impl App {
             Line::from("  Up/Down / j/k Navigate milestones"),
             Line::from("  Enter         View milestone details"),
             Line::from("  f             Cycle status filter"),
+            Line::from("  y             Copy to clipboard"),
             Line::from("  r             Refresh"),
             Line::from("  Esc           Back to list"),
             Line::from(""),
@@ -290,6 +488,15 @@ impl App {
             Line::from("  e             Full event log"),
             Line::from("  r             Refresh"),
             Line::from("  Esc           Back to main"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Command Palette (:)",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from("  :q / :quit    Quit"),
+            Line::from("  :r / :refresh Refresh current tab"),
+            Line::from("  :tab N        Jump to tab N"),
+            Line::from("  :help         Show this help"),
             Line::from(""),
             Line::from(Span::styled(
                 "Press ? or Esc to close",
@@ -325,6 +532,7 @@ pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
     // Install panic hook that restores terminal before printing panic
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = io::stdout().execute(DisableMouseCapture);
         let _ = disable_raw_mode();
         let _ = io::stdout().execute(LeaveAlternateScreen);
         original_hook(panic_info);
@@ -332,6 +540,7 @@ pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
 
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
+    io::stdout().execute(EnableMouseCapture)?;
 
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = ratatui::Terminal::new(backend)?;
@@ -342,12 +551,18 @@ pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
     loop {
         terminal.draw(|frame| app.render(frame))?;
 
-        if let Event::Key(key) = event::read()? {
-            // Ignore key release events (crossterm sends press + release on some platforms)
-            if key.kind != event::KeyEventKind::Press {
-                continue;
+        match event::read()? {
+            Event::Key(key) => {
+                // Ignore key release events (crossterm sends press + release on some platforms)
+                if key.kind != event::KeyEventKind::Press {
+                    continue;
+                }
+                app.handle_key(key);
             }
-            app.handle_key(key);
+            Event::Mouse(mouse) => {
+                app.handle_mouse(mouse);
+            }
+            _ => {}
         }
 
         if app.should_quit {
@@ -356,6 +571,7 @@ pub fn run(db: &Database, crosslink_dir: &Path) -> anyhow::Result<()> {
     }
 
     // Restore terminal
+    io::stdout().execute(DisableMouseCapture)?;
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
 
@@ -514,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_render_does_not_panic() {
-        let (app, _dir) = setup_test_app();
+        let (mut app, _dir) = setup_test_app();
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
@@ -552,5 +768,172 @@ mod tests {
         assert!(centered.y > 0);
         assert!(centered.width < area.width);
         assert!(centered.height < area.height);
+    }
+
+    // ── Command palette tests ────────────────────────────────────────
+
+    #[test]
+    fn test_command_mode_enter_exit() {
+        let (mut app, _dir) = setup_test_app();
+        assert!(!app.command_mode);
+        // ':' enters command mode
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert!(app.command_mode);
+        assert!(app.command_input.is_empty());
+        // Esc exits command mode
+        app.handle_key(make_key(KeyCode::Esc));
+        assert!(!app.command_mode);
+    }
+
+    #[test]
+    fn test_command_mode_typing() {
+        let (mut app, _dir) = setup_test_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('t')));
+        app.handle_key(make_key(KeyCode::Char('a')));
+        app.handle_key(make_key(KeyCode::Char('b')));
+        assert_eq!(app.command_input, "tab");
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.command_input, "ta");
+    }
+
+    #[test]
+    fn test_command_quit() {
+        let (mut app, _dir) = setup_test_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('q')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_command_tab_switch() {
+        let (mut app, _dir) = setup_test_app();
+        assert_eq!(app.active_tab, 0);
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "tab 3".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(!app.command_mode);
+        assert_eq!(app.active_tab, 2);
+    }
+
+    #[test]
+    fn test_command_refresh() {
+        let (mut app, _dir) = setup_test_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        app.handle_key(make_key(KeyCode::Char('r')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(!app.command_mode);
+        assert_eq!(app.flash_message.as_deref(), Some("Refreshed"));
+    }
+
+    #[test]
+    fn test_command_unknown() {
+        let (mut app, _dir) = setup_test_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foo".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(
+            app.flash_message.as_deref(),
+            Some("Unknown command: foo")
+        );
+    }
+
+    #[test]
+    fn test_command_help() {
+        let (mut app, _dir) = setup_test_app();
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "help".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.show_help);
+    }
+
+    #[test]
+    fn test_flash_cleared_on_keypress() {
+        let (mut app, _dir) = setup_test_app();
+        app.flash_message = Some("test".to_string());
+        app.handle_key(make_key(KeyCode::Char('j')));
+        assert!(app.flash_message.is_none());
+    }
+
+    // ── Mouse tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_mouse_scroll_down() {
+        let (mut app, _dir) = setup_test_app();
+        // First render to populate areas
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::empty(),
+        };
+        app.handle_mouse(mouse);
+        // Should not panic — scroll event forwarded to active tab
+    }
+
+    #[test]
+    fn test_mouse_scroll_up() {
+        let (mut app, _dir) = setup_test_app();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        let mouse = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 40,
+            row: 10,
+            modifiers: KeyModifiers::empty(),
+        };
+        app.handle_mouse(mouse);
+    }
+
+    #[test]
+    fn test_mouse_click_tab_bar() {
+        let (mut app, _dir) = setup_test_app();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+
+        assert_eq!(app.active_tab, 0);
+        // Click roughly where tab 2 (Agents) would be — after "Issues" tab
+        // "Issues" = 6 chars + 2 padding + 1 divider = 9 cols from inner_x
+        let mouse = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: app.tab_bar_area.x + 1 + 10, // past first tab
+            row: app.tab_bar_area.y + 1,
+            modifiers: KeyModifiers::empty(),
+        };
+        app.handle_mouse(mouse);
+        assert_eq!(app.active_tab, 1);
+    }
+
+    #[test]
+    fn test_render_command_bar() {
+        let (mut app, _dir) = setup_test_app();
+        app.command_mode = true;
+        app.command_input = "tab 3".to_string();
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+    }
+
+    #[test]
+    fn test_render_flash_message() {
+        let (mut app, _dir) = setup_test_app();
+        app.flash_message = Some("Copied!".to_string());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
     }
 }

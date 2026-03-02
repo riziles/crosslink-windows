@@ -292,7 +292,17 @@ impl KnowledgeTab {
                 self.reader_scroll = 0;
                 TabAction::Consumed
             }
+            KeyCode::Char('y') => {
+                self.copy_page_to_clipboard();
+                TabAction::Consumed
+            }
             _ => TabAction::NotHandled,
+        }
+    }
+
+    fn copy_page_to_clipboard(&self) {
+        if let Some(ref content) = self.reader_content {
+            super::copy_to_clipboard(content);
         }
     }
 

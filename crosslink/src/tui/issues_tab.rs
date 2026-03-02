@@ -354,7 +354,48 @@ impl IssuesTab {
                 self.detail_scroll = self.detail_scroll.saturating_sub(10);
                 TabAction::Consumed
             }
+            KeyCode::Char('y') => {
+                self.copy_detail_to_clipboard();
+                TabAction::Consumed
+            }
             _ => TabAction::NotHandled,
+        }
+    }
+
+    fn copy_detail_to_clipboard(&self) {
+        if let Some(ref d) = self.detail {
+            let mut text = format!(
+                "#{} — {}\nStatus: {}  Priority: {}  Labels: {}\n",
+                d.issue.id,
+                d.issue.title,
+                d.issue.status,
+                d.issue.priority,
+                if d.labels.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    d.labels.join(", ")
+                }
+            );
+            if let Some(ref desc) = d.issue.description {
+                text.push_str(&format!("\n{desc}\n"));
+            }
+            if !d.comments.is_empty() {
+                text.push_str(&format!("\nComments ({}):\n", d.comments.len()));
+                for c in &d.comments {
+                    let kind = if c.kind != "note" {
+                        format!("[{}] ", c.kind)
+                    } else {
+                        String::new()
+                    };
+                    text.push_str(&format!(
+                        "  {}{}\n  {}\n\n",
+                        kind,
+                        c.created_at.format("%Y-%m-%d %H:%M"),
+                        c.content
+                    ));
+                }
+            }
+            super::copy_to_clipboard(&text);
         }
     }
 

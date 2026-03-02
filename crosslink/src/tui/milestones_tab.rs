@@ -538,7 +538,38 @@ impl MilestonesTab {
                 self.detail_scroll = 0;
                 TabAction::Consumed
             }
+            KeyCode::Char('y') => {
+                self.copy_detail_to_clipboard();
+                TabAction::Consumed
+            }
             _ => TabAction::NotHandled,
+        }
+    }
+
+    fn copy_detail_to_clipboard(&self) {
+        if let Some(ref d) = self.detail {
+            let mut text = format!(
+                "Milestone #{} — {}\nStatus: {}  Progress: {}/{}\n",
+                d.id, d.name, d.status, d.closed_count, d.total_count
+            );
+            if let Some(ref desc) = d.description {
+                text.push_str(&format!("\n{desc}\n"));
+            }
+            if !d.issues.is_empty() {
+                text.push_str(&format!("\nIssues ({}):\n", d.issues.len()));
+                for issue in &d.issues {
+                    let marker = if issue.status == "closed" {
+                        "✓"
+                    } else {
+                        "○"
+                    };
+                    text.push_str(&format!(
+                        "  {marker} #{} [{}] {}\n",
+                        issue.id, issue.priority, issue.title
+                    ));
+                }
+            }
+            super::copy_to_clipboard(&text);
         }
     }
 }
