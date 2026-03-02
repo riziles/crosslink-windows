@@ -429,7 +429,11 @@ fn write_root_gitignore(project_root: &Path) -> Result<()> {
         if existing.is_empty() {
             managed_block
         } else {
-            let separator = if existing.ends_with('\n') { "\n" } else { "\n\n" };
+            let separator = if existing.ends_with('\n') {
+                "\n"
+            } else {
+                "\n\n"
+            };
             format!("{}{}{}", existing, separator, managed_block)
         }
     };
@@ -1562,7 +1566,10 @@ mod tests {
         run(dir.path(), &test_opts(true)).unwrap();
         let second = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
 
-        assert_eq!(first, second, "Re-init should not duplicate gitignore entries");
+        assert_eq!(
+            first, second,
+            "Re-init should not duplicate gitignore entries"
+        );
     }
 
     #[test]
@@ -1596,16 +1603,28 @@ mod tests {
 
         // Add user content before and after the managed section
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
-        let new_content = format!("# My custom rules\n/build/\n\n{}\n# Trailing rules\n*.tmp\n", content);
+        let new_content = format!(
+            "# My custom rules\n/build/\n\n{}\n# Trailing rules\n*.tmp\n",
+            content
+        );
         fs::write(dir.path().join(".gitignore"), new_content).unwrap();
 
         // Force re-init
         run(dir.path(), &test_opts(true)).unwrap();
 
         let result = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
-        assert!(result.contains("/build/"), "Pre-section user entries preserved");
-        assert!(result.contains("*.tmp"), "Post-section user entries preserved");
-        assert!(result.contains(".crosslink/issues.db"), "Managed entries present");
+        assert!(
+            result.contains("/build/"),
+            "Pre-section user entries preserved"
+        );
+        assert!(
+            result.contains("*.tmp"),
+            "Post-section user entries preserved"
+        );
+        assert!(
+            result.contains(".crosslink/issues.db"),
+            "Managed entries present"
+        );
 
         // Should have exactly one managed section
         assert_eq!(
