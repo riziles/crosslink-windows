@@ -330,6 +330,8 @@ pub(crate) const RULE_ELIXIR: &str = include_str!("../../resources/crosslink/rul
 pub(crate) const RULE_ELIXIR_PHOENIX: &str =
     include_str!("../../resources/crosslink/rules/elixir-phoenix.md");
 pub(crate) const RULE_WEB: &str = include_str!("../../resources/crosslink/rules/web.md");
+pub(crate) const RULE_KNOWLEDGE: &str =
+    include_str!("../../resources/crosslink/rules/knowledge.md");
 
 /// All rule files to deploy
 pub(crate) const RULE_FILES: &[(&str, &str)] = &[
@@ -356,6 +358,7 @@ pub(crate) const RULE_FILES: &[(&str, &str)] = &[
     ("elixir.md", RULE_ELIXIR),
     ("elixir-phoenix.md", RULE_ELIXIR_PHOENIX),
     ("web.md", RULE_WEB),
+    ("knowledge.md", RULE_KNOWLEDGE),
     ("sanitize-patterns.txt", SANITIZE_PATTERNS),
     ("tracking-strict.md", RULE_TRACKING_STRICT),
     ("tracking-normal.md", RULE_TRACKING_NORMAL),
