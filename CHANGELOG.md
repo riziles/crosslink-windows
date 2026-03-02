@@ -6,8 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.1.3-beta.1] - 2026-03-02
+
 ### Added
-- Add consolidated `crosslink config` command for repo-level configuration — show, get, set, list, reset, diff subcommands with typed validation (#13)
+- SSH signing foundation — agent key generation, driver key setup, per-commit signing, allowed_signers management (#71-#76)
+- Track driver signing key fingerprint in interventions and trust approvals (#88)
+- KnowledgeManager for shared research via `crosslink/knowledge` branch with page CRUD and full-text search (#62, #63)
+- House style syncing — `crosslink style set/sync/diff/show/unset` for portable project conventions (#91)
+- Interactive TUI walkthrough for `crosslink init` with `--defaults` and `--reconfigure` flags (#60)
+- Consolidated `crosslink config` command — show, get, set, list, reset, diff subcommands with typed validation
+- Managed `.gitignore` section injected by `crosslink init` for `.claude/` and `.crosslink/` directories (#135)
+- Document blocked actions and lint checks in default init templates (#100)
+- Tmux and git worktree permissions added to default `settings.json` for kickoff workflows
+- Crosslink session lifecycle and worktree awareness in `/kickoff` skill template (#33)
+- Typed comments and auto-documentation trail — comments carry `kind`, `trigger_type`, and `intervention_context` (#47)
+- Driver intervention tracking with `crosslink intervene` command (#68)
+- cpitd (code clone detection) integration with `crosslink cpitd` command (#69)
+- Scope session queries to `agent_id` for multi-agent isolation (#96)
+- Crates.io publish CI workflow on release tags
+
+### Fixed
+- Resolve `.crosslink` directory through git worktrees so hooks work in worktree checkouts (#131)
+- Resolve `sessions_new` migration batch error from wrong pragma column name (#138)
+- Allow `agent init` to reinit when existing `agent.json` is malformed (#137)
+- Auto-claim lock in `quick`/`create --work` to match `session work` behavior (#83)
+- Re-check lock ownership after push conflicts in `claim_lock`
+- Guard against clock skew in stale lock detection
+- Use atomic write (temp + rename) for issue and lock files
+- Register SIGTERM/SIGINT handlers for graceful daemon shutdown
+- Log transaction rollback failures, unexpected migration errors, and datetime parse fallbacks instead of suppressing
+- Generate UUID at local issue creation time (not deferred)
+- Quote font family values in `_brand.yml` to fix docs YAML parse error (#92)
+
+### Security
+- Enforce restrictive Unix permissions (0600) on generated SSH keys (#105)
+- Validate key type and principal format in `allowed_signers` parser
+- Parse `ssh-keygen` stderr and add timeout to signature verification
+- Prevent path traversal in knowledge page names
+- Add 10MB file size limit on JSON import
+- Add maximum length validation for string inputs (512-char titles)
+- Require minimum 3-character agent IDs
+- Stop `crosslink init` from overriding project worktree signing key
+
+### Changed
+- Rename `crosslink review` subcommand to `crosslink workflow` (#79)
+- Untrack auto-generated `.claude` and `.crosslink` files from git (#94)
+- Refine hook-config.json defaults and `.gitignore` rules
+- Fix author typo in Cargo.toml (`forecacst.bio` → `forecast.bio`)
 
 ## [0.1.2-alpha.1] - 2026-02-27
 
