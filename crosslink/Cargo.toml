@@ -1,9 +1,9 @@
 [package]
 name = "crosslink"
-version = "0.1.2-alpha.1"
+version = "0.1.3-beta.1"
 edition = "2021"
 rust-version = "1.87"
-authors = ["dollspace-gay", "Maxine Levesque <hello@maxine.science>", "maxine-at-forecast",  "Forecast Analytical <analytical@forecacst.bio>"]
+authors = ["dollspace-gay", "Maxine Levesque <hello@maxine.science>", "Forecast Analytical <analytical@forecast.bio>"]
 description = "A synced issue tracker CLI for multi-agent AI development"
 documentation = "https://docs.rs/crosslink"
 license = "MIT"
