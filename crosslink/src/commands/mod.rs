@@ -3,6 +3,7 @@ pub mod archive;
 pub mod comment;
 pub mod config;
 pub mod container;
+pub mod context;
 pub mod cpitd;
 pub mod create;
 pub mod delete;
