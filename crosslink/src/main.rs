@@ -422,6 +422,12 @@ enum Commands {
         command: ConfigCommands,
     },
 
+    /// Measure and check context injection overhead
+    Context {
+        #[command(subcommand)]
+        command: ContextCommands,
+    },
+
     /// Manage crosslink workflow configuration
     Workflow {
         #[command(subcommand)]
@@ -864,6 +870,18 @@ enum ConfigCommands {
     },
     /// Show differences from default config
     Diff,
+}
+
+#[derive(Subcommand)]
+enum ContextCommands {
+    /// Measure context injection sizes and estimate token overhead
+    Measure {
+        /// Show additional details (hook config contents, etc.)
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Verify all expected crosslink files are deployed and valid
+    Check,
 }
 
 fn find_crosslink_dir() -> Result<PathBuf> {
@@ -1576,6 +1594,10 @@ fn main() -> Result<()> {
         Commands::Config { command } => {
             let crosslink_dir = find_crosslink_dir()?;
             commands::config::run(command, &crosslink_dir)
+        }
+        Commands::Context { command } => {
+            let crosslink_dir = find_crosslink_dir()?;
+            commands::context::run(command, &crosslink_dir)
         }
         Commands::Workflow { command } => {
             let crosslink_dir = find_crosslink_dir()?;

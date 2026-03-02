@@ -75,6 +75,7 @@ Build a detailed prompt for the child agent. The prompt must be self-contained â
 - Instructions to:
   1. **Start your crosslink session**: Run `crosslink session start` then `crosslink session work <issue-id>` to register yourself and mark your focus
   2. **Read the project's CLAUDE.md** (if it exists) for conventions before starting
+  2b. **Run `/preflight`** to load project rules and grounding context (language rules, tracking mode, project tree, dependency versions)
   3. Explore relevant code before making changes
   3b. **Check the knowledge repo** for relevant research before starting implementation: `crosslink knowledge search '<relevant terms>'`. Existing knowledge pages may save you from redundant research.
   3c. **Save research to the knowledge repo**: If you perform web research during implementation, save the results for future agents: `crosslink knowledge add <slug> --title '<topic>' --tag <category> --source '<url>' --content '<summary>'`. If you discover important codebase patterns or architecture details, document them as knowledge pages with `--tag codebase`.
@@ -93,9 +94,10 @@ Build a detailed prompt for the child agent. The prompt must be self-contained â
       - Other: check for linter/formatter config files and run accordingly
       Fix any issues found before proceeding. Do not commit code with lint warnings or formatting errors.
   9. **Document results**: `crosslink comment <issue-id> "Result: <test summary, what was delivered>" --kind result`
-  10. Use `/commit` to commit the work when implementation is complete
-  11. Review the diff of all changes and fix any issues found
-  12. Use `/commit` again after any fixes
+  10. **Run `/review`** for structured self-review before committing (checks stubs, debug leftovers, lint, tests, issue documentation)
+  11. Use `/commit` to commit the work when implementation is complete
+  12. Review the diff of all changes and fix any issues found
+  13. Use `/commit` again after any fixes
   13. **End your session**: Run `crosslink session end --notes "Completed: <summary of what was delivered, any caveats or follow-ups>"`
 
 **Then, conditionally include the following sections based on `--verify` level:**
