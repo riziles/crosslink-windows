@@ -76,6 +76,8 @@ Build a detailed prompt for the child agent. The prompt must be self-contained â
   1. **Start your crosslink session**: Run `crosslink session start` then `crosslink session work <issue-id>` to register yourself and mark your focus
   2. **Read the project's CLAUDE.md** (if it exists) for conventions before starting
   3. Explore relevant code before making changes
+  3b. **Check the knowledge repo** for relevant research before starting implementation: `crosslink knowledge search '<relevant terms>'`. Existing knowledge pages may save you from redundant research.
+  3c. **Save research to the knowledge repo**: If you perform web research during implementation, save the results for future agents: `crosslink knowledge add <slug> --title '<topic>' --tag <category> --source '<url>' --content '<summary>'`. If you discover important codebase patterns or architecture details, document them as knowledge pages with `--tag codebase`.
   4. **Document your plan**: `crosslink comment <issue-id> "Plan: <your approach, key files, chosen strategy>" --kind plan`
   5. Implement the feature fully (no stubs or placeholders). Before each major step, run `crosslink session action "Starting <description>..."` to leave breadcrumbs for context compression recovery
   6. **Document decisions as you go**: When choosing between approaches, run `crosslink comment <issue-id> "Decision: <chose X over Y because Z>" --kind decision`
