@@ -1,59 +1,63 @@
 {
+  "allowedTools": [
+    "Bash(tmux *)",
+    "Bash(git worktree *)"
+  ],
   "enableAllProjectMcpServers": true,
   "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/post-edit-check.py\"",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ],
     "PreToolUse": [
       {
-        "matcher": "WebFetch|WebSearch",
         "hooks": [
           {
-            "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/pre-web-check.py\"",
-            "timeout": 5
+            "timeout": 5,
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "WebFetch|WebSearch"
       },
       {
-        "matcher": "Write|Edit|Bash",
         "hooks": [
           {
-            "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/work-check.py\"",
-            "timeout": 3
+            "timeout": 3,
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": "Write|Edit|Bash"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.py\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume"
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
-            "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/prompt-guard.py\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/post-edit-check.py\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/session-start.py\"",
-            "timeout": 10
+            "timeout": 5,
+            "type": "command"
           }
         ]
       }
