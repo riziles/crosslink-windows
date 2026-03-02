@@ -126,9 +126,21 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
     }
 
     println!();
-    println!("  Total rules:   {:>8} bytes ({} tokens)", total_rules, total_rules / 4);
-    println!("  Active rules:  {:>8} bytes ({} tokens)", active_rules, active_rules / 4);
-    println!("  Dormant rules: {:>8} bytes ({} tokens)", dormant_rules, dormant_rules / 4);
+    println!(
+        "  Total rules:   {:>8} bytes ({} tokens)",
+        total_rules,
+        total_rules / 4
+    );
+    println!(
+        "  Active rules:  {:>8} bytes ({} tokens)",
+        active_rules,
+        active_rules / 4
+    );
+    println!(
+        "  Dormant rules: {:>8} bytes ({} tokens)",
+        dormant_rules,
+        dormant_rules / 4
+    );
 
     // 2. Active languages
     println!("\n## Detected languages");
@@ -143,14 +155,20 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
     // 3. CLAUDE.md
     let claude_md = project_root.join("CLAUDE.md");
     let claude_md_size = if claude_md.is_file() {
-        fs::metadata(&claude_md).map(|m| m.len() as usize).unwrap_or(0)
+        fs::metadata(&claude_md)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0)
     } else {
         0
     };
 
     println!("\n## CLAUDE.md");
     if claude_md_size > 0 {
-        println!("  {:>8} bytes ({} tokens)", claude_md_size, claude_md_size / 4);
+        println!(
+            "  {:>8} bytes ({} tokens)",
+            claude_md_size,
+            claude_md_size / 4
+        );
     } else {
         println!("  (not found)");
     }
@@ -167,12 +185,7 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
         let mut entries: Vec<_> = fs::read_dir(&commands_dir)
             .context("Failed to read commands directory")?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "md")
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
@@ -184,7 +197,11 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
             println!("{:<35} {:>8} {:>8}", filename, size, size / 4);
         }
         println!();
-        println!("  Total skills: {:>8} bytes ({} tokens)", total_skills, total_skills / 4);
+        println!(
+            "  Total skills: {:>8} bytes ({} tokens)",
+            total_skills,
+            total_skills / 4
+        );
     } else {
         println!("  (not found)");
     }
@@ -201,12 +218,20 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
     println!("  Active rules:     {:>6} bytes", active_rules);
     println!("  Wrapper/headers: ~{:>6} bytes", wrapper_est);
     println!("  ─────────────────────────");
-    println!("  Total:           ~{:>6} bytes (~{} tokens)", full_guard, full_guard / 4);
+    println!(
+        "  Total:           ~{:>6} bytes (~{} tokens)",
+        full_guard,
+        full_guard / 4
+    );
 
     // 6. Condensed reminder estimate
     let condensed_est: usize = 500;
     println!("\n## Condensed reminder (subsequent prompts)");
-    println!("  Estimated:       ~{:>6} bytes (~{} tokens)", condensed_est, condensed_est / 4);
+    println!(
+        "  Estimated:       ~{:>6} bytes (~{} tokens)",
+        condensed_est,
+        condensed_est / 4
+    );
 
     // 7. Savings comparison
     println!("\n## Adaptive reminder savings (over 50 prompts)");
@@ -240,8 +265,8 @@ fn measure(crosslink_dir: &Path, verbose: bool) -> Result<()> {
         println!("\n## Hook config");
         let config_path = crosslink_dir.join("hook-config.json");
         if config_path.is_file() {
-            let content = fs::read_to_string(&config_path)
-                .context("Failed to read hook-config.json")?;
+            let content =
+                fs::read_to_string(&config_path).context("Failed to read hook-config.json")?;
             println!("{}", content);
         } else {
             println!("  (not found)");
@@ -393,7 +418,10 @@ fn check(crosslink_dir: &Path, claude_dir: &Path) -> Result<()> {
     if problems == 0 {
         println!("All checks passed.");
     } else {
-        println!("{} problem(s) found. Run `crosslink init --force` to repair.", problems);
+        println!(
+            "{} problem(s) found. Run `crosslink init --force` to repair.",
+            problems
+        );
         std::process::exit(1);
     }
 
