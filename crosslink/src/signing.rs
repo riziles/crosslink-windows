@@ -78,6 +78,16 @@ pub fn generate_agent_key(keys_dir: &Path, agent_id: &str, machine_id: &str) -> 
         bail!("ssh-keygen failed: {}", stderr.trim());
     }
 
+    // Enforce restrictive permissions on keys directory and private key
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(keys_dir, std::fs::Permissions::from_mode(0o700))
+            .context("Failed to set permissions on keys directory")?;
+        std::fs::set_permissions(&private_path, std::fs::Permissions::from_mode(0o600))
+            .context("Failed to set permissions on private key")?;
+    }
+
     let public_key = std::fs::read_to_string(&public_path)
         .context("Failed to read generated public key")?
         .trim()
@@ -230,6 +240,9 @@ pub struct AllowedSignerEntry {
     pub principal: String,
     /// Full public key line ("ssh-ed25519 AAAA... comment").
     pub public_key: String,
+    /// Optional metadata comment rendered above the entry (e.g. "approved by max at 2026-02-28").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_comment: Option<String>,
 }
 
 /// Manages the `trust/allowed_signers` file.
@@ -249,24 +262,82 @@ impl AllowedSigners {
         Ok(Self::parse(&content))
     }
 
+    /// Known SSH public key type prefixes.
+    const KNOWN_KEY_TYPES: &'static [&'static str] = &[
+        "ssh-ed25519",
+        "ssh-rsa",
+        "ssh-dss",
+        "ecdsa-sha2-",
+        "sk-ssh-ed25519",
+        "sk-ecdsa-sha2-",
+    ];
+
     /// Parse the allowed_signers content.
     fn parse(content: &str) -> Self {
-        let entries = content
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
-            .filter_map(|line| {
-                // Format: <principal> <key-type> <base64> [comment]
-                let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                if parts.len() >= 2 {
-                    Some(AllowedSignerEntry {
-                        principal: parts[0].to_string(),
-                        public_key: parts[1].to_string(),
-                    })
-                } else {
-                    None
+        let mut entries = Vec::new();
+        // Track metadata comments (lines starting with "# approved" or "# revoked")
+        // that immediately precede an entry
+        let mut pending_metadata: Option<String> = None;
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                pending_metadata = None;
+                continue;
+            }
+            if trimmed.starts_with('#') {
+                // Check if this is a metadata comment (not the file header)
+                let comment_text = trimmed.trim_start_matches('#').trim();
+                if comment_text.starts_with("approved ") || comment_text.starts_with("revoked ") {
+                    pending_metadata = Some(comment_text.to_string());
                 }
-            })
-            .collect();
+                continue;
+            }
+
+            // Format: <principal> <key-type> <base64> [comment]
+            let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
+            if parts.len() < 2 {
+                eprintln!(
+                    "warning: skipping malformed allowed_signers line (no space): {}",
+                    line
+                );
+                pending_metadata = None;
+                continue;
+            }
+
+            let principal = parts[0];
+            let public_key = parts[1];
+
+            // Validate principal: non-empty, no control characters
+            if principal.is_empty() || principal.chars().any(|c| c.is_control()) {
+                eprintln!(
+                    "warning: skipping allowed_signers entry with invalid principal: {}",
+                    principal
+                );
+                pending_metadata = None;
+                continue;
+            }
+
+            // Validate public key starts with a known SSH key type
+            if !Self::KNOWN_KEY_TYPES
+                .iter()
+                .any(|prefix| public_key.starts_with(prefix))
+            {
+                eprintln!(
+                    "warning: skipping allowed_signers entry with unrecognized key type for principal '{}': {}",
+                    principal,
+                    public_key.split_whitespace().next().unwrap_or("<empty>")
+                );
+                pending_metadata = None;
+                continue;
+            }
+
+            entries.push(AllowedSignerEntry {
+                principal: principal.to_string(),
+                public_key: public_key.to_string(),
+                metadata_comment: pending_metadata.take(),
+            });
+        }
         Self { entries }
     }
 
@@ -284,6 +355,9 @@ impl AllowedSigners {
         let mut lines = vec!["# Crosslink trusted signers".to_string()];
         lines.push("# Format: <principal> <key-type> <base64-key> [comment]".to_string());
         for entry in &self.entries {
+            if let Some(ref comment) = entry.metadata_comment {
+                lines.push(format!("# {}", comment));
+            }
             lines.push(format!("{} {}", entry.principal, entry.public_key));
         }
         lines.push(String::new()); // trailing newline
@@ -476,10 +550,41 @@ pub fn verify_content(
     // Drop stdin to close it so ssh-keygen can proceed
     drop(child.stdin.take());
 
+    // Wait with timeout to prevent hanging on malformed input
+    {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let timeout = Duration::from_secs(30);
+        loop {
+            match child.try_wait()? {
+                Some(_) => break,
+                None => {
+                    if start.elapsed() > timeout {
+                        let _ = child.kill();
+                        let _ = std::fs::remove_dir_all(&tmp);
+                        bail!("ssh-keygen verification timed out after 30 seconds");
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
     let output = child.wait_with_output()?;
     let _ = std::fs::remove_dir_all(&tmp);
 
-    Ok(output.status.success())
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    // Parse stderr to confirm "Good signature" message from ssh-keygen
+    // On success, ssh-keygen outputs: Good "namespace" signature for principal ...
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("Good") {
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 // ── Platform helpers ────────────────────────────────────────────────
@@ -597,10 +702,12 @@ mod tests {
         signers.add_entry(AllowedSignerEntry {
             principal: "driver@example.com".to_string(),
             public_key: "ssh-ed25519 AAAA1234 driver-key".to_string(),
+            metadata_comment: None,
         });
         signers.add_entry(AllowedSignerEntry {
             principal: "m1@crosslink".to_string(),
             public_key: "ssh-ed25519 BBBB5678 agent-m1".to_string(),
+            metadata_comment: None,
         });
 
         signers.save(&path).unwrap();
@@ -621,10 +728,12 @@ mod tests {
         assert!(signers.add_entry(AllowedSignerEntry {
             principal: "m1@crosslink".to_string(),
             public_key: "ssh-ed25519 AAAA".to_string(),
+            metadata_comment: None,
         }));
         assert!(!signers.add_entry(AllowedSignerEntry {
             principal: "m1@crosslink".to_string(),
             public_key: "ssh-ed25519 BBBB".to_string(),
+            metadata_comment: None,
         }));
         assert_eq!(signers.entries.len(), 1);
     }
@@ -635,6 +744,7 @@ mod tests {
         signers.add_entry(AllowedSignerEntry {
             principal: "m1@crosslink".to_string(),
             public_key: "ssh-ed25519 AAAA".to_string(),
+            metadata_comment: None,
         });
         assert!(signers.remove_by_principal("m1@crosslink"));
         assert!(!signers.remove_by_principal("m1@crosslink"));
@@ -647,6 +757,7 @@ mod tests {
         signers.add_entry(AllowedSignerEntry {
             principal: "m1@crosslink".to_string(),
             public_key: "ssh-ed25519 AAAA".to_string(),
+            metadata_comment: None,
         });
         assert!(signers.is_trusted("m1@crosslink"));
         assert!(!signers.is_trusted("unknown@crosslink"));
@@ -657,6 +768,48 @@ mod tests {
         let content = "# comment line\n\ndriver@example.com ssh-ed25519 AAAA key\n# another comment\nm1@crosslink ssh-ed25519 BBBB key2\n";
         let signers = AllowedSigners::parse(content);
         assert_eq!(signers.entries.len(), 2);
+    }
+
+    #[test]
+    fn test_allowed_signers_metadata_comment_roundtrip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("allowed_signers");
+
+        let mut signers = AllowedSigners::default();
+        signers.add_entry(AllowedSignerEntry {
+            principal: "m1@crosslink".to_string(),
+            public_key: "ssh-ed25519 AAAA".to_string(),
+            metadata_comment: Some("approved by max at 2026-02-28 12:00:00 UTC".to_string()),
+        });
+        signers.save(&path).unwrap();
+
+        let loaded = AllowedSigners::load(&path).unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(
+            loaded.entries[0].metadata_comment.as_deref(),
+            Some("approved by max at 2026-02-28 12:00:00 UTC")
+        );
+    }
+
+    #[test]
+    fn test_allowed_signers_rejects_invalid_key_type() {
+        let content = "agent@crosslink not-an-ssh-key AAAA\n";
+        let signers = AllowedSigners::parse(content);
+        assert!(signers.entries.is_empty());
+    }
+
+    #[test]
+    fn test_allowed_signers_rejects_control_chars_in_principal() {
+        let content = "agent\x00bad@crosslink ssh-ed25519 AAAA\n";
+        let signers = AllowedSigners::parse(content);
+        assert!(signers.entries.is_empty());
+    }
+
+    #[test]
+    fn test_allowed_signers_accepts_valid_key_types() {
+        let content = "a@crosslink ssh-ed25519 AAAA\nb@crosslink ssh-rsa BBBB\nc@crosslink ecdsa-sha2-nistp256 CCCC\n";
+        let signers = AllowedSigners::parse(content);
+        assert_eq!(signers.entries.len(), 3);
     }
 
     #[test]
