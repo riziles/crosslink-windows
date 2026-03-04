@@ -312,6 +312,7 @@ const PREFLIGHT_CMD_MD: &str = include_str!("../../resources/claude/commands/pre
 const REVIEW_CMD_MD: &str = include_str!("../../resources/claude/commands/review.md");
 const AUDIT_CMD_MD: &str = include_str!("../../resources/claude/commands/audit.md");
 const MAINTAIN_CMD_MD: &str = include_str!("../../resources/claude/commands/maintain.md");
+const DESIGN_CMD_MD: &str = include_str!("../../resources/claude/commands/design.md");
 
 // Embed sanitization patterns
 const SANITIZE_PATTERNS: &str =
@@ -1446,6 +1447,8 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
             .context("Failed to write audit.md")?;
         fs::write(commands_dir.join("maintain.md"), MAINTAIN_CMD_MD)
             .context("Failed to write maintain.md")?;
+        fs::write(commands_dir.join("design.md"), DESIGN_CMD_MD)
+            .context("Failed to write design.md")?;
 
         let warnings =
             write_mcp_json_merged(&path.join(".mcp.json")).context("Failed to write .mcp.json")?;
@@ -1918,6 +1921,7 @@ mod tests {
         assert!(!PREFLIGHT_CMD_MD.is_empty());
         assert!(!REVIEW_CMD_MD.is_empty());
         assert!(!AUDIT_CMD_MD.is_empty());
+        assert!(!DESIGN_CMD_MD.is_empty());
         assert!(!SANITIZE_PATTERNS.is_empty());
         assert!(!HOOK_CONFIG_JSON.is_empty());
         assert!(!RULE_TRACKING_STRICT.is_empty());
