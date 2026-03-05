@@ -9,6 +9,17 @@ use crate::identity::AgentConfig;
 use crate::shared_writer::SharedWriter;
 use crate::sync::{GpgVerification, SyncManager};
 use crate::utils::{format_issue_id, truncate};
+use crate::LocksCommands;
+
+pub fn run(command: LocksCommands, crosslink_dir: &Path, db: &Database, json: bool) -> Result<()> {
+    match command {
+        LocksCommands::List => list(crosslink_dir, db, json),
+        LocksCommands::Check { id } => check(crosslink_dir, id),
+        LocksCommands::Claim { id, branch } => claim(crosslink_dir, id, branch.as_deref()),
+        LocksCommands::Release { id } => release(crosslink_dir, id),
+        LocksCommands::Steal { id } => steal(crosslink_dir, id),
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PromotionLogEntry {
@@ -300,6 +311,15 @@ pub fn sync_cmd(crosslink_dir: &Path, db: &Database) -> Result<()> {
     let sync = SyncManager::new(crosslink_dir)?;
     sync.init_cache()?;
     sync.fetch()?;
+
+    // Ensure the agent's key is published (may have been skipped during
+    // agent init if the hub cache didn't exist yet). Must happen before
+    // configure_signing to avoid the chicken-and-egg signing problem.
+    match sync.ensure_agent_key_published(crosslink_dir) {
+        Ok(true) => println!("Published agent key to hub (deferred from agent init)."),
+        Ok(false) => {}
+        Err(e) => eprintln!("Warning: could not publish agent key: {}", e),
+    }
 
     // Configure SSH signing in the cache worktree (if agent has a key)
     let _ = sync.configure_signing(crosslink_dir);

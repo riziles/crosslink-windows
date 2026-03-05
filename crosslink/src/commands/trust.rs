@@ -5,6 +5,17 @@ use std::path::Path;
 
 use crate::identity::resolve_driver_fingerprint;
 use crate::signing::{AllowedSignerEntry, AllowedSigners};
+use crate::TrustCommands;
+
+pub fn run(command: TrustCommands, crosslink_dir: &Path) -> Result<()> {
+    match command {
+        TrustCommands::Approve { agent_id } => approve(crosslink_dir, &agent_id),
+        TrustCommands::Revoke { agent_id } => revoke(crosslink_dir, &agent_id),
+        TrustCommands::List => list(crosslink_dir),
+        TrustCommands::Pending => pending(crosslink_dir),
+        TrustCommands::Check { agent_id } => check(crosslink_dir, &agent_id),
+    }
+}
 
 /// Metadata for a trust approval decision, stored in `trust/approvals/<agent-id>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,7 +96,11 @@ pub fn approve(crosslink_dir: &Path, agent_id: &str) -> Result<()> {
     std::fs::write(&approval_path, serde_json::to_string_pretty(&approval)?)?;
 
     // Commit and push
-    commit_trust_change(cache, &format!("trust: approve agent '{}'", agent_id))?;
+    commit_trust_change(
+        cache,
+        crosslink_dir,
+        &format!("trust: approve agent '{}'", agent_id),
+    )?;
 
     if let Some(fp) = driver_fp {
         println!(
@@ -130,7 +145,11 @@ pub fn revoke(crosslink_dir: &Path, agent_id: &str) -> Result<()> {
     let approval_path = approvals_dir.join(format!("{}.json", agent_id));
     std::fs::write(&approval_path, serde_json::to_string_pretty(&revocation)?)?;
 
-    commit_trust_change(cache, &format!("trust: revoke agent '{}'", agent_id))?;
+    commit_trust_change(
+        cache,
+        crosslink_dir,
+        &format!("trust: revoke agent '{}'", agent_id),
+    )?;
 
     println!("Revoked trust for agent '{}'", agent_id);
     Ok(())
@@ -253,7 +272,29 @@ pub fn check(crosslink_dir: &Path, agent_id: &str) -> Result<()> {
 }
 
 /// Stage trust files, commit, and push (best-effort).
-fn commit_trust_change(cache_dir: &Path, message: &str) -> Result<()> {
+fn commit_trust_change(cache_dir: &Path, crosslink_dir: &Path, message: &str) -> Result<()> {
+    commit_trust_change_impl(cache_dir, crosslink_dir, message, false)
+}
+
+/// Stage trust files, commit without signing, and push (best-effort).
+///
+/// Used for key publishing during agent init bootstrap, where signing
+/// is not yet configured and would cause a chicken-and-egg failure.
+fn commit_trust_change_unsigned(
+    cache_dir: &Path,
+    crosslink_dir: &Path,
+    message: &str,
+) -> Result<()> {
+    commit_trust_change_impl(cache_dir, crosslink_dir, message, true)
+}
+
+/// Shared implementation for trust change commits.
+fn commit_trust_change_impl(
+    cache_dir: &Path,
+    crosslink_dir: &Path,
+    message: &str,
+    unsigned: bool,
+) -> Result<()> {
     let git = |args: &[&str]| -> Result<()> {
         let output = std::process::Command::new("git")
             .current_dir(cache_dir)
@@ -269,12 +310,18 @@ fn commit_trust_change(cache_dir: &Path, message: &str) -> Result<()> {
     };
 
     git(&["add", "trust/"])?;
-    git(&["commit", "-m", message])?;
+
+    if unsigned {
+        git(&["-c", "commit.gpgsign=false", "commit", "-m", message])?;
+    } else {
+        git(&["commit", "-m", message])?;
+    }
 
     // Best-effort push
+    let remote = crate::sync::read_tracker_remote(crosslink_dir);
     let _ = std::process::Command::new("git")
         .current_dir(cache_dir)
-        .args(["push", "origin", crate::sync::HUB_BRANCH])
+        .args(["push", &remote, crate::sync::HUB_BRANCH])
         .output();
 
     Ok(())
@@ -282,11 +329,14 @@ fn commit_trust_change(cache_dir: &Path, message: &str) -> Result<()> {
 
 /// Publish an agent's public key to `trust/keys/<id>.pub` on the hub branch.
 ///
-/// Called during `agent init` after key generation.
+/// Called during `agent init` after key generation. Uses an unsigned commit
+/// to avoid the chicken-and-egg problem where signing must be configured
+/// before the key can be published.
 pub fn publish_agent_key(crosslink_dir: &Path, agent_id: &str, public_key: &str) -> Result<()> {
     let sync = crate::sync::SyncManager::new(crosslink_dir)?;
     if !sync.is_initialized() {
-        // Hub not set up yet — skip publishing, will happen on next sync
+        // Hub not set up yet — will be published on next `crosslink sync`
+        // via ensure_agent_key_published()
         return Ok(());
     }
     let cache = sync.cache_path();
@@ -297,8 +347,11 @@ pub fn publish_agent_key(crosslink_dir: &Path, agent_id: &str, public_key: &str)
     let path = keys_dir.join(format!("{}.pub", agent_id));
     std::fs::write(&path, format!("{}\n", public_key))?;
 
-    commit_trust_change(
+    // Use unsigned commit for key publishing — signing may not be
+    // configured yet during agent init bootstrap.
+    commit_trust_change_unsigned(
         cache,
+        crosslink_dir,
         &format!("trust: publish key for agent '{}'", agent_id),
     )?;
 

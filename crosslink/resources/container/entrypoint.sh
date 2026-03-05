@@ -1,4 +1,5 @@
 #!/bin/bash
+# E-ana tablet — container entrypoint for crosslink agent execution
 set -euo pipefail
 
 # This entrypoint runs as root to handle UID remapping and system setup,
@@ -37,7 +38,7 @@ GITEOF
 chown agent:agent "$GIT_CONFIG"
 
 # --- Toolchain detection ---
-# Scan the first mounted workspace for project files
+# Scan the first mounted workspace for project files and install matching toolchains.
 WORKSPACE=$(find /workspaces -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)
 if [ -n "$WORKSPACE" ]; then
     echo "[crosslink-entrypoint] Detected workspace: $WORKSPACE"

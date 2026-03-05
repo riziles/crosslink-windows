@@ -6,9 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-05
+
+### Added
+- Kickoff CLI command with local and container agent execution
+- Design document parser and `--doc` flag for kickoff
+- Kickoff plan subcommand for read-only gap analysis
+- Spec validation loop and structured build reports for kickoff agents
+- Knowledge integration — structured queries, bulk import, MCP server, auto-inject
+- `/design` skill for interactive design document authoring
+- `/maintain` skill for codebase maintenance
+- Configurable auto-steal for stale locks
+- Atomic lock claims in `session work`
+- `rules.local/` directory for gitignored local rule overrides
+- Configurable git remote for hub/knowledge branches
+- Clock skew detection using git commit timestamps
+- Module dispatch refactor — per-module `run()` functions
+- Dry-run integration tests and kickoff unit tests
+- Unit tests for shared writer lock operations
+
+### Fixed
+- Agent signing chicken-and-egg during init
+- TUI agents tab V2 heartbeat reading
+- Milestone persistence to coordination branch
+- Hub cache hook propagation on init
+- Hub sync dirty state and deduplication
+- Hub sync push fallback warnings
+- Worktree-scoped agent signing config
+
+### Security
+- VS Code extension hardening (E1-E3)
+- CI/CD fuzz testing improvements (T1-T5)
+
+### Changed
+- Restrict proptest CI job to release branches
+
 ## [0.1.1-alpha.1] - 2026-02-26
 
 ### Added
+- Add crosslink kickoff CLI command with local and container agent execution (#2)
 - Update injected prompting rules to enforce typed comment discipline (#7)
 
 - **Multi-agent shared issue coordination** — issues can now be shared across agents via a git coordination branch (`crosslink/locks`)
@@ -26,6 +62,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Agent identity in session-start hook** — displays agent identity and coordination sync status on startup
 
 ### Changed
+- Add Dockerfile and entrypoint for crosslink-agent container image (#3)
 
 - **Write commands accept `Option<&SharedWriter>`** — `create`, `update`, `close/reopen`, `delete`, `comment`, `label/unlabel`, `block/unblock`, `relate/unrelate`, and `session work` route through `SharedWriter` in multi-agent mode, falling back to direct SQLite otherwise
 - **`SyncManager` extended** — new methods for shared issue file operations: `push_issue()`, `delete_issue_file()`, `read_counters()`, `write_counters()`, `read_milestones_file()`, `write_milestones_file()`, `cache_path()`

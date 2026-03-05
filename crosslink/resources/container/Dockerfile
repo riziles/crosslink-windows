@@ -1,3 +1,4 @@
+# E-ana tablet — container image for crosslink agent execution
 FROM ubuntu:24.04
 
 # Core tooling (python3 required for crosslink hooks)

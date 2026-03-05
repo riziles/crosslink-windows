@@ -262,7 +262,8 @@ impl SharedWriter {
             commit_result?;
 
             // Push
-            let push_result = self.git_in_cache(&["push", "origin", crate::sync::HUB_BRANCH]);
+            let remote = self.sync.remote();
+            let push_result = self.git_in_cache(&["push", remote, crate::sync::HUB_BRANCH]);
             match push_result {
                 Ok(_) => return Ok(PushOutcome::Pushed),
                 Err(e) => {
@@ -270,19 +271,30 @@ impl SharedWriter {
                     if err_str.contains("Could not resolve host")
                         || err_str.contains("Could not read from remote")
                     {
+                        eprintln!(
+                            "Warning: push failed (offline), changes saved locally only: {}",
+                            message
+                        );
                         return Ok(PushOutcome::LocalOnly);
                     }
                     if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
                         if attempt < MAX_RETRIES - 1 {
-                            let _ = self.git_in_cache(&["reset", "HEAD~1"]);
+                            // Reset commit AND working directory — the prepare
+                            // closure re-generates content on the next iteration,
+                            // so losing working dir changes is safe.
+                            let _ = self.git_in_cache(&["reset", "--hard", "HEAD~1"]);
                             self.git_in_cache(&[
                                 "pull",
                                 "--rebase",
-                                "origin",
+                                remote,
                                 crate::sync::HUB_BRANCH,
                             ])?;
                             continue;
                         }
+                        eprintln!(
+                            "Warning: push failed after {} retries (conflict), changes saved locally only: {}",
+                            MAX_RETRIES, message
+                        );
                         return Ok(PushOutcome::LocalOnly);
                     }
                     return Err(e);
@@ -974,6 +986,66 @@ impl SharedWriter {
         Ok(())
     }
 
+    /// Set `milestone_uuid` on issue JSON files for the given issue IDs.
+    ///
+    /// Loads the milestone to get its UUID, then patches each issue file.
+    /// Also adds the issues to the SQLite milestone_issues table via hydration.
+    pub fn set_milestone_on_issues(
+        &self,
+        db: &Database,
+        milestone_id: i64,
+        issue_ids: &[i64],
+    ) -> Result<()> {
+        let milestone = self.load_milestone_by_id(milestone_id)?;
+        let ms_uuid = milestone.uuid;
+
+        let ids: Vec<i64> = issue_ids.to_vec();
+        let _ = self.write_commit_push(
+            |writer| {
+                let mut files = Vec::new();
+                for &issue_id in &ids {
+                    let mut issue = writer.load_issue_by_id(issue_id, db)?;
+                    issue.milestone_uuid = Some(ms_uuid);
+                    issue.updated_at = Utc::now();
+                    let json = serde_json::to_vec_pretty(&issue)?;
+                    let rel_path = writer.issue_rel_path(&issue.uuid);
+                    files.push((rel_path, json));
+                }
+                Ok(WriteSet {
+                    files,
+                    counters: None,
+                    use_git_rm: false,
+                })
+            },
+            &format!("add {} issue(s) to milestone #{}", ids.len(), milestone_id),
+        )?;
+
+        hydrate_to_sqlite(&self.cache_dir, db)?;
+        Ok(())
+    }
+
+    /// Clear `milestone_uuid` on an issue JSON file.
+    pub fn clear_milestone_on_issue(&self, db: &Database, issue_id: i64) -> Result<()> {
+        let _ = self.write_commit_push(
+            |writer| {
+                let mut issue = writer.load_issue_by_id(issue_id, db)?;
+                issue.milestone_uuid = None;
+                issue.updated_at = Utc::now();
+                let json = serde_json::to_vec_pretty(&issue)?;
+                let rel_path = writer.issue_rel_path(&issue.uuid);
+                Ok(WriteSet {
+                    files: vec![(rel_path, json)],
+                    counters: None,
+                    use_git_rm: false,
+                })
+            },
+            &format!("remove issue #{} from milestone", issue_id),
+        )?;
+
+        hydrate_to_sqlite(&self.cache_dir, db)?;
+        Ok(())
+    }
+
     /// Promote offline issues (`display_id: null`) to real display IDs.
     ///
     /// Called during sync when connectivity is restored. Scans the cache for
@@ -1042,8 +1114,14 @@ impl SharedWriter {
                 let _ = self.write_counters_to_cache(&counters);
             }
             // Amend the commit to reflect reverted state
-            let _ = self.git_in_cache(&["add", "."]);
-            let _ = self.git_in_cache(&["commit", "--amend", "--no-edit"]);
+            if let Err(e) = self.git_in_cache(&["add", "."]) {
+                eprintln!("Warning: failed to stage reverted state: {}", e);
+            }
+            if let Err(e) = self.git_in_cache(&["commit", "--amend", "--no-edit"]) {
+                eprintln!("Warning: failed to commit reverted state: {}", e);
+                // Last resort: clean dirty state so we don't poison future syncs
+                let _ = self.sync.clean_dirty_state();
+            }
             return Ok(vec![]);
         }
 
@@ -1154,17 +1232,21 @@ impl SharedWriter {
 
         // Commit JSON changes if any
         if json_changed {
-            let _ = self.git_in_cache(&["add", "issues/"]);
-            let _ = self.git_in_cache(&[
+            if let Err(e) = self.git_in_cache(&["add", "issues/"]) {
+                eprintln!("Warning: failed to stage rewritten references: {}", e);
+            }
+            if let Err(e) = self.git_in_cache(&[
                 "commit",
                 "-m",
                 &format!(
                     "{}: rewrite local references after promotion",
                     self.agent.agent_id
                 ),
-            ]);
+            ]) {
+                eprintln!("Warning: failed to commit rewritten references: {}", e);
+            }
             // Best-effort push
-            let _ = self.git_in_cache(&["push", "origin", crate::sync::HUB_BRANCH]);
+            let _ = self.git_in_cache(&["push", self.sync.remote(), crate::sync::HUB_BRANCH]);
         }
 
         // 2. Rewrite session notes in SQLite
@@ -1489,7 +1571,8 @@ impl SharedWriter {
             }
 
             // Push
-            let push_result = self.git_in_cache(&["push", "origin", crate::sync::HUB_BRANCH]);
+            let remote = self.sync.remote();
+            let push_result = self.git_in_cache(&["push", remote, crate::sync::HUB_BRANCH]);
             match push_result {
                 Ok(_) => return Ok(PushOutcome::Pushed),
                 Err(e) => {
@@ -1498,22 +1581,31 @@ impl SharedWriter {
                     if err_str.contains("Could not resolve host")
                         || err_str.contains("Could not read from remote")
                     {
+                        eprintln!(
+                            "Warning: push failed (offline), changes saved locally only: {}",
+                            message
+                        );
                         return Ok(PushOutcome::LocalOnly);
                     }
-                    // Conflict — reset our commit, pull latest, then retry
-                    // (the closure will re-read fresh state on the next iteration)
+                    // Conflict — reset commit AND working directory, pull latest,
+                    // then retry. The prepare closure re-reads fresh state on the
+                    // next iteration, so losing working dir changes is safe.
                     if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
                         if attempt < MAX_RETRIES - 1 {
-                            let _ = self.git_in_cache(&["reset", "HEAD~1"]);
+                            let _ = self.git_in_cache(&["reset", "--hard", "HEAD~1"]);
                             self.git_in_cache(&[
                                 "pull",
                                 "--rebase",
-                                "origin",
+                                remote,
                                 crate::sync::HUB_BRANCH,
                             ])?;
                             continue;
                         }
                         // All retries exhausted — keep as local-only
+                        eprintln!(
+                            "Warning: push failed after {} retries (conflict), changes saved locally only: {}",
+                            MAX_RETRIES, message
+                        );
                         return Ok(PushOutcome::LocalOnly);
                     }
                     // Other error — propagate
@@ -2241,6 +2333,276 @@ mod tests {
             let state = crate::checkpoint::read_checkpoint(cache).unwrap();
             assert!(state.locks.is_empty());
             assert!(!cache.join("locks/5.json").exists());
+        }
+
+        #[test]
+        fn test_lock_file_v2_with_all_fields() {
+            let dir = tempdir().unwrap();
+            let locks_dir = dir.path().join("locks");
+            std::fs::create_dir_all(&locks_dir).unwrap();
+
+            let now = chrono::Utc::now();
+            let lock = LockFileV2 {
+                issue_id: 100,
+                agent_id: "agent-special".to_string(),
+                branch: Some("feature/special-branch".to_string()),
+                claimed_at: now,
+                signed_by: Some("SHA256:xyz789".to_string()),
+            };
+            let json = serde_json::to_string_pretty(&lock).unwrap();
+            let path = locks_dir.join("100.json");
+            std::fs::write(&path, &json).unwrap();
+
+            let content = std::fs::read_to_string(&path).unwrap();
+            let parsed: LockFileV2 = serde_json::from_str(&content).unwrap();
+            assert_eq!(parsed.issue_id, 100);
+            assert_eq!(parsed.agent_id, "agent-special");
+            assert_eq!(parsed.branch, Some("feature/special-branch".to_string()));
+            assert_eq!(parsed.claimed_at, now);
+            assert_eq!(parsed.signed_by, Some("SHA256:xyz789".to_string()));
+        }
+
+        #[test]
+        fn test_lock_claim_result_display_and_equality() {
+            // Verify Contended results with different winners are not equal
+            let c1 = LockClaimResult::Contended {
+                winner_agent_id: "agent-1".to_string(),
+            };
+            let c2 = LockClaimResult::Contended {
+                winner_agent_id: "agent-2".to_string(),
+            };
+            assert_ne!(c1, c2);
+
+            // Verify same winner is equal
+            let c3 = LockClaimResult::Contended {
+                winner_agent_id: "agent-1".to_string(),
+            };
+            assert_eq!(c1, c3);
+
+            // Verify Clone works correctly
+            let cloned = c1.clone();
+            assert_eq!(c1, cloned);
+        }
+
+        #[test]
+        fn test_lock_contention_with_three_agents() {
+            // Three agents claiming same lock, verify deterministic winner
+            use crate::checkpoint::{read_checkpoint, write_checkpoint, CheckpointState};
+            use crate::events::{append_event, Event, EventEnvelope};
+            use chrono::Utc;
+
+            let dir = tempdir().unwrap();
+            let cache = dir.path();
+
+            std::fs::create_dir_all(cache.join("checkpoint")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-a")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-b")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-c")).unwrap();
+            std::fs::create_dir_all(cache.join("locks")).unwrap();
+            std::fs::create_dir_all(cache.join("issues")).unwrap();
+
+            let state = CheckpointState::default();
+            write_checkpoint(cache, &state).unwrap();
+
+            let now = Utc::now();
+
+            // Agent C claims first (earliest)
+            let e1 = EventEnvelope {
+                agent_id: "agent-c".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(3),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: Some("feature/c".to_string()),
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-c/events.log"), &e1).unwrap();
+
+            // Agent A claims second
+            let e2 = EventEnvelope {
+                agent_id: "agent-a".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(2),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: Some("feature/a".to_string()),
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-a/events.log"), &e2).unwrap();
+
+            // Agent B claims third
+            let e3 = EventEnvelope {
+                agent_id: "agent-b".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(1),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: Some("feature/b".to_string()),
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-b/events.log"), &e3).unwrap();
+
+            let result = crate::compaction::compact(cache, "agent-a", true)
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.locks_materialized, 1);
+
+            let state = read_checkpoint(cache).unwrap();
+            let lock = state.locks.get(&1).unwrap();
+            assert_eq!(lock.agent_id, "agent-c");
+            assert_eq!(lock.branch, Some("feature/c".to_string()));
+        }
+
+        #[test]
+        fn test_lock_contention_then_winner_releases() {
+            // Two agents contend. Winner releases. Lock should be empty.
+            use crate::checkpoint::{read_checkpoint, write_checkpoint, CheckpointState};
+            use crate::events::{append_event, Event, EventEnvelope};
+            use chrono::Utc;
+
+            let dir = tempdir().unwrap();
+            let cache = dir.path();
+
+            std::fs::create_dir_all(cache.join("checkpoint")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-a")).unwrap();
+            std::fs::create_dir_all(cache.join("agents/agent-b")).unwrap();
+            std::fs::create_dir_all(cache.join("locks")).unwrap();
+            std::fs::create_dir_all(cache.join("issues")).unwrap();
+
+            let state = CheckpointState::default();
+            write_checkpoint(cache, &state).unwrap();
+
+            let now = Utc::now();
+
+            // Agent A claims first (wins)
+            let e1 = EventEnvelope {
+                agent_id: "agent-a".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(3),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: None,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-a/events.log"), &e1).unwrap();
+
+            // Agent B claims second (loses)
+            let e2 = EventEnvelope {
+                agent_id: "agent-b".to_string(),
+                agent_seq: 1,
+                timestamp: now - chrono::Duration::seconds(2),
+                event: Event::LockClaimed {
+                    issue_display_id: 1,
+                    branch: None,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-b/events.log"), &e2).unwrap();
+
+            // Agent A releases
+            let e3 = EventEnvelope {
+                agent_id: "agent-a".to_string(),
+                agent_seq: 2,
+                timestamp: now - chrono::Duration::seconds(1),
+                event: Event::LockReleased {
+                    issue_display_id: 1,
+                },
+                signed_by: None,
+                signature: None,
+            };
+            append_event(&cache.join("agents/agent-a/events.log"), &e3).unwrap();
+
+            crate::compaction::compact(cache, "agent-a", true).unwrap();
+
+            let state = read_checkpoint(cache).unwrap();
+            assert!(state.locks.is_empty());
+            assert!(!cache.join("locks/1.json").exists());
+        }
+
+        #[test]
+        fn test_lock_file_v2_missing_optional_fields() {
+            // Verify LockFileV2 deserialization works when optional fields are null
+            let json = r#"{
+                "issue_id": 7,
+                "agent_id": "agent-minimal",
+                "branch": null,
+                "claimed_at": "2026-01-01T00:00:00Z",
+                "signed_by": null
+            }"#;
+            let parsed: LockFileV2 = serde_json::from_str(json).unwrap();
+            assert_eq!(parsed.issue_id, 7);
+            assert_eq!(parsed.agent_id, "agent-minimal");
+            assert!(parsed.branch.is_none());
+            assert!(parsed.signed_by.is_none());
+        }
+
+        #[test]
+        fn test_lock_contention_deterministic_across_compaction_agents() {
+            // The same winner should emerge regardless of which agent runs compaction
+            use crate::checkpoint::{read_checkpoint, write_checkpoint, CheckpointState};
+            use crate::events::{append_event, Event, EventEnvelope};
+            use chrono::Utc;
+
+            let now = Utc::now();
+
+            // Set up two identical caches with the same events
+            for compactor in &["agent-a", "agent-b"] {
+                let dir = tempdir().unwrap();
+                let cache = dir.path();
+
+                std::fs::create_dir_all(cache.join("checkpoint")).unwrap();
+                std::fs::create_dir_all(cache.join("agents/agent-a")).unwrap();
+                std::fs::create_dir_all(cache.join("agents/agent-b")).unwrap();
+                std::fs::create_dir_all(cache.join("locks")).unwrap();
+                std::fs::create_dir_all(cache.join("issues")).unwrap();
+
+                let state = CheckpointState::default();
+                write_checkpoint(cache, &state).unwrap();
+
+                let e1 = EventEnvelope {
+                    agent_id: "agent-a".to_string(),
+                    agent_seq: 1,
+                    timestamp: now - chrono::Duration::seconds(2),
+                    event: Event::LockClaimed {
+                        issue_display_id: 1,
+                        branch: None,
+                    },
+                    signed_by: None,
+                    signature: None,
+                };
+                append_event(&cache.join("agents/agent-a/events.log"), &e1).unwrap();
+
+                let e2 = EventEnvelope {
+                    agent_id: "agent-b".to_string(),
+                    agent_seq: 1,
+                    timestamp: now - chrono::Duration::seconds(1),
+                    event: Event::LockClaimed {
+                        issue_display_id: 1,
+                        branch: None,
+                    },
+                    signed_by: None,
+                    signature: None,
+                };
+                append_event(&cache.join("agents/agent-b/events.log"), &e2).unwrap();
+
+                crate::compaction::compact(cache, compactor, true).unwrap();
+
+                let state = read_checkpoint(cache).unwrap();
+                assert_eq!(
+                    state.locks[&1].agent_id, "agent-a",
+                    "Winner should be agent-a regardless of who runs compaction (compactor={})",
+                    compactor
+                );
+            }
         }
     }
 }

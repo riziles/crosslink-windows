@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod checkpoint;
+mod clock_skew;
 mod commands;
 #[allow(dead_code)]
 mod compaction;
@@ -460,6 +461,11 @@ enum Commands {
         force: bool,
     },
 
+    /// Launch an agent to implement a feature (local process or container)
+    Kickoff {
+        #[command(subcommand)]
+        action: KickoffCommands,
+    },
     /// Interactive terminal dashboard (read-only)
     Tui,
     /// Manage container-based agent execution
@@ -842,6 +848,9 @@ enum KnowledgeCommands {
         /// Page content (body text after frontmatter)
         #[arg(long)]
         content: Option<String>,
+        /// Import from a design document file
+        #[arg(long, value_name = "PATH")]
+        from_doc: Option<PathBuf>,
     },
     /// Display a knowledge page
     Show {
@@ -856,6 +865,12 @@ enum KnowledgeCommands {
         /// Filter by contributor
         #[arg(long)]
         contributor: Option<String>,
+        /// Filter pages updated since date (YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Update an existing knowledge page
     Edit {
@@ -881,6 +896,20 @@ enum KnowledgeCommands {
     },
     /// Manually sync from remote
     Sync,
+    /// Bulk import markdown files as knowledge pages
+    Import {
+        /// Directory containing .md files to import
+        directory: PathBuf,
+        /// Extra tags to apply to all imports (repeatable)
+        #[arg(long)]
+        tag: Vec<String>,
+        /// Overwrite existing pages
+        #[arg(long)]
+        overwrite: bool,
+        /// Preview imports without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Search knowledge page content
     Search {
         /// Search query (case-insensitive substring match)
@@ -891,6 +920,15 @@ enum KnowledgeCommands {
         /// Search by source URL domain instead of content
         #[arg(long)]
         source: Option<String>,
+        /// Filter results by tag
+        #[arg(long)]
+        tag: Option<String>,
+        /// Filter results updated since date (YYYY-MM-DD)
+        #[arg(long)]
+        since: Option<String>,
+        /// Filter results by contributor
+        #[arg(long)]
+        contributor: Option<String>,
     },
 }
 
@@ -919,6 +957,99 @@ enum IntegrityCommands {
         /// Re-run migrations to update schema
         #[arg(long)]
         repair: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum KickoffCommands {
+    /// Launch a new agent to implement a feature
+    Run {
+        /// Human-readable feature description
+        description: String,
+        /// Existing issue to work on (creates one if omitted)
+        #[arg(long)]
+        issue: Option<i64>,
+        /// Container runtime: none (local process), docker, podman
+        #[arg(long, default_value = "none")]
+        container: String,
+        /// Verification level: local, ci, thorough
+        #[arg(long, default_value = "local")]
+        verify: String,
+        /// LLM model to use
+        #[arg(long, default_value = "opus")]
+        model: String,
+        /// Container image (for --container docker/podman)
+        #[arg(long, default_value = "ghcr.io/forecast-bio/crosslink-agent:latest")]
+        image: String,
+        /// Max runtime before killing agent (e.g. "1h", "30m")
+        #[arg(long, default_value = "1h")]
+        timeout: String,
+        /// Print the agent prompt without launching
+        #[arg(long)]
+        dry_run: bool,
+        /// Branch to use (auto-creates feature branch if omitted)
+        #[arg(long)]
+        branch: Option<String>,
+        /// Path to a design document (markdown) with structured requirements
+        #[arg(long, value_name = "PATH")]
+        doc: Option<PathBuf>,
+    },
+    /// Check status of a running kickoff agent
+    Status {
+        /// Agent ID or branch name
+        agent: String,
+    },
+    /// Tail an agent's event log
+    Logs {
+        /// Agent ID or branch name
+        agent: String,
+        /// Number of recent events to show
+        #[arg(short, long, default_value = "20")]
+        lines: usize,
+    },
+    /// Stop a running kickoff agent
+    Stop {
+        /// Agent ID or branch name
+        agent: String,
+        /// Force kill (SIGKILL instead of SIGTERM)
+        #[arg(long)]
+        force: bool,
+    },
+    /// Analyze a design document against the codebase (read-only)
+    Plan {
+        /// Path to design document
+        doc: PathBuf,
+        /// Existing issue to associate with
+        #[arg(long)]
+        issue: Option<i64>,
+        /// LLM model to use
+        #[arg(long, default_value = "opus")]
+        model: String,
+        /// Max runtime (e.g. "30m", "1h")
+        #[arg(long, default_value = "30m")]
+        timeout: String,
+        /// Print the analysis prompt without launching
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Display a gap report from a previous plan analysis
+    ShowPlan {
+        /// Agent ID or branch slug
+        agent: String,
+    },
+    /// Display the spec validation report from a completed agent
+    Report {
+        /// Agent ID or branch slug (required unless --all)
+        agent: Option<String>,
+        /// Output as raw JSON
+        #[arg(long)]
+        json: bool,
+        /// Output as PR-ready markdown
+        #[arg(long)]
+        markdown: bool,
+        /// Show aggregated reports from all agent worktrees
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -1384,53 +1515,19 @@ fn main() -> Result<()> {
 
         Commands::Archive { action } => {
             let db = get_db()?;
-            match action {
-                ArchiveCommands::Add { id } => commands::archive::archive(&db, id),
-                ArchiveCommands::Remove { id } => commands::archive::unarchive(&db, id),
-                ArchiveCommands::List => commands::archive::list(&db),
-                ArchiveCommands::Older { days } => commands::archive::archive_older(&db, days),
-            }
+            commands::archive::run(action, &db)
         }
 
         Commands::Milestone { action } => {
             let db = get_db()?;
             let crosslink_dir = find_crosslink_dir()?;
-            let shared = shared_writer::SharedWriter::new(&crosslink_dir)?;
-            let shared_ref = shared.as_ref();
-            match action {
-                MilestoneCommands::Create { name, description } => {
-                    commands::milestone::create(&db, shared_ref, &name, description.as_deref())
-                }
-                MilestoneCommands::List { status } => commands::milestone::list(&db, Some(&status)),
-                MilestoneCommands::Show { id } => commands::milestone::show(&db, id),
-                MilestoneCommands::Add { id, issues } => commands::milestone::add(&db, id, &issues),
-                MilestoneCommands::Remove { id, issue } => {
-                    commands::milestone::remove(&db, id, issue)
-                }
-                MilestoneCommands::Close { id } => commands::milestone::close(&db, shared_ref, id),
-                MilestoneCommands::Delete { id } => {
-                    commands::milestone::delete(&db, shared_ref, id)
-                }
-            }
+            commands::milestone::run(action, &db, &crosslink_dir)
         }
 
         Commands::Session { action } => {
             let db = get_db()?;
             let crosslink_dir = find_crosslink_dir()?;
-            match action {
-                SessionCommands::Start => commands::session::start(&db, &crosslink_dir),
-                SessionCommands::End { notes } => {
-                    commands::session::end(&db, notes.as_deref(), &crosslink_dir)
-                }
-                SessionCommands::Status => commands::session::status(&db, &crosslink_dir),
-                SessionCommands::Work { id } => commands::session::work(&db, id, &crosslink_dir),
-                SessionCommands::LastHandoff => {
-                    commands::session::last_handoff(&db, &crosslink_dir)
-                }
-                SessionCommands::Action { text } => {
-                    commands::session::action(&db, &text, &crosslink_dir)
-                }
-            }
+            commands::session::run(action, &db, &crosslink_dir)
         }
 
         Commands::Daemon { action } => match action {
@@ -1451,91 +1548,23 @@ fn main() -> Result<()> {
 
         Commands::Cpitd { action } => {
             let db = get_db()?;
-            match action {
-                CpitdCommands::Scan {
-                    paths,
-                    min_tokens,
-                    ignore,
-                    dry_run,
-                } => commands::cpitd::scan(&db, &paths, min_tokens, &ignore, dry_run, cli.quiet),
-                CpitdCommands::Status => commands::cpitd::status(&db),
-                CpitdCommands::Clear => commands::cpitd::clear(&db),
-            }
+            commands::cpitd::run(action, &db, cli.quiet)
         }
 
         Commands::Agent { action } => {
             let crosslink_dir = find_crosslink_dir()?;
-            match action {
-                AgentCommands::Init {
-                    agent_id,
-                    description,
-                    no_key,
-                    force,
-                } => commands::agent::init(
-                    &crosslink_dir,
-                    &agent_id,
-                    description.as_deref(),
-                    no_key,
-                    force,
-                ),
-                AgentCommands::Status => commands::agent::status(&crosslink_dir),
-                AgentCommands::Bootstrap {
-                    repo,
-                    identity,
-                    branch,
-                    description,
-                    no_key,
-                    target,
-                } => {
-                    let target_path = std::path::PathBuf::from(&target);
-                    commands::agent::bootstrap(
-                        &target_path,
-                        &repo,
-                        &identity,
-                        branch.as_deref(),
-                        description.as_deref(),
-                        no_key,
-                    )?;
-                    // Ensure the agent directory exists on the hub branch
-                    // (idempotent — safe if bootstrap already created it)
-                    let cl_dir = target_path.join(".crosslink");
-                    if let Ok(sync) = sync::SyncManager::new(&cl_dir) {
-                        let _ = sync.ensure_agent_dir(&identity);
-                    }
-                    Ok(())
-                }
-            }
+            commands::agent::run(action, &crosslink_dir)
         }
 
         Commands::Trust { action } => {
             let crosslink_dir = find_crosslink_dir()?;
-            match action {
-                TrustCommands::Approve { agent_id } => {
-                    commands::trust::approve(&crosslink_dir, &agent_id)
-                }
-                TrustCommands::Revoke { agent_id } => {
-                    commands::trust::revoke(&crosslink_dir, &agent_id)
-                }
-                TrustCommands::List => commands::trust::list(&crosslink_dir),
-                TrustCommands::Pending => commands::trust::pending(&crosslink_dir),
-                TrustCommands::Check { agent_id } => {
-                    commands::trust::check(&crosslink_dir, &agent_id)
-                }
-            }
+            commands::trust::run(action, &crosslink_dir)
         }
 
         Commands::Locks { action } => {
             let crosslink_dir = find_crosslink_dir()?;
             let db = get_db()?;
-            match action {
-                LocksCommands::List => commands::locks_cmd::list(&crosslink_dir, &db, cli.json),
-                LocksCommands::Check { id } => commands::locks_cmd::check(&crosslink_dir, id),
-                LocksCommands::Claim { id, branch } => {
-                    commands::locks_cmd::claim(&crosslink_dir, id, branch.as_deref())
-                }
-                LocksCommands::Release { id } => commands::locks_cmd::release(&crosslink_dir, id),
-                LocksCommands::Steal { id } => commands::locks_cmd::steal(&crosslink_dir, id),
-            }
+            commands::locks_cmd::run(action, &crosslink_dir, &db, cli.json)
         }
 
         Commands::Sync => {
@@ -1568,145 +1597,19 @@ fn main() -> Result<()> {
         Commands::Compact { force } => {
             let crosslink_dir = find_crosslink_dir()?;
             let db = get_db()?;
-            let sync = crate::sync::SyncManager::new(&crosslink_dir)?;
-            sync.init_cache()?;
-            sync.fetch()?;
-            let cache_dir = sync.cache_path().to_path_buf();
-
-            // Load agent config for agent_id
-            let agent = crate::identity::AgentConfig::load(&crosslink_dir)?.ok_or_else(|| {
-                anyhow::anyhow!("No agent configured. Run 'crosslink agent init' first.")
-            })?;
-
-            match crate::compaction::compact(&cache_dir, &agent.agent_id, force)? {
-                Some(result) => {
-                    println!("Compaction complete.");
-                    if result.events_processed > 0 {
-                        println!(
-                            "  Events processed: {}, issues updated: {}, locks updated: {}",
-                            result.events_processed,
-                            result.issues_materialized,
-                            result.locks_materialized
-                        );
-                    } else {
-                        println!("  No new events to process.");
-                    }
-                }
-                None => {
-                    println!(
-                        "Compaction skipped: lease held by another agent. Use --force to override."
-                    );
-                }
-            }
-
-            // Re-hydrate after compaction
-            crate::hydration::hydrate_to_sqlite(&cache_dir, &db)?;
-            Ok(())
+            commands::compact::run(&crosslink_dir, &db, force)
         }
 
-        Commands::Container { action } => match action {
-            ContainerCommands::Build {
-                force,
-                tag,
-                dockerfile,
-            } => commands::container::build(force, tag.as_deref(), dockerfile.as_deref()),
-            ContainerCommands::Start {
-                worktree,
-                name,
-                prompt,
-                issue,
-                memory,
-            } => {
-                let path = std::path::PathBuf::from(&worktree);
-                commands::container::start(
-                    &path,
-                    name.as_deref(),
-                    prompt.as_deref(),
-                    issue,
-                    memory.as_deref(),
-                )
-            }
-            ContainerCommands::Ps => commands::container::ps(),
-            ContainerCommands::Logs { name, follow, tail } => {
-                commands::container::logs(&name, follow, tail)
-            }
-            ContainerCommands::Stop { name } => commands::container::stop(&name),
-            ContainerCommands::Rm { name } => commands::container::rm(&name),
-            ContainerCommands::Kill { name } => commands::container::kill(&name),
-            ContainerCommands::Shell { name } => commands::container::shell(&name),
-            ContainerCommands::Snapshot { name, tag } => {
-                commands::container::snapshot(&name, tag.as_deref())
-            }
-        },
+        Commands::Container { action } => commands::container::run(action),
 
         Commands::Style { command } => {
             let crosslink_dir = find_crosslink_dir()?;
-            match command {
-                StyleCommands::Set { url, ref_name } => {
-                    commands::style::set(&crosslink_dir, &url, ref_name.as_deref())
-                }
-                StyleCommands::Sync { dry_run } => commands::style::sync(&crosslink_dir, dry_run),
-                StyleCommands::Diff => commands::style::diff(&crosslink_dir),
-                StyleCommands::Show => commands::style::show(&crosslink_dir),
-                StyleCommands::Unset => commands::style::unset(&crosslink_dir),
-            }
+            commands::style::run(command, &crosslink_dir)
         }
 
         Commands::Knowledge { command } => {
             let crosslink_dir = find_crosslink_dir()?;
-            match command {
-                KnowledgeCommands::Add {
-                    slug,
-                    title,
-                    tag,
-                    source,
-                    content,
-                } => commands::knowledge::add(
-                    &crosslink_dir,
-                    &slug,
-                    title.as_deref(),
-                    &tag,
-                    &source,
-                    content.as_deref(),
-                ),
-                KnowledgeCommands::Show { slug } => {
-                    commands::knowledge::show(&crosslink_dir, &slug, cli.json)
-                }
-                KnowledgeCommands::List { tag, contributor } => commands::knowledge::list(
-                    &crosslink_dir,
-                    tag.as_deref(),
-                    contributor.as_deref(),
-                ),
-                KnowledgeCommands::Edit {
-                    slug,
-                    append,
-                    content,
-                    tag,
-                    source,
-                } => commands::knowledge::edit(
-                    &crosslink_dir,
-                    &slug,
-                    append.as_deref(),
-                    content.as_deref(),
-                    &tag,
-                    &source,
-                ),
-                KnowledgeCommands::Remove { slug } => {
-                    commands::knowledge::remove(&crosslink_dir, &slug)
-                }
-                KnowledgeCommands::Sync => commands::knowledge::sync(&crosslink_dir),
-                KnowledgeCommands::Search {
-                    query,
-                    context,
-                    source,
-                } => commands::knowledge::search(
-                    &crosslink_dir,
-                    query.as_deref(),
-                    context,
-                    source.as_deref(),
-                    cli.json,
-                ),
-            }
+            commands::knowledge::dispatch(command, &crosslink_dir, cli.json)
         }
 
         Commands::Config { command } => {
@@ -1719,21 +1622,15 @@ fn main() -> Result<()> {
         }
         Commands::Workflow { command } => {
             let crosslink_dir = find_crosslink_dir()?;
-            let claude_dir = crosslink_dir
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("Cannot determine project root"))?
-                .join(".claude");
-            match command {
-                WorkflowCommands::Diff { section, check } => {
-                    commands::workflow::diff(&crosslink_dir, &claude_dir, section.as_deref(), check)
-                }
-                WorkflowCommands::Trail { id, kind, json } => {
-                    let db = get_db()?;
-                    commands::workflow::trail(&db, id, kind.as_deref(), json)
-                }
-            }
+            commands::workflow::run(command, &crosslink_dir, get_db)
         }
 
+        Commands::Kickoff { action } => {
+            let crosslink_dir = find_crosslink_dir()?;
+            let db = get_db()?;
+            let writer = get_writer(&crosslink_dir);
+            commands::kickoff::dispatch(action, &crosslink_dir, &db, writer.as_ref(), cli.quiet)
+        }
         Commands::Tui => {
             let db = get_db()?;
             let crosslink_dir = find_crosslink_dir()?;

@@ -296,8 +296,9 @@ pub(crate) const WORK_CHECK_PY: &str = include_str!("../../resources/claude/hook
 pub(crate) const CROSSLINK_CONFIG_PY: &str =
     include_str!("../../resources/claude/hooks/crosslink_config.py");
 
-// Embed MCP server for safe web fetching
+// Embed MCP servers
 const SAFE_FETCH_SERVER_PY: &str = include_str!("../../resources/claude/mcp/safe-fetch-server.py");
+const KNOWLEDGE_SERVER_PY: &str = include_str!("../../resources/claude/mcp/knowledge-server.py");
 const MCP_JSON: &str = include_str!("../../resources/mcp.json");
 
 // Embed slash commands
@@ -310,6 +311,8 @@ const COMMIT_CMD_MD: &str = include_str!("../../resources/claude/commands/commit
 const PREFLIGHT_CMD_MD: &str = include_str!("../../resources/claude/commands/preflight.md");
 const REVIEW_CMD_MD: &str = include_str!("../../resources/claude/commands/review.md");
 const AUDIT_CMD_MD: &str = include_str!("../../resources/claude/commands/audit.md");
+const MAINTAIN_CMD_MD: &str = include_str!("../../resources/claude/commands/maintain.md");
+const DESIGN_CMD_MD: &str = include_str!("../../resources/claude/commands/design.md");
 
 // Embed sanitization patterns
 const SANITIZE_PATTERNS: &str =
@@ -412,6 +415,7 @@ const GITIGNORE_MANAGED_SECTION: &str = "\
 .crosslink/.cache/
 .crosslink/hook-config.local.json
 .crosslink/integrations/
+.crosslink/rules.local/
 
 # .crosslink/ — DO track these (project-level policy):
 #   .crosslink/hook-config.json   — shared team configuration
@@ -1360,8 +1364,9 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
              keys/\n\
              integrations/\n\
              \n\
-             # Machine-local hook overrides\n\
-             hook-config.local.json\n",
+             # Machine-local overrides\n\
+             hook-config.local.json\n\
+             rules.local/\n",
         )
         .context("Failed to write .crosslink/.gitignore")?;
     }
@@ -1387,6 +1392,13 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
         } else {
             ui.step_ok(Some(&format!("{} files", RULE_FILES.len())));
         }
+    }
+
+    // Create rules.local directory for machine-local rule overrides
+    let rules_local_dir = crosslink_dir.join("rules.local");
+    if !rules_local_dir.exists() {
+        fs::create_dir_all(&rules_local_dir)
+            .context("Failed to create .crosslink/rules.local directory")?;
     }
 
     // Detect or use provided Python prefix (needed for settings.json and cpitd install)
@@ -1419,6 +1431,8 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
         fs::create_dir_all(&mcp_dir).context("Failed to create .claude/mcp directory")?;
         fs::write(mcp_dir.join("safe-fetch-server.py"), SAFE_FETCH_SERVER_PY)
             .context("Failed to write safe-fetch-server.py")?;
+        fs::write(mcp_dir.join("knowledge-server.py"), KNOWLEDGE_SERVER_PY)
+            .context("Failed to write knowledge-server.py")?;
 
         let commands_dir = claude_dir.join("commands");
         fs::create_dir_all(&commands_dir).context("Failed to create .claude/commands directory")?;
@@ -1440,6 +1454,10 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
             .context("Failed to write review.md")?;
         fs::write(commands_dir.join("audit.md"), AUDIT_CMD_MD)
             .context("Failed to write audit.md")?;
+        fs::write(commands_dir.join("maintain.md"), MAINTAIN_CMD_MD)
+            .context("Failed to write maintain.md")?;
+        fs::write(commands_dir.join("design.md"), DESIGN_CMD_MD)
+            .context("Failed to write design.md")?;
 
         let warnings =
             write_mcp_json_merged(&path.join(".mcp.json")).context("Failed to write .mcp.json")?;
@@ -1531,6 +1549,7 @@ mod tests {
             .join(".claude/hooks/crosslink_config.py")
             .exists());
         assert!(dir.path().join(".claude/mcp/safe-fetch-server.py").exists());
+        assert!(dir.path().join(".claude/mcp/knowledge-server.py").exists());
         assert!(dir.path().join(".mcp.json").exists());
     }
 
@@ -1797,6 +1816,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["someOtherKey"], true);
         assert!(parsed["mcpServers"]["crosslink-safe-fetch"].is_object());
+        assert!(parsed["mcpServers"]["crosslink-knowledge"].is_object());
     }
 
     #[test]
@@ -1910,6 +1930,7 @@ mod tests {
         assert!(!PREFLIGHT_CMD_MD.is_empty());
         assert!(!REVIEW_CMD_MD.is_empty());
         assert!(!AUDIT_CMD_MD.is_empty());
+        assert!(!DESIGN_CMD_MD.is_empty());
         assert!(!SANITIZE_PATTERNS.is_empty());
         assert!(!HOOK_CONFIG_JSON.is_empty());
         assert!(!RULE_TRACKING_STRICT.is_empty());

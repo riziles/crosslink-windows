@@ -4,7 +4,51 @@ use std::process::Command;
 
 use crate::identity::AgentConfig;
 use crate::signing;
+use crate::sync;
 use crate::utils::format_issue_id;
+use crate::AgentCommands;
+
+pub fn run(command: AgentCommands, crosslink_dir: &Path) -> Result<()> {
+    match command {
+        AgentCommands::Init {
+            agent_id,
+            description,
+            no_key,
+            force,
+        } => init(
+            crosslink_dir,
+            &agent_id,
+            description.as_deref(),
+            no_key,
+            force,
+        ),
+        AgentCommands::Status => status(crosslink_dir),
+        AgentCommands::Bootstrap {
+            repo,
+            identity,
+            branch,
+            description,
+            no_key,
+            target,
+        } => {
+            let target_path = std::path::PathBuf::from(&target);
+            bootstrap(
+                &target_path,
+                &repo,
+                &identity,
+                branch.as_deref(),
+                description.as_deref(),
+                no_key,
+            )?;
+            // Ensure the agent directory exists on the hub branch
+            let cl_dir = target_path.join(".crosslink");
+            if let Ok(s) = sync::SyncManager::new(&cl_dir) {
+                let _ = s.ensure_agent_dir(&identity);
+            }
+            Ok(())
+        }
+    }
+}
 
 /// `crosslink agent init <agent-id> [-d "description"] [--no-key] [--force]`
 pub fn init(
@@ -54,7 +98,7 @@ pub fn init(
                     super::trust::publish_agent_key(crosslink_dir, agent_id, &keypair.public_key)
                 {
                     println!("  Note: Could not publish key to hub: {}", e);
-                    println!("  The driver can manually copy your public key.");
+                    println!("  Key will be auto-published on next `crosslink sync`.");
                 }
 
                 // Configure signing on the hub cache worktree
@@ -224,21 +268,23 @@ pub fn bootstrap(
     ])?;
 
     // Best-effort push
+    let remote = crate::sync::read_tracker_remote(&crosslink_dir);
     let _ = Command::new("git")
         .current_dir(cache)
-        .args(["push", "origin", crate::sync::HUB_BRANCH])
+        .args(["push", &remote, crate::sync::HUB_BRANCH])
         .output();
 
-    // Step 8: Configure signing
-    let _ = sync.configure_signing(&crosslink_dir);
-
-    // Step 9: Publish key to hub
+    // Step 8: Publish key to hub (before configuring signing to avoid
+    // the chicken-and-egg where signing is required for the publish commit)
     if let Some(pub_key) = &config.ssh_public_key {
         if let Err(e) = super::trust::publish_agent_key(&crosslink_dir, agent_id, pub_key) {
             println!("  Note: Could not publish key to hub: {}", e);
-            println!("  The driver can manually copy your public key.");
+            println!("  Key will be auto-published on next `crosslink sync`.");
         }
     }
+
+    // Step 9: Configure signing (after key is published)
+    let _ = sync.configure_signing(&crosslink_dir);
 
     // Step 10: Print summary
     println!("Bootstrap complete:");

@@ -13,6 +13,7 @@ use crate::ConfigCommands;
 enum ConfigType {
     Bool,
     Enum(&'static [&'static str]),
+    String,
     StringArray,
 }
 
@@ -59,6 +60,16 @@ static REGISTRY: &[ConfigKey] = &[
         description: "Prompts without crosslink usage before re-injecting reminder (0 = always)",
     },
     ConfigKey {
+        key: "auto_steal_stale_locks",
+        config_type: ConfigType::Enum(&["false", "2", "3", "5", "10"]),
+        description: "Auto-steal stale locks after N * stale_timeout minutes (false = disabled)",
+    },
+    ConfigKey {
+        key: "tracker_remote",
+        config_type: ConfigType::String,
+        description: "Git remote name for hub/knowledge branches (default: origin)",
+    },
+    ConfigKey {
         key: "blocked_git_commands",
         config_type: ConfigType::StringArray,
         description: "Git mutation commands blocked in all tracking modes",
@@ -83,6 +94,7 @@ fn type_label(ct: ConfigType) -> &'static str {
     match ct {
         ConfigType::Bool => "bool",
         ConfigType::Enum(_) => "enum",
+        ConfigType::String => "string",
         ConfigType::StringArray => "string[]",
     }
 }
@@ -258,6 +270,13 @@ fn set(
                     valid.join(", ")
                 );
             }
+            config[key] = serde_json::Value::String(val.to_string());
+            write_config(crosslink_dir, &config)?;
+            println!("{key} = {val}");
+        }
+        ConfigType::String => {
+            let val = value
+                .ok_or_else(|| anyhow::anyhow!("Usage: crosslink config set {key} <value>"))?;
             config[key] = serde_json::Value::String(val.to_string());
             write_config(crosslink_dir, &config)?;
             println!("{key} = {val}");
