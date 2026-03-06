@@ -619,16 +619,16 @@ pub fn resume(crosslink_dir: &Path) -> Result<()> {
         break;
     }
 
-    if active_phase.is_none() {
-        println!(
-            "All {} phases completed. Swarm build is done.",
-            plan.phases.len()
-        );
-        return Ok(());
-    }
-
-    let phase = active_phase.unwrap();
-    let phase_name = active_phase_name.unwrap();
+    let (phase, phase_name) = match (active_phase, active_phase_name) {
+        (Some(p), Some(n)) => (p, n),
+        _ => {
+            println!(
+                "All {} phases completed. Swarm build is done.",
+                plan.phases.len()
+            );
+            return Ok(());
+        }
+    };
 
     println!(
         "Resume point: {} ({}/{})",
