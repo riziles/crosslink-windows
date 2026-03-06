@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crosslink_config import (
     find_crosslink_dir,
     get_project_root,
+    is_agent_context,
     load_config_merged,
     load_guard_state,
     load_tracking_mode,
@@ -622,6 +623,12 @@ def main():
     # Find crosslink directory and load rules
     crosslink_dir = find_crosslink_dir()
     tracking_mode = load_tracking_mode(crosslink_dir)
+
+    # Agents always get condensed reminders — skip expensive tree/deps scanning
+    if is_agent_context(crosslink_dir):
+        languages = detect_languages()
+        print(build_condensed_reminder(languages, tracking_mode))
+        sys.exit(0)
 
     # Check if we should send full or condensed guard
     if not should_send_full_guard(crosslink_dir):
