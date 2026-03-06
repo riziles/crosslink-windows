@@ -180,6 +180,34 @@ pub enum BudgetRecommendation {
     Block { reason: String },
 }
 
+/// A budget window in a multi-window plan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WindowAllocation {
+    pub window_index: usize,
+    pub phases: Vec<WindowPhase>,
+    pub total_estimate_s: u64,
+    pub buffer_s: u64,
+    pub stop_point: String,
+}
+
+/// A phase allocated to a window, with its estimated cost.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WindowPhase {
+    pub name: String,
+    pub agent_count: usize,
+    pub estimate_s: u64,
+    pub fit: WindowFit,
+}
+
+/// How well a phase fits in the remaining window budget.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowFit {
+    Fits,
+    Tight,
+    Overflow,
+}
+
 // ---------------------------------------------------------------------------
 // Hub branch I/O helpers
 // ---------------------------------------------------------------------------
@@ -597,7 +625,7 @@ fn probe_agent_status(repo_root: &Path, slug: &str) -> String {
         }
     }
 
-    // Check if tmux session is alive
+    // Check if tmux session is alive by exact slug match
     let session_name = tmux_session_name(slug);
     let tmux_alive = std::process::Command::new("tmux")
         .args(["has-session", "-t", &session_name])
@@ -607,6 +635,23 @@ fn probe_agent_status(repo_root: &Path, slug: &str) -> String {
 
     if tmux_alive {
         return "running (tmux)".to_string();
+    }
+
+    // Fallback: scan tmux sessions for any containing the slug as a substring.
+    // kickoff::run derives the session name from slugify(description), which may
+    // differ from the agent slug (e.g. "req-1-add-login" vs "add-login").
+    if let Ok(output) = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+    {
+        if output.status.success() {
+            let sessions = String::from_utf8_lossy(&output.stdout);
+            for session in sessions.lines() {
+                if session.contains(slug) {
+                    return format!("running (tmux: {})", session);
+                }
+            }
+        }
     }
 
     // Worktree exists but no status file and no tmux — stale or crashed
@@ -776,33 +821,33 @@ pub fn resume(crosslink_dir: &Path) -> Result<()> {
         && planned.is_empty()
         && unknown.is_empty();
 
+    let phase_slug = slugify_phase(&phase_name);
     if all_agents_resolved {
         actions.push(format!(
-            "{}. All agents merged. Run gate: cargo test (or project test command)",
-            action_num
+            "{}. All agents merged. Run gate: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
         action_num += 1;
         actions.push(format!(
             "{}. If gate passes: crosslink swarm checkpoint {}",
-            action_num,
-            slugify_phase(&phase_name)
+            action_num, phase_slug
         ));
     } else if ready_to_merge.is_empty() && running.is_empty() && planned.is_empty() {
         // Only failed/unknown agents remain
         actions.push(format!(
-            "{}. After resolving failures: run gate and checkpoint",
-            action_num
+            "{}. After resolving failures: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
     } else {
         actions.push(format!(
-            "{}. After merges complete: run gate (cargo test)",
-            action_num
+            "{}. After merges complete: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
         action_num += 1;
         if completed_count + 1 < plan.phases.len() {
             actions.push(format!(
-                "{}. If gate passes: checkpoint and start next phase",
-                action_num
+                "{}. If gate passes: crosslink swarm checkpoint {}",
+                action_num, phase_slug
             ));
         }
     }
@@ -918,17 +963,21 @@ pub fn launch(
     }
 
     for idx in &planned_agents {
-        let agent = &phase.agents[*idx];
+        let slug = phase.agents[*idx].slug.clone();
+        let description = phase.agents[*idx].description.clone();
+        let issue_id = phase.agents[*idx].issue_id;
+        let branch = phase.agents[*idx].branch.clone();
+
         let opts = KickoffOpts {
-            description: &agent.description,
-            issue: agent.issue_id,
+            description: &description,
+            issue: issue_id,
             container: ContainerMode::None,
             verify: VerifyLevel::Local,
             model: "opus",
             image: "ghcr.io/forecast-bio/crosslink-agent:latest",
             timeout: std::time::Duration::from_secs(3600),
             dry_run: false,
-            branch: agent.branch.as_deref(),
+            branch: branch.as_deref(),
             quiet,
             design_doc: None,
             doc_path: None,
@@ -938,9 +987,10 @@ pub fn launch(
             Ok(()) => {
                 phase.agents[*idx].status = AgentStatus::Running;
                 phase.agents[*idx].started_at = Some(now.clone());
+                phase.agents[*idx].agent_id = Some(slug);
             }
             Err(e) => {
-                eprintln!("Failed to launch {}: {}", agent.slug, e);
+                eprintln!("Failed to launch {}: {}", slug, e);
                 phase.agents[*idx].status = AgentStatus::Failed;
             }
         }
@@ -1253,10 +1303,6 @@ pub fn checkpoint(
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // swarm config (budget)
@@ -1688,6 +1734,214 @@ fn recompute_model_estimates(cost_log: &mut CostLog) {
             },
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// swarm plan (multi-window)
+// ---------------------------------------------------------------------------
+
+/// Bin-pack phases into budget windows and return the allocation plan.
+fn pack_windows(
+    phases: &[(String, u64, usize)], // (name, estimate_s, agent_count)
+    window_s: u64,
+) -> Vec<WindowAllocation> {
+    let mut windows: Vec<WindowAllocation> = Vec::new();
+    let mut current = WindowAllocation {
+        window_index: 1,
+        phases: Vec::new(),
+        total_estimate_s: 0,
+        buffer_s: window_s,
+        stop_point: String::new(),
+    };
+
+    for (name, estimate, agent_count) in phases {
+        let fit = if current.total_estimate_s + estimate <= (window_s as f64 * 0.8) as u64 {
+            WindowFit::Fits
+        } else if current.total_estimate_s + estimate <= window_s {
+            WindowFit::Tight
+        } else {
+            WindowFit::Overflow
+        };
+
+        if fit == WindowFit::Overflow && !current.phases.is_empty() {
+            // Close current window
+            current.buffer_s = window_s.saturating_sub(current.total_estimate_s);
+            current.stop_point = format!(
+                "after {} gate → checkpoint",
+                current
+                    .phases
+                    .last()
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("?")
+            );
+            windows.push(current);
+
+            current = WindowAllocation {
+                window_index: windows.len() + 1,
+                phases: Vec::new(),
+                total_estimate_s: 0,
+                buffer_s: window_s,
+                stop_point: String::new(),
+            };
+        }
+
+        let recalculated_fit =
+            if current.total_estimate_s + estimate <= (window_s as f64 * 0.8) as u64 {
+                WindowFit::Fits
+            } else if current.total_estimate_s + estimate <= window_s {
+                WindowFit::Tight
+            } else {
+                WindowFit::Overflow
+            };
+
+        current.total_estimate_s += estimate;
+        current.phases.push(WindowPhase {
+            name: name.clone(),
+            agent_count: *agent_count,
+            estimate_s: *estimate,
+            fit: recalculated_fit,
+        });
+    }
+
+    // Close last window
+    if !current.phases.is_empty() {
+        current.buffer_s = window_s.saturating_sub(current.total_estimate_s);
+        current.stop_point = format!(
+            "after {} gate → final checkpoint",
+            current
+                .phases
+                .last()
+                .map(|p| p.name.as_str())
+                .unwrap_or("?")
+        );
+        windows.push(current);
+    }
+
+    windows
+}
+
+/// Plan a multi-phase build across budget windows.
+pub fn plan(crosslink_dir: &Path, budget_window: Option<&str>) -> Result<()> {
+    let sync = SyncManager::new(crosslink_dir)?;
+    if !sync.is_initialized() {
+        bail!("Hub cache not initialized. Run `crosslink sync` first.");
+    }
+
+    let swarm_plan: SwarmPlan = read_hub_json(&sync, "swarm/plan.json")
+        .context("No swarm plan found. Run `crosslink swarm init --doc <file>` first.")?;
+
+    let budget_config: BudgetConfig =
+        read_hub_json(&sync, "swarm/budget.json").unwrap_or(BudgetConfig {
+            budget_window_s: 18000,
+            model: "opus".to_string(),
+        });
+
+    let window_s = if let Some(w) = budget_window {
+        kickoff::parse_duration(w)?.as_secs()
+    } else {
+        budget_config.budget_window_s
+    };
+
+    let cost_log: CostLog = read_hub_json(&sync, "swarm/history/cost-log.json").unwrap_or_default();
+
+    // Estimate each phase
+    let mut phase_estimates: Vec<(String, u64, usize)> = Vec::new();
+    for phase_name in &swarm_plan.phases {
+        let phase_file = format!("swarm/phases/{}.json", slugify_phase(phase_name));
+        let phase: PhaseDefinition = match read_hub_json(&sync, &phase_file) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let planned_count = phase
+            .agents
+            .iter()
+            .filter(|a| a.status == AgentStatus::Planned || a.status == AgentStatus::Running)
+            .count();
+
+        if phase.status == PhaseStatus::Completed {
+            continue;
+        }
+
+        let (estimate, _) = estimate_phase_cost(&phase, &cost_log, &budget_config.model);
+        phase_estimates.push((phase_name.clone(), estimate, planned_count));
+    }
+
+    if phase_estimates.is_empty() {
+        println!("All phases completed. Nothing to plan.");
+        return Ok(());
+    }
+
+    let windows = pack_windows(&phase_estimates, window_s);
+    let total_estimate: u64 = phase_estimates.iter().map(|(_, e, _)| e).sum();
+
+    // Display
+    println!("Swarm: {}", swarm_plan.title);
+    println!(
+        "Estimated total cost: ~{} budget window{}",
+        windows.len(),
+        if windows.len() == 1 { "" } else { "s" }
+    );
+    println!();
+
+    for window in &windows {
+        println!(
+            "Window {} ({}):",
+            window.window_index,
+            kickoff::format_duration(window_s)
+        );
+        for wp in &window.phases {
+            let fit_label = match wp.fit {
+                WindowFit::Fits => "fits",
+                WindowFit::Tight => "fits, tight",
+                WindowFit::Overflow => "OVERFLOW",
+            };
+            println!(
+                "  {}: {} agent{}, est. ~{} ({})",
+                wp.name,
+                wp.agent_count,
+                if wp.agent_count == 1 { "" } else { "s" },
+                kickoff::format_duration(wp.estimate_s),
+                fit_label
+            );
+        }
+        println!("  Buffer: ~{}", kickoff::format_duration(window.buffer_s));
+        println!("  Stop point: {}", window.stop_point);
+        println!();
+    }
+
+    // Natural safe stops
+    println!("Natural safe stops:");
+    let total_phases = phase_estimates.len();
+    for (i, (name, _, _)) in phase_estimates.iter().enumerate() {
+        let is_window_boundary = windows
+            .iter()
+            .any(|w| w.phases.last().map(|p| p.name == *name).unwrap_or(false));
+        let is_last = i == total_phases - 1;
+
+        let qualifier = if is_last {
+            "REQUIRED — build complete"
+        } else if is_window_boundary {
+            "REQUIRED — window boundary"
+        } else {
+            "optional, early exit"
+        };
+
+        println!("  After {} gate ({})", name, qualifier);
+    }
+
+    println!();
+    println!(
+        "Total estimate: {}",
+        kickoff::format_duration(total_estimate)
+    );
+
+    Ok(())
+}
+
+/// Show the window plan (recomputes from current swarm state).
+pub fn plan_show(crosslink_dir: &Path) -> Result<()> {
+    plan(crosslink_dir, None)
 }
 
 // ---------------------------------------------------------------------------
@@ -2306,5 +2560,93 @@ mod tests {
         let est = log.model_estimates.get("opus").unwrap();
         assert_eq!(est.median_duration_s, 4000); // middle of [3000, 4000, 5000]
         assert_eq!(est.p90_duration_s, 5000); // ceil(3*0.9) = 3 → index 2
+    }
+
+    #[test]
+    fn test_pack_windows_single_window() {
+        let phases = vec![
+            ("Phase 1".to_string(), 3600, 4),
+            ("Phase 2".to_string(), 3600, 4),
+        ];
+        let windows = pack_windows(&phases, 18000); // 5h window
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].phases.len(), 2);
+        assert_eq!(windows[0].phases[0].fit, WindowFit::Fits);
+        assert_eq!(windows[0].phases[1].fit, WindowFit::Fits);
+        assert!(windows[0].buffer_s > 0);
+    }
+
+    #[test]
+    fn test_pack_windows_multiple_windows() {
+        let phases = vec![
+            ("Phase 1".to_string(), 7200, 8),
+            ("Phase 2".to_string(), 9000, 9),
+            ("Phase 3".to_string(), 7200, 8),
+            ("Phase 4".to_string(), 7200, 8),
+        ];
+        let windows = pack_windows(&phases, 18000); // 5h window
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].phases.len(), 2);
+        assert_eq!(windows[1].phases.len(), 2);
+        assert!(windows[0].stop_point.contains("Phase 2"));
+        assert!(windows[1].stop_point.contains("Phase 4"));
+    }
+
+    #[test]
+    fn test_pack_windows_tight_fit() {
+        // Phase fills > 80% of window but still fits
+        let phases = vec![("Phase 1".to_string(), 16000, 6)];
+        let windows = pack_windows(&phases, 18000);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].phases[0].fit, WindowFit::Tight);
+    }
+
+    #[test]
+    fn test_pack_windows_overflow_splits() {
+        // Single phase overflows window
+        let phases = vec![
+            ("Phase 1".to_string(), 10000, 5),
+            ("Phase 2".to_string(), 10000, 5),
+        ];
+        let windows = pack_windows(&phases, 10000);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].phases.len(), 1);
+        assert_eq!(windows[1].phases.len(), 1);
+    }
+
+    #[test]
+    fn test_pack_windows_empty() {
+        let phases: Vec<(String, u64, usize)> = vec![];
+        let windows = pack_windows(&phases, 18000);
+        assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn test_window_allocation_serde_roundtrip() {
+        let alloc = WindowAllocation {
+            window_index: 1,
+            phases: vec![WindowPhase {
+                name: "Phase 1".to_string(),
+                agent_count: 4,
+                estimate_s: 7200,
+                fit: WindowFit::Fits,
+            }],
+            total_estimate_s: 7200,
+            buffer_s: 10800,
+            stop_point: "after Phase 1 gate → checkpoint".to_string(),
+        };
+        let json = serde_json::to_string(&alloc).unwrap();
+        let parsed: WindowAllocation = serde_json::from_str(&json).unwrap();
+        assert_eq!(alloc, parsed);
+    }
+
+    #[test]
+    fn test_window_fit_display() {
+        let json_fits = serde_json::to_string(&WindowFit::Fits).unwrap();
+        assert_eq!(json_fits, "\"fits\"");
+        let json_tight = serde_json::to_string(&WindowFit::Tight).unwrap();
+        assert_eq!(json_tight, "\"tight\"");
+        let json_overflow = serde_json::to_string(&WindowFit::Overflow).unwrap();
+        assert_eq!(json_overflow, "\"overflow\"");
     }
 }
