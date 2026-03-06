@@ -625,7 +625,7 @@ fn probe_agent_status(repo_root: &Path, slug: &str) -> String {
         }
     }
 
-    // Check if tmux session is alive
+    // Check if tmux session is alive by exact slug match
     let session_name = tmux_session_name(slug);
     let tmux_alive = std::process::Command::new("tmux")
         .args(["has-session", "-t", &session_name])
@@ -635,6 +635,23 @@ fn probe_agent_status(repo_root: &Path, slug: &str) -> String {
 
     if tmux_alive {
         return "running (tmux)".to_string();
+    }
+
+    // Fallback: scan tmux sessions for any containing the slug as a substring.
+    // kickoff::run derives the session name from slugify(description), which may
+    // differ from the agent slug (e.g. "req-1-add-login" vs "add-login").
+    if let Ok(output) = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output()
+    {
+        if output.status.success() {
+            let sessions = String::from_utf8_lossy(&output.stdout);
+            for session in sessions.lines() {
+                if session.contains(slug) {
+                    return format!("running (tmux: {})", session);
+                }
+            }
+        }
     }
 
     // Worktree exists but no status file and no tmux — stale or crashed
@@ -804,33 +821,33 @@ pub fn resume(crosslink_dir: &Path) -> Result<()> {
         && planned.is_empty()
         && unknown.is_empty();
 
+    let phase_slug = slugify_phase(&phase_name);
     if all_agents_resolved {
         actions.push(format!(
-            "{}. All agents merged. Run gate: cargo test (or project test command)",
-            action_num
+            "{}. All agents merged. Run gate: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
         action_num += 1;
         actions.push(format!(
             "{}. If gate passes: crosslink swarm checkpoint {}",
-            action_num,
-            slugify_phase(&phase_name)
+            action_num, phase_slug
         ));
     } else if ready_to_merge.is_empty() && running.is_empty() && planned.is_empty() {
         // Only failed/unknown agents remain
         actions.push(format!(
-            "{}. After resolving failures: run gate and checkpoint",
-            action_num
+            "{}. After resolving failures: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
     } else {
         actions.push(format!(
-            "{}. After merges complete: run gate (cargo test)",
-            action_num
+            "{}. After merges complete: crosslink swarm gate {}",
+            action_num, phase_slug
         ));
         action_num += 1;
         if completed_count + 1 < plan.phases.len() {
             actions.push(format!(
-                "{}. If gate passes: checkpoint and start next phase",
-                action_num
+                "{}. If gate passes: crosslink swarm checkpoint {}",
+                action_num, phase_slug
             ));
         }
     }
@@ -946,17 +963,21 @@ pub fn launch(
     }
 
     for idx in &planned_agents {
-        let agent = &phase.agents[*idx];
+        let slug = phase.agents[*idx].slug.clone();
+        let description = phase.agents[*idx].description.clone();
+        let issue_id = phase.agents[*idx].issue_id;
+        let branch = phase.agents[*idx].branch.clone();
+
         let opts = KickoffOpts {
-            description: &agent.description,
-            issue: agent.issue_id,
+            description: &description,
+            issue: issue_id,
             container: ContainerMode::None,
             verify: VerifyLevel::Local,
             model: "opus",
             image: "ghcr.io/forecast-bio/crosslink-agent:latest",
             timeout: std::time::Duration::from_secs(3600),
             dry_run: false,
-            branch: agent.branch.as_deref(),
+            branch: branch.as_deref(),
             quiet,
             design_doc: None,
             doc_path: None,
@@ -966,9 +987,10 @@ pub fn launch(
             Ok(()) => {
                 phase.agents[*idx].status = AgentStatus::Running;
                 phase.agents[*idx].started_at = Some(now.clone());
+                phase.agents[*idx].agent_id = Some(slug);
             }
             Err(e) => {
-                eprintln!("Failed to launch {}: {}", agent.slug, e);
+                eprintln!("Failed to launch {}: {}", slug, e);
                 phase.agents[*idx].status = AgentStatus::Failed;
             }
         }
@@ -1281,10 +1303,6 @@ pub fn checkpoint(
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // swarm config (budget)
@@ -1921,7 +1939,7 @@ pub fn plan(crosslink_dir: &Path, budget_window: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Show the saved window plan (re-runs planning with current state).
+/// Show the window plan (recomputes from current swarm state).
 pub fn plan_show(crosslink_dir: &Path) -> Result<()> {
     plan(crosslink_dir, None)
 }
