@@ -1613,7 +1613,11 @@ pub fn run(
 ) -> Result<()> {
     // 1. Pre-flight: validate all required external commands are present
     let preflight = if !opts.dry_run {
-        Some(preflight_check(&opts.container, &opts.verify, crosslink_dir)?)
+        Some(preflight_check(
+            &opts.container,
+            &opts.verify,
+            crosslink_dir,
+        )?)
     } else {
         None
     };
