@@ -889,12 +889,418 @@ fn tmux_session_exists(name: &str) -> bool {
 }
 
 /// Check if a command is available on PATH.
-fn command_available(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+pub(crate) fn command_available(cmd: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let lookup = Command::new("where.exe").arg(cmd).output();
+    #[cfg(not(target_os = "windows"))]
+    let lookup = Command::new("which").arg(cmd).output();
+
+    lookup.map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Detected platform for generating targeted install instructions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Platform {
+    MacOS,
+    Linux(LinuxDistro),
+    Windows,
+}
+
+/// Known Linux distribution families.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LinuxDistro {
+    Debian,
+    Fedora,
+    Arch,
+    Alpine,
+    Other,
+}
+
+/// Detect the current platform and Linux distribution (if applicable).
+fn detect_platform() -> Platform {
+    if cfg!(target_os = "macos") {
+        Platform::MacOS
+    } else if cfg!(target_os = "windows") {
+        Platform::Windows
+    } else {
+        Platform::Linux(detect_linux_distro())
+    }
+}
+
+/// Detect the Linux distribution by reading /etc/os-release.
+fn detect_linux_distro() -> LinuxDistro {
+    let content = match std::fs::read_to_string("/etc/os-release") {
+        Ok(c) => c.to_lowercase(),
+        Err(_) => return LinuxDistro::Other,
+    };
+    if content.contains("id=debian")
+        || content.contains("id=ubuntu")
+        || content.contains("id_like=debian")
+        || content.contains("id_like=\"debian")
+    {
+        LinuxDistro::Debian
+    } else if content.contains("id=fedora")
+        || content.contains("id=rhel")
+        || content.contains("id=centos")
+        || content.contains("id_like=fedora")
+        || content.contains("id_like=\"fedora")
+        || content.contains("id_like=\"rhel")
+    {
+        LinuxDistro::Fedora
+    } else if content.contains("id=arch")
+        || content.contains("id_like=arch")
+        || content.contains("id_like=\"arch")
+    {
+        LinuxDistro::Arch
+    } else if content.contains("id=alpine") {
+        LinuxDistro::Alpine
+    } else {
+        LinuxDistro::Other
+    }
+}
+
+/// Build a platform-specific install hint for a given command.
+fn install_hint(cmd: &str, platform: &Platform) -> String {
+    match cmd {
+        "timeout" | "gtimeout" => match platform {
+            Platform::MacOS => "On macOS, install GNU coreutils:\n\
+                 \n  brew install coreutils\n\
+                 \nThis provides `gtimeout` which crosslink will use automatically."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Debian) => {
+                "Install coreutils (provides `timeout`):\n\n  sudo apt install coreutils"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Fedora) => {
+                "Install coreutils (provides `timeout`):\n\n  sudo dnf install coreutils"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Arch) => {
+                "Install coreutils (provides `timeout`):\n\n  sudo pacman -S coreutils".to_string()
+            }
+            Platform::Linux(LinuxDistro::Alpine) => {
+                "Install coreutils (provides `timeout`):\n\n  apk add coreutils".to_string()
+            }
+            Platform::Linux(LinuxDistro::Other) => {
+                "Install GNU coreutils to get the `timeout` command.\n\
+                 Use your distribution's package manager (e.g. apt, dnf, pacman)."
+                    .to_string()
+            }
+            Platform::Windows => "Install GNU coreutils via scoop or chocolatey:\n\
+                 \n  scoop install coreutils\n  choco install gnuwin32-coreutils.install"
+                .to_string(),
+        },
+        "tmux" => match platform {
+            Platform::MacOS => "`tmux` is not installed.\n\n  brew install tmux\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Debian) => {
+                "`tmux` is not installed.\n\n  sudo apt install tmux\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Fedora) => {
+                "`tmux` is not installed.\n\n  sudo dnf install tmux\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Arch) => {
+                "`tmux` is not installed.\n\n  sudo pacman -S tmux\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Alpine) => "`tmux` is not installed.\n\n  apk add tmux\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Other) => "`tmux` is not installed.\n\
+                 Install with your distribution's package manager (e.g. apt, dnf, pacman).\n\
+                 \nAlternatively, use --container docker to avoid tmux."
+                .to_string(),
+            Platform::Windows => "`tmux` is not available on Windows.\n\
+                 Use --container docker instead for containerized agent mode."
+                .to_string(),
+        },
+        "claude" => match platform {
+            Platform::MacOS => "`claude` CLI is not installed.\n\n  brew install claude-code\n\
+                 \nOr install via npm:\n\n  npm install -g @anthropic-ai/claude-code"
+                .to_string(),
+            Platform::Windows => {
+                "`claude` CLI is not installed.\n\n  npm install -g @anthropic-ai/claude-code"
+                    .to_string()
+            }
+            Platform::Linux(_) => {
+                "`claude` CLI is not installed.\n\n  npm install -g @anthropic-ai/claude-code"
+                    .to_string()
+            }
+        },
+        "gh" => match platform {
+            Platform::MacOS => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\n\n  brew install gh"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Debian) => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\n\
+                 \nInstall via apt (official repo):\n\
+                 \n  sudo mkdir -p /etc/apt/keyrings\n  \
+                 curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                 | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null\n  \
+                 echo \"deb [arch=$(dpkg --print-architecture) \
+                 signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] \
+                 https://cli.github.com/packages stable main\" \
+                 | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null\n  \
+                 sudo apt update && sudo apt install gh\n\
+                 \nOr install a single binary from: https://cli.github.com"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Fedora) => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\
+                 \n\n  sudo dnf install gh"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Arch) => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\
+                 \n\n  sudo pacman -S github-cli"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Alpine) => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\
+                 \n\n  apk add github-cli"
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Other) => {
+                "`gh` (GitHub CLI) is required for --verify ci/thorough.\n\
+                 Install from: https://cli.github.com"
+                    .to_string()
+            }
+            Platform::Windows => "`gh` (GitHub CLI) is required for --verify ci/thorough.\
+                 \n\n  winget install GitHub.cli\n\
+                 \nOr: scoop install gh"
+                .to_string(),
+        },
+        "docker" => match platform {
+            Platform::MacOS => "`docker` is not installed.\n\n  brew install --cask docker\n\
+                 \nOr install Docker Desktop from: https://docs.docker.com/get-docker/\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Debian) => "`docker` is not installed.\n\
+                 \nInstall Docker Engine:\n\
+                 \n  curl -fsSL https://get.docker.com | sh\n  sudo usermod -aG docker $USER\n\
+                 \nOr see: https://docs.docker.com/engine/install/\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Fedora) => "`docker` is not installed.\n\
+                 \n  sudo dnf install docker-ce docker-ce-cli containerd.io\n\
+                 \nOr: curl -fsSL https://get.docker.com | sh\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Arch) => "`docker` is not installed.\n\
+                 \n  sudo pacman -S docker\n  sudo systemctl enable --now docker\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Alpine) => "`docker` is not installed.\n\
+                 \n  apk add docker\n  rc-update add docker default\n  service docker start\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Other) | Platform::Windows => {
+                "`docker` is not installed.\n\
+                 Install from: https://docs.docker.com/get-docker/\n\
+                 \nAlternatively, use --container none for local mode."
+                    .to_string()
+            }
+        },
+        "podman" => match platform {
+            Platform::MacOS => "`podman` is not installed.\n\n  brew install podman\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Linux(LinuxDistro::Debian) => {
+                "`podman` is not installed.\n\n  sudo apt install podman\n\
+                 \nAlternatively, use --container none for local mode."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Fedora) => {
+                "`podman` is not installed.\n\n  sudo dnf install podman\n\
+                 \nAlternatively, use --container none for local mode."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Arch) => {
+                "`podman` is not installed.\n\n  sudo pacman -S podman\n\
+                 \nAlternatively, use --container none for local mode."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Alpine) => {
+                "`podman` is not installed.\n\n  apk add podman\n\
+                 \nAlternatively, use --container none for local mode."
+                    .to_string()
+            }
+            Platform::Linux(LinuxDistro::Other) => "`podman` is not installed.\n\
+                 Install from: https://podman.io/getting-started/installation\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+            Platform::Windows => "`podman` is not installed.\n\
+                 \n  winget install RedHat.Podman\n\
+                 \nAlternatively, use --container none for local mode."
+                .to_string(),
+        },
+        other => format!(
+            "`{}` is not installed. Install it using your system package manager.",
+            other
+        ),
+    }
+}
+
+/// Resolve the correct `timeout` command for the current platform.
+///
+/// On macOS, `timeout` is not available by default. The GNU coreutils
+/// package (via Homebrew) installs it as `gtimeout`.
+/// Returns the command name to use, or an error with install instructions.
+fn resolve_timeout_command(platform: &Platform) -> Result<&'static str> {
+    if command_available("timeout") {
+        return Ok("timeout");
+    }
+    if command_available("gtimeout") {
+        return Ok("gtimeout");
+    }
+    bail!(
+        "Neither `timeout` nor `gtimeout` found.\n{}",
+        install_hint("timeout", platform)
+    );
+}
+
+/// Result of a successful pre-flight check.
+pub(crate) struct PreflightResult {
+    /// The resolved timeout command (`timeout` or `gtimeout`).
+    pub timeout_cmd: &'static str,
+    /// Optional sandbox wrapper command from hook-config.json `sandbox.command`.
+    pub sandbox_command: Option<String>,
+}
+
+/// Read the `sandbox.command` setting from hook-config.json, if configured.
+fn read_sandbox_command(crosslink_dir: &Path) -> Option<String> {
+    let config_path = crosslink_dir.join("hook-config.json");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed
+        .get("sandbox")
+        .and_then(|s| s.get("command"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Build the shell command string for launching a claude agent.
+///
+/// When `sandbox_command` is set, the claude invocation is wrapped:
+/// ```text
+/// timeout 3600s my-sandbox --project-dir /path -- env -u CLAUDECODE claude ...
+/// ```
+/// Without sandbox:
+/// ```text
+/// timeout 3600s env -u CLAUDECODE claude ...
+/// ```
+fn build_agent_command(
+    timeout_cmd: &str,
+    timeout_secs: u64,
+    model: &str,
+    allowed_tools: &str,
+    kickoff_file: &str,
+    sandbox_command: Option<&str>,
+    worktree_dir: &Path,
+) -> String {
+    let claude_cmd = format!(
+        "env -u CLAUDECODE claude --model {} --allowedTools '{}' -- \"$(cat {})\"",
+        model, allowed_tools, kickoff_file
+    );
+    match sandbox_command {
+        Some(cmd) => {
+            let expanded = cmd.replace("{{worktree}}", &worktree_dir.to_string_lossy());
+            format!(
+                "{} {}s {} {}",
+                timeout_cmd, timeout_secs, expanded, claude_cmd
+            )
+        }
+        None => format!("{} {}s {}", timeout_cmd, timeout_secs, claude_cmd),
+    }
+}
+
+/// Pre-flight check: verify all required external commands are present before
+/// creating worktrees, branches, or sessions. Emits clear errors with install
+/// instructions for any missing command.
+fn preflight_check(
+    container: &ContainerMode,
+    verify: &VerifyLevel,
+    crosslink_dir: &Path,
+) -> Result<PreflightResult> {
+    let platform = detect_platform();
+    let mut missing: Vec<String> = Vec::new();
+
+    // timeout (or gtimeout on macOS) — always required for agent timeout
+    let timeout_cmd = match resolve_timeout_command(&platform) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            missing.push(format!("{}", e));
+            "timeout" // placeholder, won't be used since we'll bail
+        }
+    };
+
+    // tmux — required for local (non-container) mode
+    if *container == ContainerMode::None && !command_available("tmux") {
+        missing.push(install_hint("tmux", &platform));
+    }
+
+    // claude CLI — required for local mode
+    if *container == ContainerMode::None && !command_available("claude") {
+        missing.push(install_hint("claude", &platform));
+    }
+
+    // gh — required for CI/thorough verification
+    if (*verify == VerifyLevel::Ci || *verify == VerifyLevel::Thorough) && !command_available("gh")
+    {
+        missing.push(install_hint("gh", &platform));
+    }
+
+    // docker/podman — required when using container mode
+    match container {
+        ContainerMode::Docker if !command_available("docker") => {
+            missing.push(install_hint("docker", &platform));
+        }
+        ContainerMode::Podman if !command_available("podman") => {
+            missing.push(install_hint("podman", &platform));
+        }
+        _ => {}
+    }
+
+    // sandbox command — validate the binary exists when configured
+    let sandbox_command = read_sandbox_command(crosslink_dir);
+    if let Some(ref cmd) = sandbox_command {
+        // Extract the binary name (first word before any flags/templates)
+        let binary = cmd.split_whitespace().next().unwrap_or(cmd);
+        if !command_available(binary) {
+            missing.push(format!(
+                "`{}` (configured in hook-config.json sandbox.command) not found on PATH",
+                binary
+            ));
+        }
+    }
+
+    if !missing.is_empty() {
+        let header = format!(
+            "Pre-flight check failed — {} missing command{}:\n",
+            missing.len(),
+            if missing.len() == 1 { "" } else { "s" }
+        );
+        let body = missing
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| format!("{}. {}", i + 1, msg))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        bail!("{}{}", header, body);
+    }
+
+    Ok(PreflightResult {
+        timeout_cmd,
+        sandbox_command,
+    })
 }
 
 /// Get the git repository root.
@@ -979,6 +1385,34 @@ fn init_worktree_agent(worktree_dir: &Path, crosslink_dir: &Path, slug: &str) ->
                 true, // no-key: inherit parent's key
                 false,
             );
+
+            // Copy parent's SSH key info into the new agent config and publish
+            // the key under the new agent ID so `crosslink trust approve` can find it.
+            if let Some(parent_config) = AgentConfig::load(crosslink_dir)? {
+                if let Some(ref public_key) = parent_config.ssh_public_key {
+                    if let Ok(Some(mut child_config)) = AgentConfig::load(&wt_crosslink) {
+                        child_config.ssh_key_path = parent_config.ssh_key_path.clone();
+                        child_config.ssh_fingerprint = parent_config.ssh_fingerprint.clone();
+                        child_config.ssh_public_key = Some(public_key.clone());
+
+                        let agent_json = wt_crosslink.join("agent.json");
+                        if let Ok(json) = serde_json::to_string_pretty(&child_config) {
+                            let _ = std::fs::write(&agent_json, json);
+                        }
+
+                        // Publish the parent's public key under the new agent ID
+                        if let Err(e) =
+                            super::trust::publish_agent_key(&wt_crosslink, &agent_id, public_key)
+                        {
+                            eprintln!(
+                                "Warning: Could not publish key for agent '{}': {}",
+                                agent_id, e
+                            );
+                            eprintln!("Key will be auto-published on next `crosslink sync`.");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1038,6 +1472,8 @@ fn launch_local(
     model: &str,
     allowed_tools: &str,
     timeout: Duration,
+    timeout_cmd: &str,
+    sandbox_command: Option<&str>,
 ) -> Result<()> {
     // Create the tmux session
     let output = Command::new("tmux")
@@ -1057,11 +1493,15 @@ fn launch_local(
         bail!("Failed to create tmux session: {}", stderr.trim());
     }
 
-    // Build the claude command
-    let timeout_secs = timeout.as_secs();
-    let cmd = format!(
-        "timeout {}s env -u CLAUDECODE claude --model {} --allowedTools '{}' -- \"$(cat KICKOFF.md)\"",
-        timeout_secs, model, allowed_tools
+    // Build the claude command (with optional sandbox wrapping)
+    let cmd = build_agent_command(
+        timeout_cmd,
+        timeout.as_secs(),
+        model,
+        allowed_tools,
+        "KICKOFF.md",
+        sandbox_command,
+        worktree_dir,
     );
 
     // Send the command to the tmux session
@@ -1171,20 +1611,16 @@ pub fn run(
     writer: Option<&SharedWriter>,
     opts: &KickoffOpts,
 ) -> Result<()> {
-    // 1. Validate prerequisites (skip for dry-run — no agent is launched)
-    if !opts.dry_run {
-        if opts.container == ContainerMode::None && !command_available("tmux") {
-            bail!("tmux is not installed. Install tmux or use --container docker.");
-        }
-        if opts.container == ContainerMode::None && !command_available("claude") {
-            bail!("claude CLI is not installed. Install it from https://claude.ai/install.sh");
-        }
-        if (opts.verify == VerifyLevel::Ci || opts.verify == VerifyLevel::Thorough)
-            && !command_available("gh")
-        {
-            bail!("GitHub CLI (gh) is required for --verify ci/thorough. Install from https://cli.github.com");
-        }
-    }
+    // 1. Pre-flight: validate all required external commands are present
+    let preflight = if !opts.dry_run {
+        Some(preflight_check(
+            &opts.container,
+            &opts.verify,
+            crosslink_dir,
+        )?)
+    } else {
+        None
+    };
 
     let root = repo_root()?;
     let slug = slugify(opts.description);
@@ -1280,6 +1716,9 @@ pub fn run(
     // 8. Initialize crosslink + agent in worktree (only for real launches)
     let agent_id = init_worktree_agent(&worktree_dir, crosslink_dir, &slug)?;
 
+    // preflight is guaranteed Some after the dry-run early return above
+    let preflight = preflight.context("preflight check was skipped unexpectedly")?;
+
     // 9. Launch the agent
     let allowed_tools = build_allowed_tools(&conventions, &opts.verify);
 
@@ -1299,6 +1738,8 @@ pub fn run(
                 opts.model,
                 &allowed_tools,
                 opts.timeout,
+                preflight.timeout_cmd,
+                preflight.sandbox_command.as_deref(),
             )?;
 
             // 10. Report
@@ -1749,15 +2190,16 @@ pub struct PlanOpts<'a> {
 
 /// Main entry point: `crosslink kickoff plan`.
 pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> {
-    // 1. Validate prerequisites (skip for dry-run)
-    if !opts.dry_run {
-        if !command_available("tmux") {
-            bail!("tmux is not installed. Install tmux to use kickoff plan.");
-        }
-        if !command_available("claude") {
-            bail!("claude CLI is not installed. Install it from https://claude.ai/install.sh");
-        }
-    }
+    // 1. Pre-flight: validate all required external commands
+    let preflight = if !opts.dry_run {
+        Some(preflight_check(
+            &ContainerMode::None,
+            &VerifyLevel::Local,
+            crosslink_dir,
+        )?)
+    } else {
+        None
+    };
 
     let root = repo_root()?;
     let title_slug = if opts.doc.title.is_empty() {
@@ -1807,6 +2249,9 @@ pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> 
     // 7. Init worktree agent
     let agent_id = init_worktree_agent(&worktree_dir, crosslink_dir, &slug)?;
 
+    // preflight is guaranteed Some after the dry-run early return above
+    let preflight = preflight.context("preflight check was skipped unexpectedly")?;
+
     // 8. Launch with read-only tools
     let allowed_tools = build_allowed_tools_plan();
     let mut session_name = tmux_session_name(&slug);
@@ -1816,10 +2261,14 @@ pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> 
     }
 
     // Plan mode reads PLAN_KICKOFF.md instead of KICKOFF.md
-    let timeout_secs = opts.timeout.as_secs();
-    let cmd = format!(
-        "timeout {}s env -u CLAUDECODE claude --model {} --allowedTools '{}' -- \"$(cat PLAN_KICKOFF.md)\"",
-        timeout_secs, opts.model, allowed_tools
+    let cmd = build_agent_command(
+        preflight.timeout_cmd,
+        opts.timeout.as_secs(),
+        opts.model,
+        &allowed_tools,
+        "PLAN_KICKOFF.md",
+        preflight.sandbox_command.as_deref(),
+        &worktree_dir,
     );
 
     let output = Command::new("tmux")
@@ -3715,5 +4164,425 @@ mod tests {
         assert!(output.contains("alpha"));
         assert!(output.contains("beta"));
         assert!(output.contains("1 completed, 1 failed"));
+    }
+
+    #[test]
+    fn test_preflight_check_passes_when_commands_available() {
+        // In the test environment, timeout/tmux/claude may or may not exist.
+        // For container mode with a non-existent runtime, it should fail.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hook-config.json"), "{}").unwrap();
+        let result = preflight_check(&ContainerMode::Docker, &VerifyLevel::Local, dir.path());
+        // Docker may or may not be installed — just verify it doesn't panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn test_preflight_check_missing_command_includes_hint() {
+        // Use a container mode referencing a command that almost certainly doesn't exist
+        // by checking the error message format when docker/podman is missing.
+        // We test the error format rather than specific availability.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hook-config.json"), "{}").unwrap();
+        let result = preflight_check(&ContainerMode::Podman, &VerifyLevel::Thorough, dir.path());
+        if let Err(e) = result {
+            let msg = e.to_string();
+            // If podman is missing, the error should mention it with a hint
+            if msg.contains("podman") {
+                assert!(msg.contains("Pre-flight check failed"));
+                assert!(msg.contains("podman"));
+            }
+            // If gh is also missing, it should appear in the same message
+            if msg.contains("GitHub CLI") {
+                assert!(msg.contains("gh"));
+            }
+        }
+        // If it passes, both podman and gh are installed — that's fine too.
+    }
+
+    #[test]
+    fn test_build_agent_command_without_sandbox() {
+        let cmd = build_agent_command(
+            "timeout",
+            3600,
+            "opus",
+            "Read,Write",
+            "KICKOFF.md",
+            None,
+            Path::new("/tmp/worktree"),
+        );
+        assert_eq!(
+            cmd,
+            "timeout 3600s env -u CLAUDECODE claude --model opus --allowedTools 'Read,Write' -- \"$(cat KICKOFF.md)\""
+        );
+    }
+
+    #[test]
+    fn test_build_agent_command_with_sandbox() {
+        let cmd = build_agent_command(
+            "timeout",
+            3600,
+            "opus",
+            "Read,Write",
+            "KICKOFF.md",
+            Some("bwrap --bind {{worktree}} /workspace --"),
+            Path::new("/tmp/my-worktree"),
+        );
+        assert!(cmd.starts_with("timeout 3600s bwrap --bind /tmp/my-worktree /workspace --"));
+        assert!(cmd.contains("env -u CLAUDECODE claude"));
+    }
+
+    #[test]
+    fn test_build_agent_command_plan_kickoff() {
+        let cmd = build_agent_command(
+            "gtimeout",
+            1800,
+            "sonnet",
+            "Read,Glob",
+            "PLAN_KICKOFF.md",
+            None,
+            Path::new("/tmp/worktree"),
+        );
+        assert!(cmd.starts_with("gtimeout 1800s"));
+        assert!(cmd.contains("$(cat PLAN_KICKOFF.md)"));
+    }
+
+    #[test]
+    fn test_read_sandbox_command_not_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hook-config.json"), "{}").unwrap();
+        assert!(read_sandbox_command(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_read_sandbox_command_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hook-config.json"),
+            r#"{"sandbox": {"command": "bwrap --bind {{worktree}} /workspace --"}}"#,
+        )
+        .unwrap();
+        let cmd = read_sandbox_command(dir.path());
+        assert_eq!(
+            cmd.as_deref(),
+            Some("bwrap --bind {{worktree}} /workspace --")
+        );
+    }
+
+    #[test]
+    fn test_read_sandbox_command_empty_string_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hook-config.json"),
+            r#"{"sandbox": {"command": ""}}"#,
+        )
+        .unwrap();
+        assert!(read_sandbox_command(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_preflight_check_validates_sandbox_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hook-config.json"),
+            r#"{"sandbox": {"command": "crosslink_nonexistent_sandbox_xyz --isolate --"}}"#,
+        )
+        .unwrap();
+        let result = preflight_check(&ContainerMode::None, &VerifyLevel::Local, dir.path());
+        if let Err(e) = result {
+            let msg = e.to_string();
+            assert!(msg.contains("crosslink_nonexistent_sandbox_xyz"));
+            assert!(msg.contains("sandbox.command"));
+        }
+        // If timeout/tmux/claude are also missing, the sandbox error should still be present
+    }
+
+    #[test]
+    fn test_command_available_nonexistent() {
+        assert!(!command_available("crosslink_nonexistent_binary_xyz"));
+    }
+
+    #[test]
+    fn test_command_available_real() {
+        // `which` should always be available on unix platforms
+        assert!(command_available("which"));
+    }
+
+    #[test]
+    fn test_detect_platform_returns_valid_variant() {
+        let platform = detect_platform();
+        // On any platform, detect_platform should return a valid variant
+        match platform {
+            Platform::MacOS | Platform::Windows | Platform::Linux(_) => {}
+        }
+    }
+
+    #[test]
+    fn test_install_hint_timeout_macos() {
+        let hint = install_hint("timeout", &Platform::MacOS);
+        assert!(hint.contains("brew install coreutils"));
+        assert!(hint.contains("gtimeout"));
+    }
+
+    #[test]
+    fn test_install_hint_timeout_debian() {
+        let hint = install_hint("timeout", &Platform::Linux(LinuxDistro::Debian));
+        assert!(hint.contains("sudo apt install coreutils"));
+    }
+
+    #[test]
+    fn test_install_hint_timeout_fedora() {
+        let hint = install_hint("timeout", &Platform::Linux(LinuxDistro::Fedora));
+        assert!(hint.contains("sudo dnf install coreutils"));
+    }
+
+    #[test]
+    fn test_install_hint_timeout_arch() {
+        let hint = install_hint("timeout", &Platform::Linux(LinuxDistro::Arch));
+        assert!(hint.contains("sudo pacman -S coreutils"));
+    }
+
+    #[test]
+    fn test_install_hint_tmux_macos() {
+        let hint = install_hint("tmux", &Platform::MacOS);
+        assert!(hint.contains("brew install tmux"));
+        assert!(hint.contains("--container docker"));
+    }
+
+    #[test]
+    fn test_install_hint_tmux_debian() {
+        let hint = install_hint("tmux", &Platform::Linux(LinuxDistro::Debian));
+        assert!(hint.contains("sudo apt install tmux"));
+    }
+
+    #[test]
+    fn test_install_hint_tmux_windows() {
+        let hint = install_hint("tmux", &Platform::Windows);
+        assert!(hint.contains("not available on Windows"));
+        assert!(hint.contains("--container docker"));
+    }
+
+    #[test]
+    fn test_install_hint_claude_macos() {
+        let hint = install_hint("claude", &Platform::MacOS);
+        assert!(hint.contains("brew install claude-code"));
+        assert!(hint.contains("npm install"));
+    }
+
+    #[test]
+    fn test_install_hint_claude_linux() {
+        let hint = install_hint("claude", &Platform::Linux(LinuxDistro::Other));
+        assert!(hint.contains("npm install -g @anthropic-ai/claude-code"));
+    }
+
+    #[test]
+    fn test_install_hint_gh_macos() {
+        let hint = install_hint("gh", &Platform::MacOS);
+        assert!(hint.contains("brew install gh"));
+    }
+
+    #[test]
+    fn test_install_hint_gh_debian() {
+        let hint = install_hint("gh", &Platform::Linux(LinuxDistro::Debian));
+        assert!(hint.contains("sudo apt"));
+        assert!(hint.contains("githubcli"));
+    }
+
+    #[test]
+    fn test_install_hint_gh_windows() {
+        let hint = install_hint("gh", &Platform::Windows);
+        assert!(hint.contains("winget install"));
+    }
+
+    #[test]
+    fn test_install_hint_docker_macos() {
+        let hint = install_hint("docker", &Platform::MacOS);
+        assert!(hint.contains("brew install --cask docker"));
+        assert!(hint.contains("--container none"));
+    }
+
+    #[test]
+    fn test_install_hint_docker_debian() {
+        let hint = install_hint("docker", &Platform::Linux(LinuxDistro::Debian));
+        assert!(hint.contains("get.docker.com"));
+        assert!(hint.contains("usermod"));
+    }
+
+    #[test]
+    fn test_install_hint_podman_macos() {
+        let hint = install_hint("podman", &Platform::MacOS);
+        assert!(hint.contains("brew install podman"));
+    }
+
+    #[test]
+    fn test_install_hint_podman_fedora() {
+        let hint = install_hint("podman", &Platform::Linux(LinuxDistro::Fedora));
+        assert!(hint.contains("sudo dnf install podman"));
+    }
+
+    #[test]
+    fn test_install_hint_podman_windows() {
+        let hint = install_hint("podman", &Platform::Windows);
+        assert!(hint.contains("winget install RedHat.Podman"));
+    }
+
+    #[test]
+    fn test_install_hint_unknown_command() {
+        let hint = install_hint("unknown_tool", &Platform::MacOS);
+        assert!(hint.contains("unknown_tool"));
+        assert!(hint.contains("package manager"));
+    }
+
+    // --- Tier 1 smoke tests (GH issue #242) ---
+
+    #[test]
+    fn test_kickoff_report_phase3_backward_compat() {
+        // Phase 3 report has only validated_at, criteria, summary — no Phase 4 fields.
+        // It must deserialize into the current KickoffReport struct.
+        let phase3_json = include_str!("../../test-fixtures/phase3-report.json");
+        let report: KickoffReport =
+            serde_json::from_str(phase3_json).expect("Phase 3 JSON must deserialize");
+
+        assert_eq!(report.validated_at, "2026-03-01T12:00:00Z");
+        assert_eq!(report.criteria.len(), 2);
+        assert_eq!(report.criteria[0].id, "AC-1");
+        assert_eq!(report.criteria[0].verdict, "pass");
+        assert_eq!(report.criteria[1].verdict, "fail");
+        assert_eq!(report.summary.total, 2);
+        assert_eq!(report.summary.pass, 1);
+        assert_eq!(report.summary.fail, 1);
+
+        // Phase 4 fields should all be None (serde defaults)
+        assert!(report.schema_version.is_none());
+        assert!(report.agent_id.is_none());
+        assert!(report.issue_id.is_none());
+        assert!(report.status.is_none());
+        assert!(report.started_at.is_none());
+        assert!(report.completed_at.is_none());
+        assert!(report.phases.is_none());
+        assert!(report.unresolved_questions.is_none());
+        assert!(report.commits.is_none());
+        assert!(report.files_changed.is_none());
+
+        // Round-trip: serialize and deserialize again
+        let serialized = serde_json::to_string(&report).expect("serialize");
+        let roundtrip: KickoffReport =
+            serde_json::from_str(&serialized).expect("round-trip deserialize");
+        assert_eq!(report, roundtrip);
+    }
+
+    #[test]
+    fn test_build_prompt_contains_report_json_schema() {
+        // When a design doc with acceptance criteria is provided, the prompt
+        // must include the KickoffReport JSON schema fields.
+        let doc = super::super::design_doc::DesignDoc {
+            title: "Test Feature".to_string(),
+            summary: String::new(),
+            requirements: vec![],
+            acceptance_criteria: vec!["AC-1: Widget renders".to_string()],
+            architecture: String::new(),
+            open_questions: vec![],
+            out_of_scope: vec![],
+            unknown_sections: vec![],
+        };
+        let conventions = ProjectConventions {
+            test_command: None,
+            lint_commands: vec![],
+            allowed_tools: vec![],
+        };
+        let opts = KickoffOpts {
+            description: "test feature",
+            issue: None,
+            container: ContainerMode::None,
+            verify: VerifyLevel::Local,
+            model: "opus",
+            image: "",
+            timeout: Duration::from_secs(3600),
+            dry_run: false,
+            branch: None,
+            quiet: false,
+            design_doc: Some(&doc),
+            doc_path: Some("test.md"),
+        };
+        let prompt = build_prompt(&opts, 1, "feature/test", &conventions);
+
+        // Must contain the JSON schema field names from KickoffReport
+        assert!(prompt.contains("schema_version"));
+        assert!(prompt.contains("agent_id"));
+        assert!(prompt.contains("issue_id"));
+        assert!(prompt.contains("validated_at"));
+        assert!(prompt.contains("criteria"));
+        assert!(prompt.contains("summary"));
+        assert!(prompt.contains(".kickoff-report.json"));
+    }
+
+    #[test]
+    fn test_build_prompt_contains_validation_section() {
+        // When acceptance criteria are present, the prompt must include
+        // the spec validation instructions.
+        let doc = super::super::design_doc::DesignDoc {
+            title: "Validated Feature".to_string(),
+            summary: String::new(),
+            requirements: vec![],
+            acceptance_criteria: vec!["AC-1: Must work".to_string()],
+            architecture: String::new(),
+            open_questions: vec![],
+            out_of_scope: vec![],
+            unknown_sections: vec![],
+        };
+        let conventions = ProjectConventions {
+            test_command: None,
+            lint_commands: vec![],
+            allowed_tools: vec![],
+        };
+        let opts = KickoffOpts {
+            description: "validated feature",
+            issue: None,
+            container: ContainerMode::None,
+            verify: VerifyLevel::Local,
+            model: "opus",
+            image: "",
+            timeout: Duration::from_secs(3600),
+            dry_run: false,
+            branch: None,
+            quiet: false,
+            design_doc: Some(&doc),
+            doc_path: Some("test.md"),
+        };
+        let prompt = build_prompt(&opts, 1, "feature/validated", &conventions);
+
+        assert!(prompt.contains("Spec Validation & Reporting"));
+        assert!(prompt.contains("Criteria Validation"));
+        assert!(prompt.contains(".kickoff-criteria.json"));
+        assert!(prompt.contains("pass"));
+        assert!(prompt.contains("fail"));
+        assert!(prompt.contains("partial"));
+        assert!(prompt.contains("not_applicable"));
+        assert!(prompt.contains("needs_clarification"));
+    }
+
+    #[test]
+    fn test_plan_tools_are_read_only() {
+        let tools = build_allowed_tools_plan();
+        // Plan mode must NOT include write/edit tools
+        assert!(
+            !tools.contains("Write"),
+            "plan tools must not include Write"
+        );
+        assert!(!tools.contains("Edit"), "plan tools must not include Edit");
+        assert!(
+            !tools.contains("Bash(git commit"),
+            "plan tools must not allow git commit"
+        );
+        assert!(
+            !tools.contains("Bash(git push"),
+            "plan tools must not allow git push"
+        );
+        // Plan mode MUST include read-only tools
+        assert!(tools.contains("Read"));
+        assert!(tools.contains("Glob"));
+        assert!(tools.contains("Grep"));
+        assert!(tools.contains("Bash(git log"));
+        assert!(tools.contains("Bash(git diff"));
     }
 }

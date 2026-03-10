@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-10
+
+### Added
+
+#### Swarm Orchestration (`crosslink swarm`)
+- `crosslink swarm init/status/resume` commands for multi-agent swarm lifecycle (Phase 1, [GH-233])
+- `crosslink swarm launch/gate/checkpoint` commands for coordinated agent execution (Phase 2, [GH-233])
+- Swarm budget estimation and throttling (Phase 3, [GH-233])
+- Swarm multi-window planning (Phase 4, [GH-233])
+
+#### Mission Control
+- `crosslink mission-control` command for monitoring active agents in a unified dashboard
+
+#### Agent Hooks & Liveness
+- Agent-aware hooks with git flag bypass fix ([GH-164], [GH-226])
+- Hook-based heartbeats for kickoff agent liveness detection
+- Custom sandbox wrapper support for agent isolation (alternative to Docker)
+
+#### Kickoff & Preflight
+- Unified preflight check with macOS `gtimeout` support for kickoff command
+- Platform-specific remediation hints for preflight dependency checks ([GH-260])
+
+#### TUI Improvements
+- Async data loading for TUI agents and config tabs ([GH-254])
+- Table scroll-to-follow across all tabs ([GH-240])
+
+#### Knowledge & Search
+- Word-level fuzzy matching for knowledge search ([GH-263])
+
+#### CI
+- Tiered smoke tests for CI pipeline ([GH-242])
+- Restrict fuzz tests to release branches and PRs targeting main
+
+### Fixed
+- Mission-control pane liveness and auto-attach robustness
+- Load `knowledge.md` rules into Claude prompt via `prompt-guard.py`
+- Publish parent SSH key under kickoff agent ID after creation ([GH-261])
+- Degrade gracefully when `gpg.ssh.allowedSignersFile` is not configured ([GH-262])
+- Replace `unwrap()` calls with proper error handling for strict clippy compliance
+- Restore deleted tests and update preflight test signatures
+- Swarm coherence fixes across all 4 phases ([GH-233])
+- Skip headings inside code fences in design doc parser ([GH-248])
+- Simplify drift reminder to fixed 3-turn interval
+- Pre-flight check for required external commands in kickoff
+
+### Changed
+- README updated with multi-agent orchestration, swarm, kickoff, knowledge, TUI, and hooks features
+
 ## [0.3.0] - 2026-03-05
 
 ### Added
