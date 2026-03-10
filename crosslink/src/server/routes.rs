@@ -1,9 +1,16 @@
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 
 use crate::server::{
     handlers::{
         agents::{get_agent, get_agent_status, list_agents, list_locks, list_stale_locks},
         health::health,
+        milestones::{
+            assign_milestone, close_milestone, create_milestone, get_milestone, list_milestones,
+        },
+        sessions::{end_session, get_current_session, start_session, work_on_issue},
     },
     state::AppState,
     ws::ws_handler,
@@ -19,7 +26,17 @@ pub fn build_router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) 
         .route("/agents/{id}/status", get(get_agent_status))
         // Locks
         .route("/locks", get(list_locks))
-        .route("/locks/stale", get(list_stale_locks));
+        .route("/locks/stale", get(list_stale_locks))
+        // Sessions
+        .route("/sessions/current", get(get_current_session))
+        .route("/sessions/start", post(start_session))
+        .route("/sessions/end", post(end_session))
+        .route("/sessions/work/{id}", post(work_on_issue))
+        // Milestones
+        .route("/milestones", get(list_milestones).post(create_milestone))
+        .route("/milestones/{id}", get(get_milestone))
+        .route("/milestones/{id}/assign", post(assign_milestone))
+        .route("/milestones/{id}/close", post(close_milestone));
 
     let mut app = Router::new()
         .nest("/api/v1", api)

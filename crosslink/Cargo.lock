@@ -402,6 +402,7 @@ dependencies = [
  "signal-hook",
  "tempfile",
  "tokio",
+ "tower",
  "tower-http",
  "uuid",
 ]
