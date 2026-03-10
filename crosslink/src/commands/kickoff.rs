@@ -1187,6 +1187,116 @@ fn read_sandbox_command(crosslink_dir: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Watchdog configuration for detecting and nudging idle agents.
+struct WatchdogConfig {
+    /// Whether the watchdog is enabled (default: true)
+    enabled: bool,
+    /// Seconds of heartbeat staleness before nudging (default: 300)
+    staleness_secs: u64,
+    /// Maximum number of nudges before giving up (default: 5)
+    max_nudges: u32,
+    /// Seconds between watchdog checks (default: 120)
+    check_interval_secs: u64,
+    /// Grace period before watchdog starts checking (default: 300)
+    grace_period_secs: u64,
+}
+
+impl Default for WatchdogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            staleness_secs: 300,
+            max_nudges: 5,
+            check_interval_secs: 120,
+            grace_period_secs: 300,
+        }
+    }
+}
+
+fn read_watchdog_config(crosslink_dir: &Path) -> WatchdogConfig {
+    let config_path = crosslink_dir.join("hook-config.json");
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return WatchdogConfig::default(),
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return WatchdogConfig::default(),
+    };
+
+    let wd = match parsed.get("watchdog") {
+        Some(v) => v,
+        None => return WatchdogConfig::default(),
+    };
+
+    let mut cfg = WatchdogConfig::default();
+    if let Some(v) = wd.get("enabled").and_then(|v| v.as_bool()) {
+        cfg.enabled = v;
+    }
+    if let Some(v) = wd.get("staleness_secs").and_then(|v| v.as_u64()) {
+        cfg.staleness_secs = v;
+    }
+    if let Some(v) = wd.get("max_nudges").and_then(|v| v.as_u64()) {
+        cfg.max_nudges = v as u32;
+    }
+    if let Some(v) = wd.get("check_interval_secs").and_then(|v| v.as_u64()) {
+        cfg.check_interval_secs = v;
+    }
+    if let Some(v) = wd.get("grace_period_secs").and_then(|v| v.as_u64()) {
+        cfg.grace_period_secs = v;
+    }
+    cfg
+}
+
+/// Build the watchdog shell script that monitors heartbeat staleness and
+/// nudges idle agents by sending "continue" via tmux send-keys.
+fn build_watchdog_script(session_name: &str, worktree_dir: &Path, cfg: &WatchdogConfig) -> String {
+    // Use portable stat command — try GNU stat first, fall back to BSD
+    format!(
+        r#"NUDGES=0
+sleep {grace}
+while true; do
+    sleep {interval}
+    if [ -f "{worktree}/.kickoff-status" ]; then exit 0; fi
+    if ! tmux has-session -t "{session}" 2>/dev/null; then exit 0; fi
+    HB="{worktree}/.crosslink/.cache/last-heartbeat"
+    if [ -f "$HB" ]; then
+        LAST=$(stat -c %Y "$HB" 2>/dev/null || stat -f %m "$HB" 2>/dev/null)
+        NOW=$(date +%s)
+        AGE=$((NOW - LAST))
+        if [ "$AGE" -gt {staleness} ]; then
+            if [ "$NUDGES" -ge {max_nudges} ]; then exit 1; fi
+            NUDGES=$((NUDGES + 1))
+            tmux send-keys -t "{session}" "continue working, the task is not yet complete" Enter
+        fi
+    fi
+done
+"#,
+        grace = cfg.grace_period_secs,
+        interval = cfg.check_interval_secs,
+        worktree = worktree_dir.display(),
+        session = session_name,
+        staleness = cfg.staleness_secs,
+        max_nudges = cfg.max_nudges,
+    )
+}
+
+/// Spawn a background watchdog process that monitors the agent's heartbeat
+/// and sends "continue" to the tmux session if the agent goes idle.
+fn spawn_watchdog(session_name: &str, worktree_dir: &Path, cfg: &WatchdogConfig) -> Result<()> {
+    let script = build_watchdog_script(session_name, worktree_dir, cfg);
+
+    Command::new("bash")
+        .args(["-c", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to spawn watchdog process")?;
+
+    Ok(())
+}
+
 /// Build the shell command string for launching a claude agent.
 ///
 /// When `sandbox_command` is set, the claude invocation is wrapped:
@@ -1466,6 +1576,7 @@ fn exclude_kickoff_files(worktree_dir: &Path) -> Result<()> {
 }
 
 /// Launch the agent as a local tmux process.
+#[allow(clippy::too_many_arguments)]
 fn launch_local(
     worktree_dir: &Path,
     session_name: &str,
@@ -1474,6 +1585,7 @@ fn launch_local(
     timeout: Duration,
     timeout_cmd: &str,
     sandbox_command: Option<&str>,
+    crosslink_dir: &Path,
 ) -> Result<()> {
     // Create the tmux session
     let output = Command::new("tmux")
@@ -1513,6 +1625,14 @@ fn launch_local(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("Failed to send keys to tmux: {}", stderr.trim());
+    }
+
+    // Spawn watchdog sidecar to nudge idle agents
+    let watchdog_cfg = read_watchdog_config(crosslink_dir);
+    if watchdog_cfg.enabled {
+        if let Err(e) = spawn_watchdog(session_name, worktree_dir, &watchdog_cfg) {
+            eprintln!("Warning: failed to spawn watchdog: {}", e);
+        }
     }
 
     Ok(())
@@ -1740,6 +1860,7 @@ pub fn run(
                 opts.timeout,
                 preflight.timeout_cmd,
                 preflight.sandbox_command.as_deref(),
+                crosslink_dir,
             )?;
 
             // 10. Report
@@ -2296,6 +2417,14 @@ pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("Failed to send keys to tmux: {}", stderr.trim());
+    }
+
+    // Spawn watchdog sidecar to nudge idle agents
+    let watchdog_cfg = read_watchdog_config(crosslink_dir);
+    if watchdog_cfg.enabled {
+        if let Err(e) = spawn_watchdog(&session_name, &worktree_dir, &watchdog_cfg) {
+            eprintln!("Warning: failed to spawn watchdog: {}", e);
+        }
     }
 
     // 9. Report
@@ -4584,5 +4713,67 @@ mod tests {
         assert!(tools.contains("Grep"));
         assert!(tools.contains("Bash(git log"));
         assert!(tools.contains("Bash(git diff"));
+    }
+
+    #[test]
+    fn test_watchdog_config_defaults() {
+        let cfg = WatchdogConfig::default();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.staleness_secs, 300);
+        assert_eq!(cfg.max_nudges, 5);
+        assert_eq!(cfg.check_interval_secs, 120);
+        assert_eq!(cfg.grace_period_secs, 300);
+    }
+
+    #[test]
+    fn test_read_watchdog_config_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = read_watchdog_config(dir.path());
+        assert!(cfg.enabled);
+        assert_eq!(cfg.staleness_secs, 300);
+    }
+
+    #[test]
+    fn test_read_watchdog_config_no_watchdog_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hook-config.json"), "{}").unwrap();
+        let cfg = read_watchdog_config(dir.path());
+        assert!(cfg.enabled);
+    }
+
+    #[test]
+    fn test_read_watchdog_config_custom_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hook-config.json"),
+            r#"{"watchdog": {"enabled": false, "staleness_secs": 600, "max_nudges": 10}}"#,
+        )
+        .unwrap();
+        let cfg = read_watchdog_config(dir.path());
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.staleness_secs, 600);
+        assert_eq!(cfg.max_nudges, 10);
+        assert_eq!(cfg.check_interval_secs, 120); // still default
+    }
+
+    #[test]
+    fn test_build_watchdog_script_contains_key_elements() {
+        let cfg = WatchdogConfig {
+            enabled: true,
+            staleness_secs: 300,
+            max_nudges: 3,
+            check_interval_secs: 60,
+            grace_period_secs: 120,
+        };
+        let script = build_watchdog_script("feat-my-agent", Path::new("/tmp/wt"), &cfg);
+        assert!(script.contains("sleep 120")); // grace period
+        assert!(script.contains("sleep 60")); // check interval
+        assert!(script.contains(".kickoff-status"));
+        assert!(script.contains("feat-my-agent"));
+        assert!(script.contains("last-heartbeat"));
+        assert!(script.contains("continue working"));
+        assert!(script.contains("NUDGES"));
+        assert!(script.contains("-gt 300")); // staleness threshold
+        assert!(script.contains("-ge 3")); // max nudges
     }
 }
