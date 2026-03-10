@@ -48,3 +48,4 @@ notify = "6"
 tempfile = "3"
 proptest = "1"
 arbitrary = "1"
+tower = { version = "0.5", features = ["util"] }

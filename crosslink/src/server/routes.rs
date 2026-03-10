@@ -4,6 +4,11 @@ use crate::server::{
     handlers::{
         agents::{get_agent, get_agent_status, list_agents, list_locks, list_stale_locks},
         health::health,
+        issues::{
+            add_blocker, add_comment, add_label, close_issue, create_issue, create_subissue,
+            delete_issue, get_issue, list_blocked, list_comments, list_issues, list_ready,
+            remove_blocker, remove_label, reopen_issue, update_issue,
+        },
     },
     state::AppState,
     ws::ws_handler,
@@ -11,6 +16,8 @@ use crate::server::{
 
 /// Build the full axum router with all API routes and static file serving.
 pub fn build_router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) -> Router {
+    use axum::routing::{delete, post};
+
     let api = Router::new()
         .route("/health", get(health))
         // Agent monitoring
@@ -19,7 +26,30 @@ pub fn build_router(state: AppState, dashboard_dir: Option<std::path::PathBuf>) 
         .route("/agents/{id}/status", get(get_agent_status))
         // Locks
         .route("/locks", get(list_locks))
-        .route("/locks/stale", get(list_stale_locks));
+        .route("/locks/stale", get(list_stale_locks))
+        // Issues — static paths first to avoid conflict with /{id}
+        .route("/issues/blocked", get(list_blocked))
+        .route("/issues/ready", get(list_ready))
+        // Issues — CRUD
+        .route("/issues", get(list_issues).post(create_issue))
+        .route(
+            "/issues/{id}",
+            get(get_issue).patch(update_issue).delete(delete_issue),
+        )
+        .route("/issues/{id}/close", post(close_issue))
+        .route("/issues/{id}/reopen", post(reopen_issue))
+        .route("/issues/{id}/subissue", post(create_subissue))
+        // Comments
+        .route(
+            "/issues/{id}/comments",
+            get(list_comments).post(add_comment),
+        )
+        // Labels
+        .route("/issues/{id}/labels", post(add_label))
+        .route("/issues/{id}/labels/{label}", delete(remove_label))
+        // Blockers / dependencies
+        .route("/issues/{id}/block", post(add_blocker))
+        .route("/issues/{id}/block/{blocker_id}", delete(remove_blocker));
 
     let mut app = Router::new()
         .nest("/api/v1", api)
