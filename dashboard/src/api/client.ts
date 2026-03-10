@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentDetailResponse,
+  BudgetConfig,
   Comment,
   Config,
   CreateKnowledgePageRequest,
@@ -15,6 +16,8 @@ import type {
   OrchestratorPlan,
   Session,
   SyncStatus,
+  TokenUsageRecord,
+  UsageSummary,
 } from "@/lib/types";
 
 const BASE = "/api/v1";
@@ -188,6 +191,44 @@ export const config = {
   get: () => request<Config>("/config"),
   update: (data: Partial<Config>) =>
     request<Config>("/config", { method: "PATCH", body: JSON.stringify(data) }),
+};
+
+// ── Usage ────────────────────────────────────────────────────────────────────
+
+export interface UsageListParams {
+  agent_id?: string;
+  from?: string;
+  to?: string;
+}
+
+export const usage = {
+  list: (params?: UsageListParams) => {
+    const q = new URLSearchParams(
+      Object.entries(params ?? {}).filter(([, v]) => v !== undefined) as [
+        string,
+        string,
+      ][],
+    ).toString();
+    return request<TokenUsageRecord[]>(`/usage${q ? `?${q}` : ""}`);
+  },
+
+  summary: (params?: UsageListParams) => {
+    const q = new URLSearchParams(
+      Object.entries(params ?? {}).filter(([, v]) => v !== undefined) as [
+        string,
+        string,
+      ][],
+    ).toString();
+    return request<UsageSummary>(`/usage/summary${q ? `?${q}` : ""}`);
+  },
+
+  budget: () => request<BudgetConfig>("/usage/budget"),
+
+  updateBudget: (data: Partial<BudgetConfig>) =>
+    request<BudgetConfig>("/usage/budget", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
 };
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
