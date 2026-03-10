@@ -26,14 +26,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 #### Kickoff & Preflight
 - Unified preflight check with macOS `gtimeout` support for kickoff command
-- Platform-specific remediation hints for preflight dependency checks ([CL-154])
+- Platform-specific remediation hints for preflight dependency checks ([GH-260])
 
 #### TUI Improvements
 - Async data loading for TUI agents and config tabs ([GH-254])
 - Table scroll-to-follow across all tabs ([GH-240])
 
 #### Knowledge & Search
-- Word-level fuzzy matching for knowledge search
+- Word-level fuzzy matching for knowledge search ([GH-263])
 
 #### CI
 - Tiered smoke tests for CI pipeline ([GH-242])
@@ -42,8 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - Mission-control pane liveness and auto-attach robustness
 - Load `knowledge.md` rules into Claude prompt via `prompt-guard.py`
-- Publish parent SSH key under kickoff agent ID after creation
-- Degrade gracefully when `gpg.ssh.allowedSignersFile` is not configured
+- Publish parent SSH key under kickoff agent ID after creation ([GH-261])
+- Degrade gracefully when `gpg.ssh.allowedSignersFile` is not configured ([GH-262])
 - Replace `unwrap()` calls with proper error handling for strict clippy compliance
 - Restore deleted tests and update preflight test signatures
 - Swarm coherence fixes across all 4 phases ([GH-233])
@@ -58,51 +58,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-#### Kickoff Command
-- `crosslink kickoff` CLI command with local and container agent execution
-- Design document parser and `--doc` flag for kickoff
-- `kickoff plan` subcommand for read-only gap analysis
-- Spec validation loop for kickoff agents
-- Structured machine-readable build reports for kickoff agents
-- Dry-run integration tests and additional `build_prompt` unit tests
+#### Kickoff & Agent Orchestration
+- `crosslink kickoff` CLI command with local and container agent execution ([GH-175])
+- Design document parser and `--doc` flag for kickoff, importing design docs to knowledge ([GH-215], [GH-216])
+- `crosslink kickoff plan` subcommand for read-only gap analysis
+- Spec validation loop for structured validation of kickoff agents ([GH-217])
+- Structured machine-readable build reports for kickoff agents ([GH-219])
 
 #### Knowledge Integration
-- Knowledge integration with structured queries, bulk import, MCP server, and auto-inject
-- `--from-doc` flag for `knowledge add` to import from design documents
+- Structured queries, bulk import, MCP server, and auto-inject for knowledge branch ([GH-221])
+- `--from-doc` flag on `knowledge add` for design doc import
 
-#### Skills
-- `/maintain` skill for codebase maintenance
-- `/design` skill for interactive design document authoring
-
-#### Locking & Coordination
-- Configurable auto-steal for stale locks
-- Visible warnings when hub sync push falls back to local-only ([CL-4])
-- Configurable git remote for hub/knowledge branches
-- `rules.local/` directory for gitignored local rule overrides
-
-#### CI & Testing
-- Harden CI/CD and expand fuzz testing coverage (T1-T5)
-- Clock skew detection using git commit timestamps as witness
-- Restrict proptest job to release branches and PRs to main to reduce CI minutes
-- VHS tape files and screenshot scripts for docs visuals
-- Unit tests for shared writer lock claim, release, and contention ([CL-1])
+#### CLI & Workflow
+- `/design` skill for interactive design document authoring ([GH-225])
+- `/maintain` skill for codebase maintenance ([GH-205])
+- Configurable auto-steal for stale locks ([GH-223])
+- Atomic lock claims — bail on contended lock claims in `session work` to close timing race ([GH-224])
+- `rules.local/` directory for gitignored local rule overrides ([GH-234])
+- Configurable git remote for hub/knowledge branches via `tracker_remote` setting ([GH-235])
+- VHS tape files and screenshot scripts for docs visuals ([GH-227])
 
 #### Code Quality
-- Extract pure functions from kickoff module for testability ([CL-125])
-- Extract monolithic dispatch from `main.rs` into module-level `run()` functions
+- Module dispatch refactor — extract monolithic dispatch from `main.rs` into module-level `run()` functions ([GH-222])
+- Extract pure functions from kickoff module for testability ([GH-209])
+- Dry-run integration tests and `build_prompt` unit tests for kickoff ([GH-214])
+- Unit tests for shared writer lock claim, release, and contention ([GH-208])
+- Clock skew detection using git commit timestamps as witness ([GH-173])
 
 ### Fixed
-- Resolve agent signing chicken-and-egg during init by deferring key publish and using unsigned bootstrap commits
-- Read V2 heartbeats in agents tab and refresh data on tab focus
-- Bail on contended lock claims in `session work` to close timing race
-- Skip worktree agent init in dry-run mode
-- Skip tmux/claude prerequisite checks in dry-run mode
-- Propagate `.claude/hooks` into hub cache worktree on init
-- Deduplicate hub cache issues during hydration and harden INSERT
-- Prevent hub cache dirty state from creating vicious sync loop
-- Milestone add/remove not persisting to coordination branch
-- Use `--worktree` scope for agent signing config in linked worktrees
-- Harden VS Code extension security (E1-E3)
+- Agent signing chicken-and-egg during init — defer key publish and use unsigned bootstrap commits ([GH-237])
+- TUI agents tab not forming agent list — read V2 heartbeats and refresh data on tab focus ([GH-232])
+- Milestone add/remove now persists to coordination branch ([GH-174])
+- Hub cache hooks — propagate `.claude/hooks` into hub cache worktree on init ([GH-213])
+- Hub sync dirty state — deduplicate hub cache issues during hydration, prevent vicious sync loop ([GH-210])
+- Hub sync push warnings — surface visible warnings when push falls back to local-only ([GH-206])
+- Use `--worktree` scope for agent signing config in linked worktrees ([GH-167])
+- Skip worktree agent init and tmux/claude prerequisite checks in dry-run mode
+
+### Security
+- VS Code extension security hardening (E1-E3) ([GH-169], [GH-175])
+- CI/CD fuzz testing improvements (T1-T5) ([GH-168])
+
+### Changed
+- Restrict proptest CI job to release branches and PRs to main to reduce CI minutes ([GH-228])
 
 ## [0.2.0] - 2026-03-03
 
