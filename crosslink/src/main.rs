@@ -20,6 +20,7 @@ mod locks;
 mod models;
 #[allow(dead_code)]
 mod orchestrator;
+mod pipeline;
 mod seam;
 mod server;
 #[allow(dead_code)]
@@ -1462,6 +1463,10 @@ enum SwarmCommands {
         #[arg(long, value_name = "SLUGS")]
         agents: Option<String>,
     },
+    /// Continue a paused pipeline (e.g., after human checkpoint)
+    ReviewContinue,
+    /// Show pipeline status
+    ReviewStatus,
 }
 
 #[derive(Subcommand)]
@@ -2364,6 +2369,8 @@ fn main() -> Result<()> {
                     dry_run,
                     agents,
                 } => commands::swarm::merge(&crosslink_dir, &branch, dry_run, agents.as_deref()),
+                SwarmCommands::ReviewContinue => commands::swarm::review_continue(&crosslink_dir),
+                SwarmCommands::ReviewStatus => commands::swarm::review_status(&crosslink_dir),
             }
         }
         Commands::Tui => {

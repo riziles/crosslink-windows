@@ -3088,6 +3088,32 @@ pub fn merge(
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline wrappers
+// ---------------------------------------------------------------------------
+
+/// Continue a paused pipeline past a human checkpoint.
+pub fn review_continue(crosslink_dir: &Path) -> Result<()> {
+    let mut pipeline = crate::pipeline::load_pipeline(crosslink_dir)?
+        .context("No active pipeline found. Start one with `crosslink swarm review`")?;
+    pipeline.confirm_checkpoint()?;
+    crate::pipeline::save_pipeline(crosslink_dir, &pipeline)?;
+    println!(
+        "Pipeline resumed from checkpoint. Current stage: {}",
+        pipeline.current_stage
+    );
+    Ok(())
+}
+
+/// Show the current pipeline status.
+pub fn review_status(crosslink_dir: &Path) -> Result<()> {
+    match crate::pipeline::load_pipeline(crosslink_dir)? {
+        Some(pipeline) => println!("{}", pipeline.summary()),
+        None => println!("No active pipeline."),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
