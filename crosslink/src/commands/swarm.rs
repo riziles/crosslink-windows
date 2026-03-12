@@ -10,8 +10,13 @@ use std::path::{Path, PathBuf};
 use crate::commands::design_doc::{self, DesignDoc};
 use crate::commands::kickoff::{self, tmux_session_name, ContainerMode, KickoffOpts, VerifyLevel};
 use crate::db::Database;
+use crate::findings;
+use crate::issue_filing;
+use crate::pipeline::{self, Pipeline, PipelineConfig};
+use crate::seam;
 use crate::shared_writer::SharedWriter;
 use crate::sync::SyncManager;
+use crate::trust_model;
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -1990,57 +1995,6 @@ pub fn plan_show(crosslink_dir: &Path) -> Result<()> {
 // swarm review — parallel adversarial review
 // ---------------------------------------------------------------------------
 
-/// Severity level for a review finding.
-///
-/// These types define the data contract for review agent output. They are
-/// serialized/deserialized by agents but not yet consumed by the CLI itself.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum FindingSeverity {
-    Critical,
-    High,
-    Medium,
-    Low,
-    Info,
-}
-
-impl std::fmt::Display for FindingSeverity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FindingSeverity::Critical => write!(f, "critical"),
-            FindingSeverity::High => write!(f, "high"),
-            FindingSeverity::Medium => write!(f, "medium"),
-            FindingSeverity::Low => write!(f, "low"),
-            FindingSeverity::Info => write!(f, "info"),
-        }
-    }
-}
-
-/// A single finding produced by a review agent.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Finding {
-    pub title: String,
-    pub severity: FindingSeverity,
-    pub file: String,
-    pub line: Option<usize>,
-    pub description: String,
-    pub suggested_fix: Option<String>,
-    pub agent: String,
-}
-
-/// Report from a single review agent.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReviewReport {
-    pub agent: String,
-    pub partition_label: String,
-    pub mandate: String,
-    pub findings: Vec<Finding>,
-    pub completed_at: Option<String>,
-}
-
 /// The overall review plan stored at `swarm/review-plan.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewPlan {
@@ -2086,87 +2040,9 @@ pub fn mandate_prompt(mandate: &str) -> &str {
     }
 }
 
-/// Discover source partitions by listing top-level directories that contain
-/// source files. Returns `(label, files)` pairs.
-fn discover_partitions(repo_root: &Path) -> Result<Vec<(String, Vec<String>)>> {
-    let mut partitions: Vec<(String, Vec<String>)> = Vec::new();
-
-    let source_extensions = [
-        "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "c", "cpp", "h", "hpp", "rb", "ex",
-        "exs", "zig", "swift", "kt", "scala",
-    ];
-
-    let entries = std::fs::read_dir(repo_root)
-        .with_context(|| format!("Failed to read repo root: {}", repo_root.display()))?;
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-
-        // Skip hidden dirs and common non-source dirs
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.')
-            || name == "target"
-            || name == "node_modules"
-            || name == "vendor"
-            || name == "dist"
-            || name == "build"
-        {
-            continue;
-        }
-
-        if path.is_dir() {
-            let files = collect_source_files(&path, repo_root, &source_extensions)?;
-            if !files.is_empty() {
-                partitions.push((name, files));
-            }
-        }
-    }
-
-    // Sort partitions by label for deterministic output
-    partitions.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(partitions)
-}
-
-/// Recursively collect source files within a directory, returning paths
-/// relative to `repo_root`.
-fn collect_source_files(dir: &Path, repo_root: &Path, extensions: &[&str]) -> Result<Vec<String>> {
-    let mut files = Vec::new();
-
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(files),
-    };
-
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if name.starts_with('.') {
-            continue;
-        }
-
-        if path.is_dir() {
-            if name == "target" || name == "node_modules" || name == "vendor" {
-                continue;
-            }
-            files.extend(collect_source_files(&path, repo_root, extensions)?);
-        } else if let Some(ext) = path.extension() {
-            if extensions.contains(&ext.to_string_lossy().as_ref()) {
-                if let Ok(rel) = path.strip_prefix(repo_root) {
-                    files.push(rel.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    Ok(files)
-}
-
 /// Assign partitions to agents using round-robin distribution.
-pub fn assign_partitions(
-    partitions: Vec<(String, Vec<String>)>,
+fn assign_partitions(
+    partitions: Vec<seam::Partition>,
     agent_count: usize,
 ) -> Vec<ReviewAgentAssignment> {
     let agent_count = agent_count.max(1);
@@ -2178,13 +2054,20 @@ pub fn assign_partitions(
         })
         .collect();
 
-    for (i, (label, files)) in partitions.into_iter().enumerate() {
+    for (i, partition) in partitions.into_iter().enumerate() {
         let agent_idx = i % agent_count;
         if !assignments[agent_idx].partition_label.is_empty() {
             assignments[agent_idx].partition_label.push_str(", ");
         }
-        assignments[agent_idx].partition_label.push_str(&label);
-        assignments[agent_idx].files.extend(files);
+        assignments[agent_idx]
+            .partition_label
+            .push_str(&partition.label);
+        assignments[agent_idx].files.extend(
+            partition
+                .files
+                .into_iter()
+                .map(|f| f.to_string_lossy().to_string()),
+        );
     }
 
     // Filter out agents with no files assigned
@@ -2209,10 +2092,10 @@ pub fn review(
     sync.init_cache()?;
     sync.fetch()?;
 
-    // Discover source partitions
-    let partitions = discover_partitions(repo_root)?;
+    // Discover source partitions via seam detection
+    let partitions = seam::detect_seams(repo_root, agent_count)?;
     if partitions.is_empty() {
-        bail!("No source directories found in repo root. Nothing to review.");
+        bail!("No source files found in repo root. Nothing to review.");
     }
 
     println!(
@@ -2220,8 +2103,13 @@ pub fn review(
         partitions.len(),
         repo_root.display()
     );
-    for (label, files) in &partitions {
-        println!("  {} ({} files)", label, files.len());
+    for p in &partitions {
+        println!(
+            "  {} ({} files, {} lines)",
+            p.label,
+            p.files.len(),
+            p.line_count
+        );
     }
     println!();
 
@@ -2268,16 +2156,243 @@ pub fn review(
 
     println!("Plan saved to hub branch at swarm/review-plan.json");
 
-    if file_issues {
-        println!();
-        println!("--file-issues: not yet implemented (see #344)");
-    }
-    if fix {
-        println!();
-        println!("--fix: not yet implemented (see #348)");
+    if file_issues || fix {
+        // Run the pipeline for post-review stages
+        let config = PipelineConfig {
+            agent_count: assignments.len(),
+            mandate: mandate.to_string(),
+            auto_fix: fix,
+            auto_file_issues: file_issues,
+            target_branch: "develop".to_string(),
+        };
+        run_review_pipeline(crosslink_dir, config)?;
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Review pipeline orchestration
+// ---------------------------------------------------------------------------
+
+/// Convert consolidated finding groups into the format expected by issue_filing.
+fn findings_to_filing(groups: &[findings::FindingGroup]) -> Vec<issue_filing::FindingForFiling> {
+    groups
+        .iter()
+        .map(|g| issue_filing::FindingForFiling {
+            title: g.canonical.title.clone(),
+            severity: g.effective_severity.to_string(),
+            file: g.canonical.file.clone(),
+            line: g.canonical.line,
+            description: g.canonical.description.clone(),
+            suggested_fix: g.canonical.suggested_fix.clone(),
+            consensus_count: g.consensus_count,
+        })
+        .collect()
+}
+
+/// Consolidate review findings from agent reports on the hub branch.
+fn consolidate_review_findings(crosslink_dir: &Path) -> Result<findings::ConsolidatedReport> {
+    let sync = SyncManager::new(crosslink_dir)?;
+    let findings_dir = sync.cache_path().join("swarm");
+    let reports = findings::parse_reports(&findings_dir)?;
+    if reports.is_empty() {
+        bail!("No review findings found. Run review agents first.");
+    }
+    let consolidated = findings::consolidate(reports);
+
+    // Persist consolidated report
+    write_hub_json(&sync, "swarm/consolidated-report.json", &consolidated)?;
+    let markdown = findings::generate_markdown_report(&consolidated);
+    let md_path = sync
+        .cache_path()
+        .join("swarm")
+        .join("consolidated-report.md");
+    if let Some(parent) = md_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&md_path, &markdown)?;
+    commit_hub_files(
+        &sync,
+        &[
+            "swarm/consolidated-report.json",
+            "swarm/consolidated-report.md",
+        ],
+        "swarm: consolidate review findings",
+    )?;
+
+    println!(
+        "Consolidated {} findings from {} agents ({} after dedup)",
+        consolidated.total_findings, consolidated.agent_count, consolidated.deduplicated_findings,
+    );
+
+    Ok(consolidated)
+}
+
+/// Apply trust model filtering to consolidated findings.
+fn apply_trust_filtering(
+    crosslink_dir: &Path,
+    report: &findings::ConsolidatedReport,
+) -> Vec<findings::FindingGroup> {
+    let config = match trust_model::load_trust_config(crosslink_dir) {
+        Ok(c) => c,
+        Err(_) => return report.groups.clone(),
+    };
+
+    // Convert finding groups to tuples for the trust model batch API
+    let finding_tuples: Vec<(String, String, String)> = report
+        .groups
+        .iter()
+        .map(|g| {
+            (
+                g.canonical.title.clone(),
+                g.canonical.description.clone(),
+                g.effective_severity.to_string(),
+            )
+        })
+        .collect();
+
+    let annotated = trust_model::apply_trust_model(&config, finding_tuples);
+
+    let mut kept = Vec::new();
+    let mut by_design_count = 0;
+    for (i, (_title, _desc, _sev, result)) in annotated.into_iter().enumerate() {
+        let group = &report.groups[i];
+        match result {
+            trust_model::TriageResult::Valid => kept.push(group.clone()),
+            trust_model::TriageResult::ByDesign { reason } => {
+                println!("  [by-design] {} — {}", group.canonical.title, reason);
+                by_design_count += 1;
+            }
+            trust_model::TriageResult::Downgraded { reason, .. } => {
+                println!("  [downgraded] {} — {}", group.canonical.title, reason);
+                kept.push(group.clone());
+            }
+        }
+    }
+    if by_design_count > 0 {
+        println!("  {} finding(s) triaged as by-design", by_design_count);
+    }
+    kept
+}
+
+/// Drive the review pipeline through its stages.
+fn run_review_pipeline(crosslink_dir: &Path, config: PipelineConfig) -> Result<()> {
+    let mut pipe = match pipeline::load_pipeline(crosslink_dir)? {
+        Some(p) => {
+            println!("Resuming existing pipeline at stage: {}", p.current_stage);
+            p
+        }
+        None => Pipeline::new(config),
+    };
+
+    loop {
+        // Check for human checkpoints using the pipeline API
+        if Pipeline::is_checkpoint(pipe.current_stage) {
+            println!("\nPipeline paused for human review.");
+            println!("Review findings in .crosslink/ or on the hub branch.");
+            println!("Run `crosslink swarm review-continue` to proceed.");
+            pipeline::save_pipeline(crosslink_dir, &pipe)?;
+            return Ok(());
+        }
+
+        let stage_result: Result<()> = match pipe.current_stage {
+            pipeline::PipelineStage::Partition | pipeline::PipelineStage::Review => {
+                // Partitioning and agent launch already handled by review()
+                pipe.advance()?;
+                Ok(())
+            }
+            pipeline::PipelineStage::AwaitReview => {
+                println!("Review agents launched. Check progress with `crosslink swarm status`.");
+                println!("Run `crosslink swarm review-continue` when agents complete.");
+                pipeline::save_pipeline(crosslink_dir, &pipe)?;
+                return Ok(());
+            }
+            pipeline::PipelineStage::Consolidate => {
+                let report = consolidate_review_findings(crosslink_dir)?;
+                let filtered = apply_trust_filtering(crosslink_dir, &report);
+                println!("{} findings after trust model filtering", filtered.len());
+                pipe.advance()?;
+                Ok(())
+            }
+            pipeline::PipelineStage::HumanCheckpoint => {
+                // Handled by is_checkpoint check above
+                unreachable!()
+            }
+            pipeline::PipelineStage::FileIssues => {
+                if pipe.config.auto_file_issues {
+                    let sync = SyncManager::new(crosslink_dir)?;
+                    let report: findings::ConsolidatedReport =
+                        read_hub_json(&sync, "swarm/consolidated-report.json")?;
+                    let filtered = apply_trust_filtering(crosslink_dir, &report);
+
+                    // Deduplicate against existing GitHub issues with the review label
+                    let existing_titles = fetch_existing_review_titles();
+                    let deduped = findings::cross_reference_issues(&filtered, &existing_titles);
+                    if deduped.len() < filtered.len() {
+                        println!(
+                            "  Skipped {} finding(s) that match existing issues",
+                            filtered.len() - deduped.len()
+                        );
+                    }
+
+                    let for_filing = findings_to_filing(&deduped);
+                    issue_filing::file_issues_batch(&for_filing, false)?;
+                }
+                pipe.advance()?;
+                Ok(())
+            }
+            pipeline::PipelineStage::Fix => {
+                if pipe.config.auto_fix {
+                    println!("Launching fix agents...");
+                    fix(crosslink_dir, None, Some("review-finding"), 6, false)?;
+                }
+                pipe.advance()?;
+                Ok(())
+            }
+            pipeline::PipelineStage::AwaitFix => {
+                println!("Fix agents launched. Check progress with `crosslink swarm status`.");
+                println!("Run `crosslink swarm review-continue` when agents complete.");
+                pipeline::save_pipeline(crosslink_dir, &pipe)?;
+                return Ok(());
+            }
+            pipeline::PipelineStage::Merge | pipeline::PipelineStage::PullRequest => {
+                println!(
+                    "Stage {}: run `crosslink swarm merge` to combine changes.",
+                    pipe.current_stage
+                );
+                pipe.advance()?;
+                Ok(())
+            }
+            pipeline::PipelineStage::Done => {
+                println!("Pipeline complete.");
+                break;
+            }
+            pipeline::PipelineStage::Failed => {
+                println!("Pipeline failed.");
+                break;
+            }
+        };
+
+        // On stage failure, mark the pipeline as failed and persist
+        if let Err(e) = stage_result {
+            pipe.fail(&e.to_string());
+            pipeline::save_pipeline(crosslink_dir, &pipe)?;
+            return Err(e);
+        }
+
+        pipeline::save_pipeline(crosslink_dir, &pipe)?;
+    }
+
+    Ok(())
+}
+
+/// Fetch titles of existing GitHub issues labeled "review-finding" for deduplication.
+fn fetch_existing_review_titles() -> Vec<String> {
+    match fetch_issues_by_label("review-finding") {
+        Ok(issues) => issues.into_iter().map(|(_, title, _, _)| title).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2372,8 +2487,11 @@ fn fetch_issue_details(number: u64) -> Result<(String, String, Vec<String>)> {
     Ok((title, body, labels))
 }
 
+/// An issue fetched from GitHub with its number, title, body, and labels.
+type LabeledIssue = (u64, String, String, Vec<String>);
+
 /// Fetch issues matching a label via `gh issue list`.
-fn fetch_issues_by_label(label: &str) -> Result<Vec<(u64, String, String, Vec<String>)>> {
+fn fetch_issues_by_label(label: &str) -> Result<Vec<LabeledIssue>> {
     let output = std::process::Command::new("gh")
         .args([
             "issue",
@@ -2532,8 +2650,8 @@ pub fn fix(
 
     // Print summary
     println!("Fix plan created with {} issue(s):\n", plan.issues.len());
-    println!("  {:<8} {:<40} {}", "Issue", "Agent Slug", "Labels");
-    println!("  {:<8} {:<40} {}", "-----", "----------", "------");
+    println!("  {:<8} {:<40} Labels", "Issue", "Agent Slug");
+    println!("  {:<8} {:<40} ------", "-----", "----------");
     for target in &plan.issues {
         let labels_str = if target.labels.is_empty() {
             String::from("-")
@@ -3113,6 +3231,53 @@ pub fn review_status(crosslink_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Run the standalone pipeline driver (crosslink swarm pipeline).
+///
+/// This uses [`pipeline::run_pipeline`] which logs each stage transition
+/// and pauses at human checkpoints.
+pub fn run_pipeline_cmd(
+    crosslink_dir: &Path,
+    agents: usize,
+    mandate: &str,
+    target_branch: &str,
+    auto_fix: bool,
+    auto_file_issues: bool,
+) -> Result<()> {
+    let config = PipelineConfig {
+        agent_count: agents,
+        mandate: mandate.to_string(),
+        auto_fix,
+        auto_file_issues,
+        target_branch: target_branch.to_string(),
+    };
+    pipeline::run_pipeline(crosslink_dir, config)
+}
+
+/// Initialize trust model configuration (crosslink swarm trust-init).
+pub fn trust_init(crosslink_dir: &Path, model: &str) -> Result<()> {
+    trust_model::write_default_config(crosslink_dir, model)?;
+    let config = trust_model::generate_default_config(model);
+    println!("Trust model configuration written to swarm.toml");
+    println!("  Model:       {}", config.trust.model);
+    println!("  Description: {}", config.trust.description);
+    if !config.ignore.patterns.is_empty() {
+        println!("  Ignore patterns: {}", config.ignore.patterns.join(", "));
+    }
+    if !config.boundaries.external.is_empty() {
+        println!(
+            "  External boundaries: {}",
+            config.boundaries.external.join(", ")
+        );
+    }
+    if !config.boundaries.internal.is_empty() {
+        println!(
+            "  Internal boundaries: {}",
+            config.boundaries.internal.join(", ")
+        );
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -3120,6 +3285,19 @@ pub fn review_status(crosslink_dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::findings::{Finding, FindingSeverity, ReviewReport};
+
+    /// Helper to build seam::Partition from a label and file list (for tests).
+    fn make_partition(label: &str, files: Vec<&str>) -> seam::Partition {
+        seam::Partition {
+            label: label.to_string(),
+            files: files
+                .into_iter()
+                .map(|s| std::path::PathBuf::from(s))
+                .collect(),
+            line_count: 0,
+        }
+    }
 
     #[test]
     fn test_swarm_plan_serde_roundtrip() {
@@ -3932,11 +4110,11 @@ mod tests {
     #[test]
     fn test_assign_partitions_round_robin() {
         let partitions = vec![
-            ("alpha".to_string(), vec!["a/1.rs".to_string()]),
-            ("beta".to_string(), vec!["b/1.rs".to_string()]),
-            ("gamma".to_string(), vec!["c/1.rs".to_string()]),
-            ("delta".to_string(), vec!["d/1.rs".to_string()]),
-            ("epsilon".to_string(), vec!["e/1.rs".to_string()]),
+            make_partition("alpha", vec!["a/1.rs"]),
+            make_partition("beta", vec!["b/1.rs"]),
+            make_partition("gamma", vec!["c/1.rs"]),
+            make_partition("delta", vec!["d/1.rs"]),
+            make_partition("epsilon", vec!["e/1.rs"]),
         ];
         let assignments = assign_partitions(partitions, 3);
 
@@ -3957,8 +4135,8 @@ mod tests {
     #[test]
     fn test_assign_partitions_more_agents_than_partitions() {
         let partitions = vec![
-            ("src".to_string(), vec!["src/main.rs".to_string()]),
-            ("lib".to_string(), vec!["lib/mod.rs".to_string()]),
+            make_partition("src", vec!["src/main.rs"]),
+            make_partition("lib", vec!["lib/mod.rs"]),
         ];
         let assignments = assign_partitions(partitions, 5);
 
@@ -3971,9 +4149,9 @@ mod tests {
     #[test]
     fn test_assign_partitions_single_agent() {
         let partitions = vec![
-            ("a".to_string(), vec!["a/1.rs".to_string()]),
-            ("b".to_string(), vec!["b/1.rs".to_string()]),
-            ("c".to_string(), vec!["c/1.rs".to_string()]),
+            make_partition("a", vec!["a/1.rs"]),
+            make_partition("b", vec!["b/1.rs"]),
+            make_partition("c", vec!["c/1.rs"]),
         ];
         let assignments = assign_partitions(partitions, 1);
 
@@ -3986,14 +4164,14 @@ mod tests {
 
     #[test]
     fn test_assign_partitions_empty() {
-        let partitions: Vec<(String, Vec<String>)> = vec![];
+        let partitions: Vec<seam::Partition> = vec![];
         let assignments = assign_partitions(partitions, 4);
         assert!(assignments.is_empty());
     }
 
     #[test]
     fn test_assign_partitions_zero_agents_defaults_to_one() {
-        let partitions = vec![("src".to_string(), vec!["src/main.rs".to_string()])];
+        let partitions = vec![make_partition("src", vec!["src/main.rs"])];
         let assignments = assign_partitions(partitions, 0);
         assert_eq!(assignments.len(), 1);
     }

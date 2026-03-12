@@ -7,10 +7,6 @@ use std::process::Command;
 // Types
 // ---------------------------------------------------------------------------
 
-/// Placeholder for future unification with findings.rs severity enum.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindingSeverity;
-
 /// A ready-to-file GitHub issue built from a review finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueTemplate {

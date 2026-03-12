@@ -89,8 +89,11 @@ pub fn load_trust_config(crosslink_dir: &Path) -> Result<TrustConfig> {
 /// Check if a finding matches any ignore pattern (case-insensitive substring match).
 ///
 /// Returns `ByDesign` if the finding title matches an ignore pattern, `Valid` otherwise.
-pub fn triage_finding(config: &TrustConfig, title: &str, _description: &str) -> TriageResult {
+pub fn triage_finding(config: &TrustConfig, title: &str, description: &str) -> TriageResult {
     let title_lower = title.to_lowercase();
+    let description_lower = description.to_lowercase();
+
+    // Check ignore patterns — matched findings are triaged as by-design.
     for pattern in &config.ignore.patterns {
         if title_lower.contains(&pattern.to_lowercase()) {
             return TriageResult::ByDesign {
@@ -102,6 +105,23 @@ pub fn triage_finding(config: &TrustConfig, title: &str, _description: &str) -> 
             };
         }
     }
+
+    // Check boundary-based downgrade — findings about internal boundaries get
+    // severity reduced because internal interfaces have implicit trust.
+    for boundary in &config.boundaries.internal {
+        let boundary_lower = boundary.to_lowercase();
+        if title_lower.contains(&boundary_lower) || description_lower.contains(&boundary_lower) {
+            return TriageResult::Downgraded {
+                original_severity: "high".to_string(),
+                new_severity: "low".to_string(),
+                reason: format!(
+                    "finding relates to internal boundary '{}' which has implicit trust",
+                    boundary
+                ),
+            };
+        }
+    }
+
     TriageResult::Valid
 }
 

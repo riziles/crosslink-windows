@@ -1,14 +1,10 @@
-#[allow(dead_code)]
 mod checkpoint;
 mod clock_skew;
 mod commands;
-#[allow(dead_code)]
 mod compaction;
 mod daemon;
 mod db;
-#[allow(dead_code)]
 mod events;
-#[allow(dead_code)]
 mod findings;
 mod hydration;
 mod identity;
@@ -18,12 +14,10 @@ mod knowledge;
 mod lock_check;
 mod locks;
 mod models;
-#[allow(dead_code)]
 mod orchestrator;
 mod pipeline;
 mod seam;
 mod server;
-#[allow(dead_code)]
 mod shared_writer;
 mod signing;
 mod sync;
@@ -1467,6 +1461,30 @@ enum SwarmCommands {
     ReviewContinue,
     /// Show pipeline status
     ReviewStatus,
+    /// Run the full review→fix pipeline (standalone pipeline driver with stage logging)
+    Pipeline {
+        /// Number of agents
+        #[arg(long, default_value = "4")]
+        agents: usize,
+        /// Review mandate
+        #[arg(long, default_value = "adversarial")]
+        mandate: String,
+        /// Target branch for merging fixes
+        #[arg(long, default_value = "main")]
+        target_branch: String,
+        /// Automatically fix findings
+        #[arg(long)]
+        auto_fix: bool,
+        /// Automatically file issues for findings
+        #[arg(long)]
+        auto_file_issues: bool,
+    },
+    /// Initialize trust model configuration (writes swarm.toml)
+    TrustInit {
+        /// Trust model type: local-only, multi-tenant, public-api
+        #[arg(long, default_value = "local-only")]
+        model: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2371,6 +2389,23 @@ fn main() -> Result<()> {
                 } => commands::swarm::merge(&crosslink_dir, &branch, dry_run, agents.as_deref()),
                 SwarmCommands::ReviewContinue => commands::swarm::review_continue(&crosslink_dir),
                 SwarmCommands::ReviewStatus => commands::swarm::review_status(&crosslink_dir),
+                SwarmCommands::Pipeline {
+                    agents,
+                    mandate,
+                    target_branch,
+                    auto_fix,
+                    auto_file_issues,
+                } => commands::swarm::run_pipeline_cmd(
+                    &crosslink_dir,
+                    agents,
+                    &mandate,
+                    &target_branch,
+                    auto_fix,
+                    auto_file_issues,
+                ),
+                SwarmCommands::TrustInit { model } => {
+                    commands::swarm::trust_init(&crosslink_dir, &model)
+                }
             }
         }
         Commands::Tui => {
