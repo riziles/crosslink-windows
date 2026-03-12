@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::signing;
+use crate::utils::is_windows_reserved_name;
 
 /// Machine-local agent identity. Lives at `.crosslink/agent.json`.
 /// This file is gitignored — each machine has its own.
@@ -94,6 +95,11 @@ impl AgentConfig {
         anyhow::ensure!(
             self.agent_id.len() <= 64,
             "agent_id must be <= 64 characters"
+        );
+        anyhow::ensure!(
+            !is_windows_reserved_name(&self.agent_id),
+            "agent_id '{}' is a Windows reserved filename and cannot be used",
+            self.agent_id
         );
         Ok(())
     }
@@ -211,6 +217,21 @@ mod tests {
     fn test_validate_valid_ids() {
         for id in &["worker-1", "agent_2", "MyAgent", "abc", "test-agent-42"] {
             assert!(test_config(id).validate().is_ok(), "Failed for id: {}", id);
+        }
+    }
+
+    #[test]
+    fn test_validate_rejects_windows_reserved_names() {
+        for id in &["CON", "con", "PRN", "AUX", "NUL", "COM1", "LPT1"] {
+            let err = test_config(id).validate();
+            assert!(err.is_err(), "Should reject Windows reserved name: {}", id);
+            assert!(
+                err.unwrap_err()
+                    .to_string()
+                    .contains("Windows reserved filename"),
+                "Error message should mention Windows reserved filename for: {}",
+                id
+            );
         }
     }
 

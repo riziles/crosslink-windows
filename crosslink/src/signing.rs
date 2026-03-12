@@ -88,6 +88,55 @@ pub fn generate_agent_key(keys_dir: &Path, agent_id: &str, machine_id: &str) -> 
             .context("Failed to set permissions on private key")?;
     }
 
+    // On Windows, use icacls to restrict permissions via ACLs
+    #[cfg(windows)]
+    {
+        let username = std::env::var("USERNAME").unwrap_or_default();
+        if !username.is_empty() {
+            // Restrict the keys directory: remove inheritance, grant full control to current user
+            let dir_result = Command::new("icacls")
+                .arg(&keys_dir.to_string_lossy().as_ref())
+                .args(["/inheritance:r", "/grant:r"])
+                .arg(format!("{}:(OI)(CI)(F)", username))
+                .output();
+            match dir_result {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!(
+                        "warning: icacls failed to set permissions on keys directory: {}",
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to run icacls on keys directory: {}", e);
+                }
+                _ => {}
+            }
+
+            // Restrict the private key: remove inheritance, grant read-only to current user
+            let key_result = Command::new("icacls")
+                .arg(&private_path.to_string_lossy().as_ref())
+                .args(["/inheritance:r", "/grant:r"])
+                .arg(format!("{}:(R)", username))
+                .output();
+            match key_result {
+                Ok(output) if !output.status.success() => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!(
+                        "warning: icacls failed to set permissions on private key: {}",
+                        stderr.trim()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to run icacls on private key: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            eprintln!("warning: USERNAME not set, skipping Windows ACL permissions for SSH keys");
+        }
+    }
+
     let public_key = std::fs::read_to_string(&public_path)
         .context("Failed to read generated public key")?
         .trim()
@@ -736,11 +785,21 @@ fn dirs_next() -> Option<PathBuf> {
 }
 
 fn home_dir_fallback() -> Option<PathBuf> {
-    // Last resort
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
-        .map(PathBuf::from)
+    // Last resort — mirror the platform preference used in dirs_next()
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()
+            .map(PathBuf::from)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok()
+            .map(PathBuf::from)
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

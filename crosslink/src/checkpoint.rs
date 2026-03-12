@@ -92,6 +92,9 @@ pub struct CompactionLease {
     pub agent_id: String,
     pub acquired_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// PID of the process that acquired the lease, used for stale detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// Warning about clock skew detected during compaction.
@@ -284,10 +287,21 @@ mod tests {
             agent_id: "agent-1".to_string(),
             acquired_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::seconds(30),
+            pid: Some(12345),
         };
         let json = serde_json::to_string(&lease).unwrap();
         let parsed: CompactionLease = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.agent_id, "agent-1");
+        assert_eq!(parsed.pid, Some(12345));
+    }
+
+    #[test]
+    fn test_compaction_lease_backward_compat() {
+        // Old leases without pid field should deserialize with pid = None
+        let json = r#"{"agent_id":"agent-1","acquired_at":"2025-01-01T00:00:00Z","expires_at":"2025-01-01T00:00:30Z"}"#;
+        let parsed: CompactionLease = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.agent_id, "agent-1");
+        assert_eq!(parsed.pid, None);
     }
 
     #[test]
