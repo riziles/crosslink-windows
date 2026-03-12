@@ -3,7 +3,7 @@ use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::utils::resolve_main_repo_root;
+use crate::utils::{is_windows_reserved_name, resolve_main_repo_root};
 
 /// Directory name under .crosslink for the knowledge cache worktree.
 pub(crate) const KNOWLEDGE_CACHE_DIR: &str = ".knowledge-cache";
@@ -459,6 +459,12 @@ impl KnowledgeManager {
                 slug
             );
         }
+        if is_windows_reserved_name(slug) {
+            bail!(
+                "Invalid page slug '{}': Windows reserved filename",
+                slug
+            );
+        }
         let path = self.cache_dir.join(format!("{}.md", slug));
         // Defense in depth: verify the resolved path is within cache_dir
         let canonical_cache = self
@@ -700,6 +706,12 @@ fn group_matches(indices: &[usize], context: usize) -> Vec<Vec<usize>> {
 /// Expects content starting with `---\n`, followed by YAML key-value pairs,
 /// and closed with `---\n`. Returns `None` if no valid frontmatter is found.
 pub fn parse_frontmatter(content: &str) -> Option<PageFrontmatter> {
+    // Normalize CRLF to LF so the parser handles Windows line endings.
+    let content = if content.contains("\r\n") {
+        std::borrow::Cow::Owned(content.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(content)
+    };
     let content = content.trim_start();
     if !content.starts_with("---") {
         return None;
@@ -1202,6 +1214,17 @@ updated: 2026-01-01
     }
 
     #[test]
+    fn test_parse_frontmatter_crlf() {
+        let content =
+            "---\r\ntitle: CRLF Page\r\ntags: [rust, windows]\r\ncreated: 2026-03-12\r\nupdated: 2026-03-12\r\n---\r\n\r\n# Body\r\n";
+        let fm = parse_frontmatter(content).unwrap();
+        assert_eq!(fm.title, "CRLF Page");
+        assert_eq!(fm.tags, vec!["rust", "windows"]);
+        assert_eq!(fm.created, "2026-03-12");
+        assert_eq!(fm.updated, "2026-03-12");
+    }
+
+    #[test]
     fn test_parse_frontmatter_quoted_values() {
         let content = "---\ntitle: \"Quoted Title\"\ntags: ['a', \"b\"]\nsources: []\ncontributors: []\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n";
 
@@ -1582,6 +1605,26 @@ updated: 2026-01-01
         assert!(manager.safe_page_path("test_page").is_ok());
         assert!(manager.safe_page_path("page123").is_ok());
         assert!(manager.safe_page_path("a").is_ok());
+    }
+
+    #[test]
+    fn test_safe_page_path_rejects_windows_reserved_names() {
+        let dir = tempdir().unwrap();
+        let crosslink_dir = dir.path().join(".crosslink");
+        let cache_dir = crosslink_dir.join(KNOWLEDGE_CACHE_DIR);
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let manager = KnowledgeManager::new(&crosslink_dir).unwrap();
+
+        for name in &["CON", "con", "PRN", "AUX", "NUL", "COM1", "LPT1"] {
+            let result = manager.safe_page_path(name);
+            assert!(result.is_err(), "Should reject Windows reserved name: {}", name);
+            assert!(
+                result.unwrap_err().to_string().contains("Windows reserved"),
+                "Error should mention Windows reserved for: {}",
+                name
+            );
+        }
     }
 
     #[test]

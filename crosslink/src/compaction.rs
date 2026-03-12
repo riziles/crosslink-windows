@@ -627,8 +627,17 @@ mod tests {
             if lease.agent_id == agent_id {
                 // We already hold it — refresh
             } else if lease.expires_at > now {
-                // Another agent holds an unexpired lease
-                return false;
+                // Another agent holds an unexpired lease — but check if the
+                // holding process is still alive. If the PID is dead, treat
+                // the lease as stale regardless of expiry time.
+                let holder_dead = lease
+                    .pid
+                    .map(|pid| !is_pid_alive(pid))
+                    .unwrap_or(false);
+                if !holder_dead {
+                    return false;
+                }
+                // PID is dead — fall through to take the stale lease
             }
             // Expired lease from another agent — take it
         }
@@ -637,8 +646,34 @@ mod tests {
             agent_id: agent_id.to_string(),
             acquired_at: now,
             expires_at: now + Duration::seconds(LEASE_DURATION_SECS),
+            pid: Some(std::process::id()),
         });
         true
+    }
+
+    /// Check if a process with the given PID is still alive.
+    #[cfg(windows)]
+    fn is_pid_alive(pid: u32) -> bool {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .output()
+            .map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.contains(&pid.to_string())
+            })
+            .unwrap_or(false)
+    }
+
+    /// Check if a process with the given PID is still alive.
+    #[cfg(not(windows))]
+    fn is_pid_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     /// Release the compaction lease.
@@ -1150,6 +1185,7 @@ mod tests {
                 agent_id: "agent-1".to_string(),
                 acquired_at: Utc::now() - Duration::seconds(60),
                 expires_at: Utc::now() - Duration::seconds(30),
+                pid: None,
             }),
             ..Default::default()
         };
@@ -1157,6 +1193,60 @@ mod tests {
         // Different agent can take expired lease
         assert!(try_acquire_lease(&mut state, "agent-2"));
         assert_eq!(state.compaction_lease.as_ref().unwrap().agent_id, "agent-2");
+    }
+
+    #[test]
+    fn test_lease_stale_by_dead_pid() {
+        // Use a PID that is almost certainly not running (max u32 - 1)
+        let dead_pid = u32::MAX - 1;
+
+        let mut state = CheckpointState {
+            compaction_lease: Some(CompactionLease {
+                agent_id: "agent-1".to_string(),
+                acquired_at: Utc::now(),
+                expires_at: Utc::now() + Duration::seconds(300), // far from expired
+                pid: Some(dead_pid),
+            }),
+            ..Default::default()
+        };
+
+        // Another agent can take the lease because the PID is dead
+        assert!(try_acquire_lease(&mut state, "agent-2"));
+        assert_eq!(state.compaction_lease.as_ref().unwrap().agent_id, "agent-2");
+    }
+
+    #[test]
+    fn test_lease_not_stale_when_pid_alive() {
+        // Use current process PID — definitely alive
+        let mut state = CheckpointState {
+            compaction_lease: Some(CompactionLease {
+                agent_id: "agent-1".to_string(),
+                acquired_at: Utc::now(),
+                expires_at: Utc::now() + Duration::seconds(300),
+                pid: Some(std::process::id()),
+            }),
+            ..Default::default()
+        };
+
+        // Another agent cannot take the lease because the PID is alive
+        assert!(!try_acquire_lease(&mut state, "agent-2"));
+    }
+
+    #[test]
+    fn test_lease_no_pid_falls_back_to_expiry() {
+        // Lease without PID (backward compat) — uses expiry-based check only
+        let mut state = CheckpointState {
+            compaction_lease: Some(CompactionLease {
+                agent_id: "agent-1".to_string(),
+                acquired_at: Utc::now(),
+                expires_at: Utc::now() + Duration::seconds(300),
+                pid: None,
+            }),
+            ..Default::default()
+        };
+
+        // Cannot take because lease is unexpired and no PID to check
+        assert!(!try_acquire_lease(&mut state, "agent-2"));
     }
 
     #[test]
@@ -1379,12 +1469,12 @@ mod tests {
         let cache_dir = dir.path();
         setup_cache(cache_dir);
 
-        // Manually create a lock file held by another agent
+        // Set an active lease by another agent (use current PID so it looks alive)
         let lock_path = cache_dir.join("checkpoint").join(COMPACTION_LOCK_FILE);
         let content = serde_json::json!({
             "agent_id": "agent-2",
             "acquired_at": Utc::now().to_rfc3339(),
-            "pid": 99999,
+            "pid": std::process::id(),
         });
         std::fs::write(&lock_path, content.to_string()).unwrap();
 

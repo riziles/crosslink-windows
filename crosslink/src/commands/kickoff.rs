@@ -1381,8 +1381,17 @@ fn preflight_check(
     };
 
     // tmux — required for local (non-container) mode
-    if *container == ContainerMode::None && !command_available("tmux") {
-        missing.push(install_hint("tmux", &platform));
+    // On Windows, tmux is not available at all — bail early with a clear message.
+    if *container == ContainerMode::None {
+        if cfg!(target_os = "windows") {
+            bail!(
+                "Local kickoff mode requires tmux, which is not available on Windows.\n\
+                 Use `--container docker` for agent kickoff on Windows."
+            );
+        }
+        if !command_available("tmux") {
+            missing.push(install_hint("tmux", &platform));
+        }
     }
 
     // claude CLI — required for local mode
@@ -1697,17 +1706,22 @@ fn launch_container(
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
     let host_auth = format!("{}/.claude", home);
 
-    // Get host UID/GID for remapping
-    let uid = Command::new("id")
-        .arg("-u")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "1000".to_string());
-    let gid = Command::new("id")
-        .arg("-g")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "1000".to_string());
+    // Get host UID/GID for remapping (skip on Windows — Docker Desktop handles user mapping)
+    let uid_gid = if cfg!(target_os = "windows") {
+        None
+    } else {
+        let uid = Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "1000".to_string());
+        let gid = Command::new("id")
+            .arg("-g")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "1000".to_string());
+        Some((uid, gid))
+    };
 
     let mut args = vec![
         "run".to_string(),
@@ -1726,11 +1740,17 @@ fn launch_container(
         // Environment
         "-e".to_string(),
         format!("AGENT_ID={}", agent_id),
-        "-e".to_string(),
-        format!("HOST_UID={}", uid),
-        "-e".to_string(),
-        format!("HOST_GID={}", gid),
     ];
+
+    // Pass UID/GID to container for user remapping (non-Windows only)
+    if let Some((uid, gid)) = &uid_gid {
+        args.extend([
+            "-e".to_string(),
+            format!("HOST_UID={}", uid),
+            "-e".to_string(),
+            format!("HOST_GID={}", gid),
+        ]);
+    }
 
     // Image and command
     args.push(image.to_string());
@@ -3050,6 +3070,14 @@ pub struct PlanOpts<'a> {
 
 /// Main entry point: `crosslink kickoff plan`.
 pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> {
+    // Plan mode always uses tmux — reject on Windows early.
+    if cfg!(target_os = "windows") && !opts.dry_run {
+        bail!(
+            "Plan mode requires tmux, which is not available on Windows.\n\
+             Use `--container docker` for agent kickoff on Windows."
+        );
+    }
+
     // 1. Pre-flight: validate all required external commands
     let preflight = if !opts.dry_run {
         Some(preflight_check(
