@@ -98,7 +98,7 @@ crosslink session status
 If working on an issue, verify it has a plan comment and will get a result comment:
 
 ```bash
-crosslink show <issue-id>
+crosslink issue show <issue-id>
 ```
 
 ### 7. Print checklist
