@@ -483,15 +483,15 @@ When writing code: write it. When making changes: make them. Skip the narration.
 
 ### Large File Management (500+ lines)
 If you need to write or modify code that will exceed 500 lines:
-1. Create a parent issue for the overall feature: `crosslink create "<feature name>" -p high`
-2. Break down into subissues: `crosslink subissue <parent_id> "<component 1>"`, etc.
+1. Create a parent issue for the overall feature: `crosslink issue create "<feature name>" -p high`
+2. Break down into subissues: `crosslink issue subissue <parent_id> "<component 1>"`, etc.
 3. Inform the user: "This implementation will require multiple files/components. I've created issue #X with Y subissues to track progress."
 4. Work on one subissue at a time, marking each complete before moving on.
 
 ### Context Window Management
 If the conversation is getting long OR the task requires many more steps:
-1. Create a crosslink issue to track remaining work: `crosslink create "Continue: <task summary>" -p high`
-2. Add detailed notes as a comment: `crosslink comment <id> "<what's done, what's next>"`
+1. Create a crosslink issue to track remaining work: `crosslink issue create "Continue: <task summary>" -p high`
+2. Add detailed notes as a comment: `crosslink issue comment <id> "<what's done, what's next>"`
 3. Inform the user: "This task will require additional turns. I've created issue #X to track progress."
 
 Use `crosslink session work <id>` to mark what you're working on.
@@ -614,7 +614,7 @@ def build_condensed_reminder(languages, tracking_mode):
 - **Quality**: No stubs/TODOs. Read before write. Complete features fully. Proper error handling.
 - **Testing**: Run tests after changes. Fix warnings, don't suppress them.
 
-Full rules were injected on first prompt. Use `crosslink list -s open` to see current issues.
+Full rules were injected on first prompt. Use `crosslink issue list -s open` to see current issues.
 </crosslink-behavioral-guard>"""
 
 

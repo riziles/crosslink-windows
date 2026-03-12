@@ -8,7 +8,7 @@ description: Codebase maintenance — dependency audit, lint health, dead code, 
 - Project root: !`git rev-parse --show-toplevel`
 - Current branch: !`git branch --show-current`
 - Active session: !`crosslink session status`
-- Open issues: !`crosslink list -s open --json 2>/dev/null | grep -c '"id"' || crosslink list -s open 2>/dev/null | wc -l`
+- Open issues: !`crosslink issue list -s open --json 2>/dev/null | grep -c '"id"' || crosslink issue list -s open 2>/dev/null | wc -l`
 
 ## Your task
 
@@ -98,7 +98,7 @@ Also search for:
 
 For each finding, decide:
 - **Fix now** if it's a quick cleanup (remove unused import, delete dead code)
-- **File issue** if it requires more work: `crosslink create "<description>" -p low --label maintenance`
+- **File issue** if it requires more work: `crosslink issue create "<description>" -p low --label maintenance`
 
 ### 5. Documentation freshness
 
@@ -115,7 +115,7 @@ Read the first 20 lines of each to assess whether they're current. Flag any that
 Audit the issue tracker:
 
 ```bash
-crosslink list -s open
+crosslink issue list -s open
 ```
 
 Check for:
