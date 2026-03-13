@@ -4,7 +4,7 @@ title: "Your First Agent Session"
 
 Get crosslink running and watch your agent handle a task with persistent memory — in under a minute.
 
-![](../assets/img/quickstart.gif)
+<!-- ![](../assets/img/quickstart.gif) -->
 
 ## 1. Install and Initialize
 

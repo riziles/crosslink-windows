@@ -94,9 +94,9 @@ def generate():
     svg += rrect(50, 365, WIDTH - 100, 85, P["gray"], rx=20)
 
     caps = [
-        (130,  P["blue"],   "Full-text search",  "knowledge search <query>"),
-        (340,  P["green"],  "Bulk import",        "knowledge import <dir>"),
-        (540,  P["red"],    "Tagged & filtered",  "--tag, --since, --contributor"),
+        (130,  P["blue"],   "Full-text search",  "knowledge search &lt;query&gt;"),
+        (340,  P["green"],  "Bulk import",        "knowledge import &lt;dir&gt;"),
+        (540,  P["red"],    "Tagged &amp; filtered",  "--tag, --since, --contributor"),
     ]
     for capx, color, title, desc in caps:
         svg += text(capx, 395, title, cls="heading", size=14, fill=color)

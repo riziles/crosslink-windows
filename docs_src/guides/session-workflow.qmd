@@ -6,7 +6,7 @@ Sessions are crosslink's memory system. Your agents use them automatically to pr
 
 ![](../assets/img/session-flow.svg)
 
-![](../assets/img/session-workflow.gif)
+<!-- ![](../assets/img/session-workflow.gif) -->
 
 ## The Session Lifecycle
 

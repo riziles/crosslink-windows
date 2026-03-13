@@ -4,7 +4,7 @@ title: "Terminal Dashboard"
 
 The terminal dashboard is your window into agent activity — browse issues, monitor running agents, view shared knowledge, and check project configuration without leaving the terminal.
 
-![](../assets/img/tui-demo.gif)
+<!-- ![](../assets/img/tui-demo.gif) -->
 
 ```bash
 crosslink tui

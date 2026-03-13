@@ -67,7 +67,7 @@ def generate():
             f'stroke-linecap="round" opacity="0.6"/>\n')
     svg += (f'  <polygon points="260,{flow_y + 50} 255,{flow_y + 60} 265,{flow_y + 60}" '
             f'fill="{P["red"]}" opacity="0.6"/>\n')
-    svg += text(420, flow_y + 86, "/design --continue <slug>", cls="mono",
+    svg += text(420, flow_y + 86, "/design --continue &lt;slug&gt;", cls="mono",
                 size=12, fill=P["red"])
 
     # ── Validation status callout ─────────────────────────────────────────

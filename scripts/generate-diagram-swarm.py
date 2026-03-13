@@ -88,20 +88,25 @@ def generate():
         if i < 2:
             svg += arrow_straight(phase_x + pw / 2, py + ph, phase_x + pw / 2, py + ph + 24,
                                   P["muted"], stroke_width=1.5)
-            svg += text(phase_x + pw + 10, py + ph + 12, "gate", cls="body",
+            svg += text(phase_x + pw / 2 + 16, py + ph + 16, "gate", cls="body",
                         size=10, fill=gate_color, anchor="start")
 
-    # ── Arrow: last phase gate → checkpoint ───────────────────────────────
-    last_phase_bottom = 80 + 2 * 130 + 100
-    svg += arrow_curved(phase_x + 220, 80 + 2 * 130 + 50, 660, 210, P["green"], stroke_width=2)
+    # ── Checkpoint (below phases) ──────────────────────────────────────────
+    last_phase_bottom = 80 + 2 * 130 + 100  # y=440
+    chx, chy = phase_x + 110, last_phase_bottom + 20  # centered under phases
+    svg += arrow_straight(phase_x + 110, last_phase_bottom - 1, chx, chy - 30,
+                          P["muted"], stroke_width=1.5)
 
-    # ── Checkpoint (right) ────────────────────────────────────────────────
-    chx, chy = 700, 210
-    svg += ellipse(chx, chy, 65, 55, P["green"], opacity=0.1)
-    svg += ellipse(chx, chy, 55, 45, P["white"], opacity=0.85)
-    svg += text(chx, chy - 14, "Complete", cls="heading", size=15, fill=P["green"], weight="bold")
-    svg += text(chx, chy + 6, "all gates", cls="body", size=11, fill=P["muted"])
-    svg += text(chx, chy + 22, "passed", cls="body", size=11, fill=P["muted"])
+    # ── Complete badge (right side, vertically centered) ──────────────────
+    bx, by = 680, 260
+    svg += ellipse(bx, by, 60, 50, P["green"], opacity=0.1)
+    svg += ellipse(bx, by, 50, 40, P["white"], opacity=0.85)
+    svg += text(bx, by - 10, "Complete", cls="heading", size=15, fill=P["green"], weight="bold")
+    svg += text(bx, by + 8, "all gates", cls="body", size=11, fill=P["muted"])
+    svg += text(bx, by + 22, "passed", cls="body", size=11, fill=P["muted"])
+
+    # Arrow from last gate to complete badge
+    svg += arrow_curved(phase_x + 220, 80 + 2 * 130 + 50, bx - 55, by, P["green"], stroke_width=2)
 
     # ── Budget bar (bottom) ───────────────────────────────────────────────
     bar_y = 470
