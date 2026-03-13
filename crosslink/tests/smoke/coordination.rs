@@ -286,8 +286,7 @@ fn test_compact_idempotent() {
     // First compaction
     let first = h.run_ok(&["compact", "--force"]);
     assert!(
-        first.stdout_contains("Compaction complete")
-            || first.stdout_contains("compaction"),
+        first.stdout_contains("Compaction complete") || first.stdout_contains("compaction"),
         "First compaction should succeed.\nstdout: {}\nstderr: {}",
         first.stdout,
         first.stderr,

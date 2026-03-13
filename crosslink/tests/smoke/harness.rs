@@ -90,7 +90,10 @@ impl SmokeHarness {
                 "remote",
                 "add",
                 "origin",
-                remote_dir.path().to_str().expect("remote path not valid UTF-8"),
+                remote_dir
+                    .path()
+                    .to_str()
+                    .expect("remote path not valid UTF-8"),
             ],
         ] {
             let out = Command::new("git")
@@ -229,8 +232,7 @@ impl SmokeHarness {
     pub fn start_server(&mut self) -> u16 {
         // Find a free port by binding to port 0
         let port = {
-            let listener =
-                TcpListener::bind("127.0.0.1:0").expect("failed to bind to a free port");
+            let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind to a free port");
             listener
                 .local_addr()
                 .expect("failed to get local addr")
@@ -311,9 +313,7 @@ impl SmokeHarness {
                 "remote",
                 "add",
                 "origin",
-                remote_path
-                    .to_str()
-                    .expect("remote path not valid UTF-8"),
+                remote_path.to_str().expect("remote path not valid UTF-8"),
             ],
         ] {
             let out = Command::new("git")
@@ -386,7 +386,8 @@ pub fn assert_stdout_contains(result: &CmdResult, expected: &str) {
     assert!(
         result.stdout_contains(expected),
         "expected stdout to contain {:?} but got:\n{}",
-        expected, result.stdout,
+        expected,
+        result.stdout,
     );
 }
 
@@ -396,7 +397,8 @@ pub fn assert_stderr_contains(result: &CmdResult, expected: &str) {
     assert!(
         result.stderr_contains(expected),
         "expected stderr to contain {:?} but got:\n{}",
-        expected, result.stderr,
+        expected,
+        result.stderr,
     );
 }
 
@@ -407,13 +409,12 @@ pub fn assert_stderr_contains(result: &CmdResult, expected: &str) {
 pub fn assert_issue_count(harness: &SmokeHarness, status: &str, expected: usize) {
     let result = harness.run_ok(&["issue", "list", "-s", status, "--json"]);
     // The JSON output is an array of issue objects.  Count top-level entries.
-    let parsed: serde_json::Value =
-        serde_json::from_str(&result.stdout).unwrap_or_else(|e| {
-            panic!(
-                "failed to parse issue list JSON: {}\nstdout was:\n{}",
-                e, result.stdout
-            )
-        });
+    let parsed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap_or_else(|e| {
+        panic!(
+            "failed to parse issue list JSON: {}\nstdout was:\n{}",
+            e, result.stdout
+        )
+    });
     let count = parsed
         .as_array()
         .map(|a| a.len())
@@ -499,9 +500,6 @@ mod tests {
         assert!(h2.db_path().exists());
         assert_eq!(h2.agent_id, "agent-b");
         // The two harnesses have different temp dirs
-        assert_ne!(
-            h.temp_dir.path(),
-            h2.temp_dir.path(),
-        );
+        assert_ne!(h.temp_dir.path(), h2.temp_dir.path(),);
     }
 }

@@ -138,9 +138,7 @@ fn test_migrate_rename_no_old() {
     let r = h.run(&["migrate", "rename-branch"]);
     let combined = format!("{}{}", r.stdout, r.stderr);
     assert!(
-        combined.contains("No migration needed")
-            || combined.contains("already using")
-            || r.success,
+        combined.contains("No migration needed") || combined.contains("already using") || r.success,
         "Expected graceful handling when old branch doesn't exist:\nstdout: {}\nstderr: {}",
         r.stdout,
         r.stderr,
