@@ -74,16 +74,16 @@ def generate():
     svg += _m(rrect(580, 100, 80, 50, P["red"], rx=25))
     svg += _m(rrect(1250, 350, 100, 60, P["blue"], rx=30))
 
-    # ── Layer 4: Confetti dots (already multiply via brand.py) ───────────
-    svg += confetti(rng, 20, 30, 200, 180, count=12)
-    svg += confetti(rng, 320, 60, 250, 150, count=15)
-    svg += confetti(rng, 620, 80, 200, 120, count=12)
-    svg += confetti(rng, 920, 100, 250, 180, count=15)
-    svg += confetti(rng, 1200, 60, 250, 180, count=12)
-    svg += confetti(rng, 100, 300, 300, 150, count=10)
-    svg += confetti(rng, 500, 330, 300, 140, count=10)
-    svg += confetti(rng, 900, 320, 300, 150, count=10)
-    svg += confetti(rng, 1250, 300, 200, 160, count=8)
+    # ── Layer 4: Confetti dots (commented out for now) ────────────────────
+    # svg += confetti(rng, 20, 30, 200, 180, count=12)
+    # svg += confetti(rng, 320, 60, 250, 150, count=15)
+    # svg += confetti(rng, 620, 80, 200, 120, count=12)
+    # svg += confetti(rng, 920, 100, 250, 180, count=15)
+    # svg += confetti(rng, 1200, 60, 250, 180, count=12)
+    # svg += confetti(rng, 100, 300, 300, 150, count=10)
+    # svg += confetti(rng, 500, 330, 300, 140, count=10)
+    # svg += confetti(rng, 900, 320, 300, 150, count=10)
+    # svg += confetti(rng, 1250, 300, 200, 160, count=8)
 
     svg += "</svg>\n"
     return svg

@@ -2,13 +2,23 @@
 title: "Swarm Orchestration"
 ---
 
+&nbsp;
+
+::: {.feature-card}
+## tl;dr
+
 Swarm orchestration lets you build a complex feature across multiple phases. You hand the system a design document and a budget, and the swarm decomposes it into phases, launches agents, gates quality between phases, and manages spending -- all automatically.
+:::
+
+&nbsp;
+
+---
+
+## Overview
 
 ::: {.column-page-right}
 ![](../assets/img/swarm-flow.svg)
 :::
-
-## Overview
 
 ```
 "Build this auth system from my design doc."
@@ -33,7 +43,11 @@ Swarm orchestration lets you build a complex feature across multiple phases. You
     +-- ...
 ```
 
-## Initializing a Swarm
+&nbsp;
+
+---
+
+## Initializing a swarm
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -44,7 +58,7 @@ Swarm orchestration lets you build a complex feature across multiple phases. You
 You provide a design document describing the feature. The swarm decomposes it into phases and work units automatically.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -58,7 +72,11 @@ Parses the document, creates a phased plan, and stores it on the `crosslink/hub`
 :::
 :::
 
-## Planning with Budget Awareness
+&nbsp;
+
+---
+
+## Planning with budget awareness
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -69,7 +87,7 @@ Parses the document, creates a phased plan, and stores it on the `crosslink/hub`
 You set a budget and the swarm figures out how to distribute phases across your available time. Cost estimates improve with each completed phase.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -84,7 +102,11 @@ Plans phase scheduling, configures the cost model, and estimates wall-clock cost
 :::
 :::
 
-## Launching a Phase
+&nbsp;
+
+---
+
+## Launching a phase
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -95,7 +117,7 @@ Plans phase scheduling, configures the cost model, and estimates wall-clock cost
 Each agent in the phase gets its own worktree, branch, crosslink issue, and agent identity. They run in parallel, coordinated through distributed locks.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -118,7 +140,7 @@ Launches all agents for phase 1 and shows progress.
 Budget-aware launch checks remaining budget before starting. If the estimated cost exceeds your window, the launch is blocked with a warning.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -129,7 +151,11 @@ crosslink swarm launch 2 --budget-aware
 :::
 :::
 
-## Phase Gates
+&nbsp;
+
+---
+
+## Phase gates
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -140,7 +166,7 @@ crosslink swarm launch 2 --budget-aware
 The gate runs the project's full test suite. All tests must pass before the phase is considered complete and you can advance.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -153,6 +179,10 @@ Runs the test suite. Reports pass/fail and any failures.
 :::
 :::
 
+&nbsp;
+
+---
+
 ## Checkpointing
 
 ::: {.columns}
@@ -164,7 +194,7 @@ Runs the test suite. Reports pass/fail and any failures.
 Checkpointing records timing data, agent results, and handoff notes. This is what `resume` reads if you come back later.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -184,7 +214,11 @@ Use `--force` to checkpoint even if the gate hasn't passed (for partial progress
 crosslink swarm checkpoint 1 --force --notes "3 of 4 agents complete, one blocked"
 ```
 
-## Resuming After Interruption
+&nbsp;
+
+---
+
+## Resuming after interruption
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -195,7 +229,7 @@ crosslink swarm checkpoint 1 --force --notes "3 of 4 agents complete, one blocke
 Resume reconstructs swarm state from the hub branch and tells you exactly what to do next.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -208,7 +242,11 @@ Reads checkpoints, lock state, heartbeats, and budget to show: which phases are 
 :::
 :::
 
-## Harvesting Cost Data
+&nbsp;
+
+---
+
+## Harvesting cost data
 
 After agents finish, harvest cost data to improve future estimates:
 
@@ -218,7 +256,11 @@ crosslink swarm harvest
 
 Scans completed agents and updates the cost history. The more phases you complete, the more accurate future `estimate` calls become.
 
-## Full Workflow Example
+&nbsp;
+
+---
+
+## Full workflow example
 
 ```bash
 # 1. Initialize from a design document
@@ -246,7 +288,11 @@ crosslink swarm launch 2
 crosslink swarm resume
 ```
 
-## Command Reference
+&nbsp;
+
+---
+
+## Command reference
 
 | Command | Description |
 |---------|-------------|
@@ -263,4 +309,11 @@ crosslink swarm resume
 | `swarm resume` | Reconstruct state after interruption |
 | `swarm config --budget-window <DUR> --model <MODEL>` | Configure budget parameters |
 
-See also: [Kickoff](kickoff.qmd) for launching individual agents, [Multi-Agent Coordination](multi-agent.qmd) for distributed locking.
+&nbsp;
+
+---
+
+## See also
+
+- [Kickoff](kickoff.qmd) for launching individual agents
+- [Multi-Agent Coordination](multi-agent.qmd) for distributed locking

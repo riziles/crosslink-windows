@@ -2,7 +2,19 @@
 title: "Tracking Modes"
 ---
 
+&nbsp;
+
+::: {.feature-card}
+## tl;dr
+
 Crosslink enforces issue tracking at three levels. You set the mode once; agents are automatically held to it on every action.
+:::
+
+&nbsp;
+
+---
+
+## How it works
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -22,7 +34,11 @@ Set `tracking_mode` in `.crosslink/hook-config.json` to control how strictly age
 :::
 :::
 
-## Mode Comparison
+&nbsp;
+
+---
+
+## Mode comparison
 
 | Mode | Hook Behavior | Best For |
 |------|---------------|----------|
@@ -30,7 +46,11 @@ Set `tracking_mode` in `.crosslink/hook-config.json` to control how strictly age
 | **normal** | Reminds but allows proceeding without an issue | Balanced tracking without blocking quick fixes |
 | **relaxed** | No enforcement — only git mutation blocks | Users who want tracking opt-in only |
 
-## Setting the Mode
+&nbsp;
+
+---
+
+## Setting the mode
 
 Edit `.crosslink/hook-config.json`:
 
@@ -42,7 +62,11 @@ Edit `.crosslink/hook-config.json`:
 
 Changes take effect on the next prompt.
 
-## What's Always Enforced
+&nbsp;
+
+---
+
+## What's always enforced
 
 Regardless of tracking mode, these are **always blocked**:
 
@@ -55,7 +79,11 @@ Regardless of tracking mode, these are **always blocked**:
 
 Read-only git commands (`git status`, `git diff`, `git log`, `git show`, `git branch`) are always allowed.
 
-## Strict Mode
+&nbsp;
+
+---
+
+## Strict mode
 
 **File:** `.crosslink/rules/tracking-strict.md`
 
@@ -67,19 +95,31 @@ crosslink quick "describe the work" -p medium -l feature
 
 This is the recommended mode for teams and production codebases.
 
-## Normal Mode
+&nbsp;
+
+---
+
+## Normal mode
 
 **File:** `.crosslink/rules/tracking-normal.md`
 
 Same check, but the hook **reminds** the agent instead of blocking. Operations proceed with a gentle nudge to create an issue. Good for solo developers who want tracking most of the time.
 
-## Relaxed Mode
+&nbsp;
+
+---
+
+## Relaxed mode
 
 **File:** `.crosslink/rules/tracking-relaxed.md`
 
 No issue-tracking enforcement. Only git mutations are blocked (same as all modes). Best for projects where crosslink is used occasionally.
 
-## Customizing Mode Rules
+&nbsp;
+
+---
+
+## Customizing mode rules
 
 Each mode loads its instructions from `.crosslink/rules/tracking-{mode}.md`. Edit these files to customize wording or add project-specific rules.
 

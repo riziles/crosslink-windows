@@ -2,13 +2,21 @@
 title: "Knowledge Management"
 ---
 
+&nbsp;
+
+::: {.feature-card}
+## tl;dr
+
+Crosslink's knowledge system is shared memory for your agents. When one agent researches an API, evaluates a library, or documents an architectural decision, that knowledge is automatically available to every other agent working on the project. Knowledge pages live on a dedicated `crosslink/knowledge` git branch (separate from your code) and sync automatically when agents start sessions.
+:::
+
+&nbsp;
+
 ![](../assets/img/knowledge-flow.svg)
 
-Crosslink's knowledge system is shared memory for your agents. When one agent researches an API, evaluates a library, or documents an architectural decision, that knowledge is automatically available to every other agent working on the project.
+---
 
-Knowledge pages live on a dedicated `crosslink/knowledge` git branch (separate from your code) and sync automatically when agents start sessions.
-
-## How Agents Use Knowledge
+## How agents use knowledge
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -37,7 +45,11 @@ crosslink knowledge add rate-limiting \
 
 Later, when another agent starts a session on a related issue, the `session-start` hook and knowledge MCP server automatically surface relevant pages. Research done once benefits every agent.
 
-## Creating Pages
+&nbsp;
+
+---
+
+## Creating pages
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -71,7 +83,11 @@ crosslink knowledge add auth-design \
 :::
 :::
 
-## Browsing and Searching
+&nbsp;
+
+---
+
+## Browsing and searching
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -98,9 +114,13 @@ crosslink knowledge show api-auth
 
 You can also browse knowledge visually through the [TUI](tui.qmd) (Knowledge tab) or [Web Dashboard](web-dashboard.qmd).
 
-## Editing Pages
+&nbsp;
 
-### Append and Replace
+---
+
+## Editing pages
+
+### Append and replace
 
 ```bash
 # Append a new finding
@@ -116,7 +136,7 @@ crosslink knowledge edit rate-limiting \
   --tag load-testing --source "https://example.com/new-ref"
 ```
 
-### Section-Based Editing (v0.5.0)
+### Section-based editing (v0.5.0)
 
 For surgical updates to specific parts of a page:
 
@@ -134,11 +154,19 @@ crosslink knowledge edit api-auth \
 
 This is especially useful when agents update knowledge incrementally — adding findings to the right section without disturbing the rest of the page.
 
-## Syncing and Conflict Resolution
+&nbsp;
+
+---
+
+## Syncing and conflict resolution
 
 Knowledge syncs automatically during `crosslink session start` and `crosslink sync`. When two agents edit the same page concurrently, crosslink uses an **accept-both** merge strategy: both versions are preserved with clear markers, so no work is lost.
 
-## Bulk Import
+&nbsp;
+
+---
+
+## Bulk import
 
 Import existing documentation into the knowledge base:
 
@@ -148,6 +176,10 @@ crosslink knowledge import ./docs/ --tag imported --overwrite
 crosslink knowledge import ./notes/ --dry-run  # preview without writing
 ```
 
+&nbsp;
+
+---
+
 ## Tips
 
 - **Save research as you go.** When an agent reads API docs, evaluates libraries, or investigates a bug, it should save findings to knowledge so other agents benefit.
@@ -155,7 +187,11 @@ crosslink knowledge import ./notes/ --dry-run  # preview without writing
 - **Tag consistently.** Use tags like `architecture`, `security`, `performance`, `debugging`, `api`, `dependency` to make pages discoverable.
 - **Include sources.** Link to the original documentation, blog post, or discussion that informed the page.
 
-## Quick Reference
+&nbsp;
+
+---
+
+## Quick reference
 
 | Command | Description |
 |---------|-------------|

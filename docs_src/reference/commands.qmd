@@ -1,19 +1,23 @@
 ---
-title: "CLI Reference"
+title: "CLI reference"
 ---
 
 These commands are typically executed by agents automatically. This reference documents the full CLI for manual use and scripting.
 
 Complete command reference for the crosslink CLI.
 
-## Global Flags
+## Global flags
 
 | Flag | Description |
 |------|-------------|
 | `--json` | JSON output (supported by `list`, `show`, `search`, `session status`) |
 | `--quiet` / `-q` | Minimal output (just IDs, counts), useful for scripting |
 
-## Issue Management
+&nbsp;
+
+---
+
+## Issue management
 
 Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`, `close`, `subissue`, `start`, `stop`. All other issue commands require the `crosslink issue` prefix.
 
@@ -48,14 +52,22 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue delete <id>` | Delete an issue (with confirmation) |
 | `crosslink issue delete <id> -f` | Delete without confirmation |
 
-## Comments & Labels
+&nbsp;
+
+---
+
+## Comments and labels
 
 | Command | Description |
 |---------|-------------|
 | `crosslink issue comment <id> "text"` | Add a comment to an issue |
-| `crosslink issue intervene <id> "desc" --trigger <type>` | Log a driver intervention (`tool_rejected`/`tool_blocked`/`redirect`/`context_provided`/`manual_action`/`question_answered`) |
+| `crosslink issue intervene <id> "desc" --trigger <type>` | Log a driver intervention (`tool_rejected`, `tool_blocked`, `redirect`, `context_provided`, `manual_action`, `question_answered`) |
 | `crosslink issue label <id> <label>` | Add a label |
 | `crosslink issue unlabel <id> <label>` | Remove a label |
+
+&nbsp;
+
+---
 
 ## Dependencies
 
@@ -66,13 +78,21 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue blocked` | List all blocked issues |
 | `crosslink issue ready` | List issues ready to work on (no blockers) |
 
-## Related Issues
+&nbsp;
+
+---
+
+## Related issues
 
 | Command | Description |
 |---------|-------------|
 | `crosslink issue relate <id1> <id2>` | Link two related issues |
 | `crosslink issue unrelate <id1> <id2>` | Remove relationship |
 | `crosslink issue related <id>` | List issues related to the given issue |
+
+&nbsp;
+
+---
 
 ## Milestones
 
@@ -87,6 +107,10 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink milestone close <id>` | Close a milestone |
 | `crosslink milestone delete <id>` | Delete a milestone |
 
+&nbsp;
+
+---
+
 ## Archiving
 
 | Command | Description |
@@ -96,7 +120,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink archive list` | List all archived issues |
 | `crosslink archive older <days>` | Archive issues closed more than N days ago |
 
-## Export / Import
+&nbsp;
+
+---
+
+## Export / import
 
 | Command | Description |
 |---------|-------------|
@@ -105,7 +133,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink export -f markdown` | Export as markdown |
 | `crosslink import backup.json` | Import issues from JSON |
 
-## Smart Navigation
+&nbsp;
+
+---
+
+## Smart navigation
 
 | Command | Description |
 |---------|-------------|
@@ -113,7 +145,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue tree` | Show issue hierarchy tree |
 | `crosslink issue tree -s open` | Tree view filtered to open issues |
 
-## Time Tracking
+&nbsp;
+
+---
+
+## Time tracking
 
 | Command | Description |
 |---------|-------------|
@@ -122,7 +158,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink timer show` | Show current timer status |
 | `crosslink issue tested` | Mark tests as run (resets test reminder) |
 
-## Session Management
+&nbsp;
+
+---
+
+## Session management
 
 | Command | Description |
 |---------|-------------|
@@ -134,7 +174,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink session end --notes "..."` | End with handoff notes |
 | `crosslink session last-handoff` | Retrieve previous session's handoff notes |
 
-## Multi-Agent Coordination
+&nbsp;
+
+---
+
+## Multi-agent coordination
 
 | Command | Description |
 |---------|-------------|
@@ -146,7 +190,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink locks check <id>` | Check if issue is available or locked |
 | `crosslink sync` | Fetch lock state from coordination branch |
 
-## Trust & Signing
+&nbsp;
+
+---
+
+## Trust and signing
 
 | Command | Description |
 |---------|-------------|
@@ -156,6 +204,10 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink trust pending` | Show agent keys awaiting approval |
 | `crosslink trust check <agent-id>` | Check trust status of a specific agent |
 
+&nbsp;
+
+---
+
 ## Daemon
 
 | Command | Description |
@@ -163,6 +215,10 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink daemon start` | Start background daemon |
 | `crosslink daemon status` | Check daemon status |
 | `crosslink daemon stop` | Stop daemon |
+
+&nbsp;
+
+---
 
 ## Configuration
 
@@ -175,7 +231,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink config reset` | Reset config to defaults |
 | `crosslink config diff` | Show differences from default config |
 
-## Knowledge Pages
+&nbsp;
+
+---
+
+## Knowledge pages
 
 | Command | Description |
 |---------|-------------|
@@ -197,7 +257,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink knowledge import <directory>` | Bulk import markdown files |
 | `crosslink knowledge import <dir> --tag t --overwrite --dry-run` | Import with options |
 
-## House Style
+&nbsp;
+
+---
+
+## House style
 
 | Command | Description |
 |---------|-------------|
@@ -207,6 +271,10 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink style show` | Show current house style configuration |
 | `crosslink style unset` | Remove house style association |
 
+&nbsp;
+
+---
+
 ## Workflow
 
 | Command | Description |
@@ -214,7 +282,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink workflow diff` | Compare deployed policy files against embedded defaults |
 | `crosslink workflow trail <id>` | Show chronological comment trail for an issue |
 
-## Code Clone Detection
+&nbsp;
+
+---
+
+## Code clone detection
 
 | Command | Description |
 |---------|-------------|
@@ -222,7 +294,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink cpitd status` | Show open clone issues |
 | `crosslink cpitd clear` | Close all open clone issues |
 
-## Data Integrity
+&nbsp;
+
+---
+
+## Data integrity
 
 | Command | Description |
 |---------|-------------|
@@ -234,6 +310,10 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink compact` | Run event compaction manually |
 | `crosslink compact --force` | Force compaction even if lease is held by another agent |
 
+&nbsp;
+
+---
+
 ## Migration
 
 | Command | Description |
@@ -242,7 +322,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink migrate from-shared` | Import shared issues from coordination branch into local SQLite |
 | `crosslink migrate rename-branch` | Rename coordination branch from `crosslink/locks` to `crosslink/hub` |
 
-## Kickoff (Autonomous Agents)
+&nbsp;
+
+---
+
+## Kickoff
 
 | Command | Description |
 |---------|-------------|
@@ -268,7 +352,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink kickoff report <agent> --json` | Report as JSON |
 | `crosslink kickoff report <agent> --markdown` | Report as PR-ready markdown |
 
-## Swarm Orchestration
+&nbsp;
+
+---
+
+## Swarm orchestration
 
 | Command | Description |
 |---------|-------------|
@@ -287,7 +375,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink swarm resume` | Reconstruct state after interruption |
 | `crosslink swarm config --budget-window <DUR> --model <MODEL>` | Configure budget parameters |
 
-## Container Execution
+&nbsp;
+
+---
+
+## Container execution
 
 | Command | Description |
 |---------|-------------|
@@ -305,7 +397,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink container shell <name>` | Open a shell in a running container |
 | `crosslink container snapshot <name> --tag cached` | Save container state as image |
 
-## History Pruning
+&nbsp;
+
+---
+
+## History pruning
 
 | Command | Description |
 |---------|-------------|
@@ -316,7 +412,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink prune --keep-commits 5` | Preserve last N commits (default: 1) |
 | `crosslink prune --dry-run` | Show what would be pruned without acting |
 
-## Web Dashboard
+&nbsp;
+
+---
+
+## Web dashboard
 
 | Command | Description |
 |---------|-------------|
@@ -324,13 +424,21 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink serve --port <port>` | Port to listen on |
 | `crosslink serve --dashboard-dir <path>` | Serve a custom React dashboard directory |
 
+&nbsp;
+
+---
+
 ## Terminal UI
 
 | Command | Description |
 |---------|-------------|
 | `crosslink tui` | Launch the interactive terminal dashboard |
 
-## Context Management
+&nbsp;
+
+---
+
+## Context management
 
 | Command | Description |
 |---------|-------------|
@@ -338,7 +446,11 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink context measure -v` | Verbose measurement with hook config details |
 | `crosslink context check` | Verify all expected crosslink files are deployed |
 
-## Project Setup
+&nbsp;
+
+---
+
+## Project setup
 
 | Command | Description |
 |---------|-------------|

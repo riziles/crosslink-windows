@@ -2,7 +2,15 @@
 title: "Terminal Dashboard"
 ---
 
+&nbsp;
+
+::: {.feature-card}
+## tl;dr
+
 The terminal dashboard is your window into agent activity — browse issues, monitor running agents, view shared knowledge, and check project configuration without leaving the terminal.
+:::
+
+&nbsp;
 
 <!-- ![](../assets/img/tui-demo.gif) -->
 
@@ -10,9 +18,15 @@ The terminal dashboard is your window into agent activity — browse issues, mon
 crosslink tui
 ```
 
-## What You See
+---
+
+## What you see
 
 While agents handle implementation, the TUI lets you monitor what's happening across your project. It syncs data on startup and refreshes periodically in the background — press `r` for a manual refresh.
+
+&nbsp;
+
+---
 
 ## Tabs
 
@@ -61,7 +75,11 @@ View repository configuration at a glance.
 - Agent identity
 - Blocked and allowed commands
 
-## Keyboard Navigation
+&nbsp;
+
+---
+
+## Keyboard navigation
 
 | Key | Action |
 |-----|--------|
@@ -76,7 +94,11 @@ View repository configuration at a glance.
 | `?` | Show help overlay |
 | `/` | Search / filter |
 
-## Mouse Support
+&nbsp;
+
+---
+
+## Mouse support
 
 The TUI supports mouse interactions:
 
@@ -84,11 +106,19 @@ The TUI supports mouse interactions:
 - Click list items to select
 - Scroll with mouse wheel
 
-## Command Palette
+&nbsp;
+
+---
+
+## Command palette
 
 Press `:` to open the command palette (`Ctrl+P` also works). Type to filter available actions.
 
-## Clipboard Export
+&nbsp;
+
+---
+
+## Clipboard export
 
 Select an issue or knowledge page and use the command palette to copy its content to the clipboard.
 

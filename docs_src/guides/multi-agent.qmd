@@ -2,11 +2,19 @@
 title: "Multi-Agent Coordination"
 ---
 
+&nbsp;
+
+::: {.feature-card}
 ## tl;dr
 
 Crosslink lets you tell your agent to work on multiple features at once. Behind the scenes, agents self-coordinate through distributed locking so they never step on each other. You describe the work; the agents sort out who does what.
+:::
 
-## How It Works
+&nbsp;
+
+---
+
+## How it works
 
 Lock state is stored on a `crosslink/hub` git branch and synchronized via git. Each agent registers a machine-local identity and claims issues through locks. Other agents see which issues are taken and work on available ones instead. All of this happens automatically -- you never need to manage locks yourself.
 
@@ -16,8 +24,11 @@ Lock state is stored on a `crosslink/hub` git branch and synchronized via git. E
 
 <!-- ![](../assets/img/multi-agent.gif) -->
 
+&nbsp;
 
-## Agent Registration
+---
+
+## Agent registration
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -28,6 +39,7 @@ Lock state is stored on a `crosslink/hub` git branch and synchronized via git. E
 You describe the features. The agent (or agents) each register unique identities before starting work.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -40,7 +52,11 @@ crosslink agent init agent-infra -d "Infrastructure"
 :::
 :::
 
-## Lock Coordination
+&nbsp;
+
+---
+
+## Lock coordination
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -51,6 +67,7 @@ crosslink agent init agent-infra -d "Infrastructure"
 You launch multiple agents. Each one automatically claims its issue via a distributed lock. No two agents will work on the same issue.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -67,7 +84,7 @@ crosslink issue next        # skips locked issues
 :::
 :::
 
-### Lock-Aware Commands
+### Lock-aware commands
 
 These commands automatically respect lock state -- no manual lock management required:
 
@@ -77,7 +94,11 @@ These commands automatically respect lock state -- no manual lock management req
 | `crosslink session work <id>` | Warns if issue is locked by another agent |
 | `crosslink create --work` | Only sets as active if not locked |
 
-## Daemon Operation
+&nbsp;
+
+---
+
+## Daemon operation
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -88,6 +109,7 @@ These commands automatically respect lock state -- no manual lock management req
 The daemon runs in the background, pushing heartbeats and flushing state so agents stay coordinated without any manual intervention.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -101,7 +123,11 @@ The daemon auto-flushes session state every 30s, pushes heartbeats every 2.5 min
 :::
 :::
 
-## Coordination Branch
+&nbsp;
+
+---
+
+## Coordination branch
 
 Lock state lives on the `crosslink/hub` branch, separate from your code branches. The branch contains:
 
@@ -111,7 +137,11 @@ Lock state lives on the `crosslink/hub` branch, separate from your code branches
 
 Agents push to this branch when claiming/releasing locks and pull from it during `crosslink sync`.
 
-## Signature Verification
+&nbsp;
+
+---
+
+## Signature verification
 
 Crosslink supports SSH signature verification for the coordination branch to ensure lock state comes from trusted agents.
 
@@ -124,6 +154,7 @@ Crosslink supports SSH signature verification for the coordination branch to ens
 You set up trust once, and all subsequent sync operations verify signatures automatically.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -142,9 +173,13 @@ crosslink sync
 :::
 :::
 
-## Launching Agents
+&nbsp;
 
-### Kickoff (Single Agent)
+---
+
+## Launching agents
+
+### Kickoff (single agent)
 
 Launch a single background agent to implement a feature:
 
@@ -155,7 +190,7 @@ crosslink kickoff run "add retry logic" --container docker  # in a container
 
 See [Kickoff](kickoff.qmd) for the full guide.
 
-### Swarm (Multi-Agent Phased Builds)
+### Swarm (multi-agent phased builds)
 
 Coordinate multiple agents across phases from a design document:
 
@@ -166,7 +201,7 @@ crosslink swarm launch 1
 
 See [Swarm Orchestration](swarm.qmd) for the full guide.
 
-### Container Execution
+### Container execution
 
 Run agents in isolated Docker containers instead of tmux:
 

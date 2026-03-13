@@ -2,16 +2,30 @@
 title: "Container-Based Agents"
 ---
 
-Container execution gives your agents the same workflow with stronger sandboxing. Agents run inside Docker or Podman containers instead of local tmux sessions -- they cannot access your host filesystem outside the worktree, and crosslink hooks still enforce all policy automatically.
+&nbsp;
 
-## Why Containers?
+::: {.feature-card}
+## tl;dr
+
+Container execution gives your agents the same workflow with stronger sandboxing. Agents run inside Docker or Podman containers instead of local tmux sessions -- they cannot access your host filesystem outside the worktree, and crosslink hooks still enforce all policy automatically.
+:::
+
+&nbsp;
+
+---
+
+## Why containers?
 
 - **Isolation** -- agents cannot access your host filesystem outside the worktree
 - **Reproducibility** -- consistent environment regardless of host OS
 - **Security** -- `--dangerously-skip-permissions` becomes safe inside a container because crosslink hooks still enforce policy (no push, no merge, gated commits)
 - **Cross-platform** -- works on Windows, Linux, and macOS anywhere Docker runs
 
-## Quick Start
+&nbsp;
+
+---
+
+## Quick start
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -22,7 +36,7 @@ Container execution gives your agents the same workflow with stronger sandboxing
 You want stronger isolation than a local tmux session. The container approach is a single flag change.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -36,7 +50,11 @@ Creates branch, worktree, builds the image (if needed), starts a container, and 
 :::
 :::
 
-## Building the Image
+&nbsp;
+
+---
+
+## Building the image
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -47,7 +65,7 @@ Creates branch, worktree, builds the image (if needed), starts a container, and 
 The image is built once and reused for all subsequent agent launches. It includes the full toolchain for your project.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -60,7 +78,11 @@ The default image includes: Rust toolchain (matches project's `rust-version`), P
 :::
 :::
 
-## Monitoring Containers
+&nbsp;
+
+---
+
+## Monitoring containers
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -71,7 +93,7 @@ The default image includes: Rust toolchain (matches project's `rust-version`), P
 You can list running containers, stream logs, and open interactive shells for debugging.
 :::
 ::: {.column width="5%"}
-&rarr;
+→
 :::
 ::: {.column width="60%"}
 **Agent executes:**
@@ -85,7 +107,11 @@ Lists all running agent containers and streams live output from a specific agent
 :::
 :::
 
-## Managing Container Lifecycle
+&nbsp;
+
+---
+
+## Managing container lifecycle
 
 ```bash
 # Start a container manually for an existing worktree
@@ -103,7 +129,11 @@ crosslink container kill my-feature
 crosslink container rm my-feature
 ```
 
-## Hook Enforcement Inside Containers
+&nbsp;
+
+---
+
+## Hook enforcement inside containers
 
 The same crosslink hooks that enforce policy in local sessions also run inside containers -- automatically, with zero additional configuration:
 
@@ -114,7 +144,11 @@ The same crosslink hooks that enforce policy in local sessions also run inside c
 
 This means you can use `--dangerously-skip-permissions` for the Claude Code CLI inside the container (to avoid interactive trust prompts) while still maintaining policy enforcement through hooks.
 
-## Integration with Kickoff
+&nbsp;
+
+---
+
+## Integration with kickoff
 
 The `--container` flag on `crosslink kickoff run` handles the full workflow:
 
@@ -135,7 +169,11 @@ crosslink kickoff run "my feature" --container docker
 crosslink kickoff run "my feature" --container podman
 ```
 
-## Command Reference
+&nbsp;
+
+---
+
+## Command reference
 
 | Command | Description |
 |---------|-------------|

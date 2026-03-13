@@ -1,12 +1,18 @@
 ---
-title: "Your First Agent Session"
+title: "Your first agent session"
 ---
 
-Get crosslink running and watch your agent handle a task with persistent memory — in under a minute.
+&nbsp;
+
+::: {.feature-card}
+**tl;dr** --- Get crosslink running and watch your agent handle a task with persistent memory --- in under a minute.
+:::
+
+&nbsp;
 
 <!-- ![](../assets/img/quickstart.gif) -->
 
-## 1. Install and Initialize
+## 1. Install and initialize
 
 ```bash
 cargo install crosslink
@@ -16,7 +22,11 @@ crosslink init
 
 This creates `.crosslink/` (config, rules, database), `.claude/hooks/` (behavioral hooks), and `.claude/settings.json` (hook wiring). See [Installation](installation.qmd) for more install options.
 
-## 2. Start a Session
+&nbsp;
+
+---
+
+## 2. Start a session
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -27,6 +37,7 @@ This creates `.crosslink/` (config, rules, database), `.claude/hooks/` (behavior
 Every conversation begins with a session. If a previous session left handoff notes, your agent sees them immediately.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -39,7 +50,11 @@ On the first session this is a no-op. On subsequent sessions, handoff notes from
 :::
 :::
 
-## 3. Create an Issue
+&nbsp;
+
+---
+
+## 3. Create an issue
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -48,6 +63,7 @@ On the first session this is a no-op. On subsequent sessions, handoff notes from
 > "Fix the login bug — it's high priority"
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -61,7 +77,11 @@ One command: creates the issue, labels it, and marks it as the active work item.
 :::
 :::
 
-## 4. Work With Breadcrumbs
+&nbsp;
+
+---
+
+## 4. Work with breadcrumbs
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -72,6 +92,7 @@ One command: creates the issue, labels it, and marks it as the active work item.
 Your agent explores the code, leaving breadcrumbs as it goes. These survive context compression — if the window fills up, the trail of what was found and decided persists.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -90,7 +111,11 @@ crosslink issue comment 1 \
 :::
 :::
 
-## 5. Commit and Close
+&nbsp;
+
+---
+
+## 5. Commit and close
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -101,6 +126,7 @@ crosslink issue comment 1 \
 The agent uses the built-in `/commit` skill, which creates the commit and records a result comment on the active issue. Closing auto-appends a changelog entry.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -115,7 +141,11 @@ crosslink close 1
 :::
 :::
 
-## 6. End the Session
+&nbsp;
+
+---
+
+## 6. End the session
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -124,6 +154,7 @@ crosslink close 1
 > "Wrap up and leave notes for next time"
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -137,7 +168,11 @@ The next session — whether it is you, another agent, or the same agent after a
 :::
 :::
 
-## What's Next?
+&nbsp;
+
+---
+
+## What's next?
 
 - [Session Workflow](../guides/session-workflow.qmd) — deep dive into session management
 - [Design Workflow](../guides/design-workflow.qmd) — iterate on design documents before implementation

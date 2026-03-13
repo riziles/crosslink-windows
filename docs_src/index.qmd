@@ -115,7 +115,7 @@ Native CLI + VS Code extension. Integrates with Claude Code, Aider, Cursor, Cont
 
 ---
 
-## How It Works
+## How it works
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -126,6 +126,7 @@ Native CLI + VS Code extension. Integrates with Claude Code, Aider, Cursor, Cont
 Your agent handles everything — creates a tracked issue, explores the code, implements the fix, runs tests, and leaves handoff notes for the next session.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent executes:**
@@ -154,7 +155,7 @@ cd crosslink/crosslink && cargo install --path .
 
 Also available as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=forecast-bio.crosslink-issue-tracker).
 
-## Learn More
+## Learn more
 
 - [Your First Agent Session](getting-started/quickstart.qmd) — get running in under a minute
 - [Installation](getting-started/installation.qmd) — all install methods and requirements

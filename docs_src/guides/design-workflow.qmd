@@ -2,11 +2,21 @@
 title: "Design Document Workflow"
 ---
 
-The `/design` flow turns a rough feature idea into a validated, codebase-grounded design document through interactive iteration. The output feeds directly into `/kickoff` and `crosslink swarm` for implementation.
+&nbsp;
 
-![](../assets/img/design-flow.svg)
+::: {.feature-card}
+## tl;dr
+
+The `/design` flow turns a rough feature idea into a validated, codebase-grounded design document through interactive iteration. The output feeds directly into `/kickoff` and `crosslink swarm` for implementation.
+:::
+
+&nbsp;
+
+---
 
 ## Overview
+
+![](../assets/img/design-flow.svg)
 
 ```
 /design "add batch retry logic"
@@ -18,7 +28,11 @@ The `/design` flow turns a rough feature idea into a validated, codebase-grounde
     +-- 5. Store as knowledge    (crosslink knowledge, tagged design-doc)
 ```
 
-## Starting a Design
+&nbsp;
+
+---
+
+## Starting a design
 
 ::: {.columns}
 ::: {.column width="35%"}
@@ -29,6 +43,7 @@ The `/design` flow turns a rough feature idea into a validated, codebase-grounde
 Describe the feature in natural language. Optionally reference an existing crosslink or GitHub issue.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -44,6 +59,10 @@ Describe the feature in natural language. Optionally reference an existing cross
 The agent explores the codebase and asks 3-5 clarifying questions before writing anything.
 :::
 :::
+
+&nbsp;
+
+---
 
 ## Phase 1: Explore and Interview
 
@@ -66,6 +85,10 @@ Questions:
 
 Answer the questions and the agent proceeds to drafting.
 
+&nbsp;
+
+---
+
 ## Phase 2: Draft
 
 ::: {.columns}
@@ -75,6 +98,7 @@ Answer the questions and the agent proceeds to drafting.
 > "Only transient errors. Back off with jitter, don't reduce concurrency. Max 5 retries, then DLQ."
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent produces:**
@@ -93,7 +117,7 @@ A structured document with:
 :::
 :::
 
-### Document Structure
+### Document structure
 
 ```markdown
 # Feature: Add batch retry logic
@@ -149,6 +173,10 @@ Design doc validation:
   [OPEN] 1 unresolved open question remains
 ```
 
+&nbsp;
+
+---
+
 ## Phase 3: Iterate
 
 ::: {.columns}
@@ -160,6 +188,7 @@ Design doc validation:
 You can edit the document directly in your editor, resolve open questions by removing the `<!-- OPEN -->` markers, or tell your agent to continue iterating.
 :::
 ::: {.column width="5%"}
+→
 :::
 ::: {.column width="60%"}
 **Your agent runs:**
@@ -179,11 +208,15 @@ Each iteration strengthens the document:
 - Architecture references are updated if new files are involved
 - New ambiguities surface as `<!-- OPEN -->` blocks
 
-## From Design to Implementation
+&nbsp;
+
+---
+
+## From design to implementation
 
 Once the design document has no unresolved open questions, it's ready to drive implementation.
 
-### Gap Analysis
+### Gap analysis
 
 Before launching an agent, run a read-only gap analysis:
 
@@ -198,7 +231,7 @@ This compares the design against the current codebase and reports:
 - Which new tests are needed
 - Estimated scope and complexity
 
-### Single Agent
+### Single agent
 
 Launch one agent to implement the entire feature:
 
@@ -209,7 +242,7 @@ crosslink kickoff run "add batch retry logic" \
 
 The agent receives the full design document as context and implements against the requirements and acceptance criteria. See [Kickoff](kickoff.qmd).
 
-### Multi-Agent Swarm
+### Multi-agent swarm
 
 For larger designs, initialize a swarm that coordinates multiple agents across phases:
 
@@ -221,7 +254,11 @@ crosslink swarm launch 1
 
 The swarm planner splits the design into phases with dependency ordering, budget windows, and phase gates. See [Swarm Orchestration](swarm.qmd).
 
-## Knowledge Integration
+&nbsp;
+
+---
+
+## Knowledge integration
 
 Design documents are automatically stored as crosslink knowledge pages after validation:
 
@@ -233,7 +270,11 @@ crosslink knowledge add "add-batch-retry-logic" \
 
 This makes the design searchable by all agents via `crosslink knowledge search`. If the design was started from a crosslink issue, a plan comment is also recorded on the issue.
 
-## Quality Standards
+&nbsp;
+
+---
+
+## Quality standards
 
 The `/design` skill enforces these standards on every document:
 

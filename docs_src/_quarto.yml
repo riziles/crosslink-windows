@@ -78,7 +78,9 @@ format:
       - styles.css
       - assets/styles.css
     toc: true
+    toc-depth: 3
     toc-location: right
+    page-navigation: true
     include-in-header:
       - text: |
           <style>
