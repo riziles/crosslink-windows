@@ -6,6 +6,9 @@
 *.pyc
 __pycache__/
 
+# Docs build staging
+.docs_build/
+
 # Build/test artifacts
 crosslink/fuzz/target/
 crosslink/fuzz/artifacts/
