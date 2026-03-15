@@ -142,6 +142,10 @@ crosslink session end --notes "Fixed. PR ready."
 :::
 :::
 
+&nbsp;
+
+---
+
 ## Install
 
 ```bash
@@ -154,6 +158,10 @@ cd crosslink/crosslink && cargo install --path .
 ```
 
 Also available as a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=forecast-bio.crosslink-issue-tracker).
+
+&nbsp;
+
+---
 
 ## Learn more
 

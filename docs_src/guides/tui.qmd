@@ -1,10 +1,8 @@
 ---
-title: "Terminal Dashboard"
+title: "Terminal dashboard"
 ---
 
-&nbsp;
-
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/tui.svg){.card-icon}
 
 ## tl;dr

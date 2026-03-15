@@ -1,8 +1,8 @@
 ---
-title: "Container-Based Agents"
+title: "Container-based agents"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/containers.svg){.card-icon}
 
 ## tl;dr

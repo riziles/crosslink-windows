@@ -1,8 +1,8 @@
 ---
-title: "Knowledge Management"
+title: "Knowledge management"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/knowledge.svg){.card-icon}
 
 ## tl;dr
@@ -16,6 +16,7 @@ Crosslink's knowledge system is shared memory for your agents. When one agent re
 ![](../assets/img/knowledge-flow.svg){width="850px"}
 :::
 
+&nbsp;
 
 ## How agents use knowledge
 

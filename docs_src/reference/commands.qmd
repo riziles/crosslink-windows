@@ -15,8 +15,6 @@ Complete command reference for the crosslink CLI.
 
 &nbsp;
 
----
-
 ## Issue management
 
 Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`, `close`, `subissue`, `start`, `stop`. All other issue commands require the `crosslink issue` prefix.
@@ -54,8 +52,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Comments and labels
 
 | Command | Description |
@@ -66,8 +62,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue unlabel <id> <label>` | Remove a label |
 
 &nbsp;
-
----
 
 ## Dependencies
 
@@ -80,8 +74,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Related issues
 
 | Command | Description |
@@ -91,8 +83,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue related <id>` | List issues related to the given issue |
 
 &nbsp;
-
----
 
 ## Milestones
 
@@ -109,8 +99,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Archiving
 
 | Command | Description |
@@ -121,8 +109,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink archive older <days>` | Archive issues closed more than N days ago |
 
 &nbsp;
-
----
 
 ## Export / import
 
@@ -135,8 +121,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Smart navigation
 
 | Command | Description |
@@ -146,8 +130,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue tree -s open` | Tree view filtered to open issues |
 
 &nbsp;
-
----
 
 ## Time tracking
 
@@ -159,8 +141,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink issue tested` | Mark tests as run (resets test reminder) |
 
 &nbsp;
-
----
 
 ## Session management
 
@@ -176,8 +156,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Multi-agent coordination
 
 | Command | Description |
@@ -192,8 +170,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Trust and signing
 
 | Command | Description |
@@ -206,8 +182,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Daemon
 
 | Command | Description |
@@ -217,8 +191,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink daemon stop` | Stop daemon |
 
 &nbsp;
-
----
 
 ## Configuration
 
@@ -232,8 +204,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink config diff` | Show differences from default config |
 
 &nbsp;
-
----
 
 ## Knowledge pages
 
@@ -259,8 +229,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## House style
 
 | Command | Description |
@@ -273,8 +241,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Workflow
 
 | Command | Description |
@@ -283,8 +249,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink workflow trail <id>` | Show chronological comment trail for an issue |
 
 &nbsp;
-
----
 
 ## Code clone detection
 
@@ -295,8 +259,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink cpitd clear` | Close all open clone issues |
 
 &nbsp;
-
----
 
 ## Data integrity
 
@@ -312,8 +274,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Migration
 
 | Command | Description |
@@ -323,8 +283,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink migrate rename-branch` | Rename coordination branch from `crosslink/locks` to `crosslink/hub` |
 
 &nbsp;
-
----
 
 ## Kickoff
 
@@ -354,8 +312,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Swarm orchestration
 
 | Command | Description |
@@ -377,8 +333,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Container execution
 
 | Command | Description |
@@ -399,8 +353,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## History pruning
 
 | Command | Description |
@@ -414,8 +366,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Web dashboard
 
 | Command | Description |
@@ -426,8 +376,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 
 &nbsp;
 
----
-
 ## Terminal UI
 
 | Command | Description |
@@ -435,8 +383,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink tui` | Launch the interactive terminal dashboard |
 
 &nbsp;
-
----
 
 ## Context management
 
@@ -447,8 +393,6 @@ Top-level shortcuts exist for common commands: `create`, `quick`, `list`, `show`
 | `crosslink context check` | Verify all expected crosslink files are deployed |
 
 &nbsp;
-
----
 
 ## Project setup
 

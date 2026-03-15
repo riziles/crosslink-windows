@@ -2,8 +2,8 @@
 title: "Kickoff: Autonomous feature agents"
 ---
 
-::: {.feature-card}
-![](../assets/img/cards/workflow.svg){.card-icon}
+::: {.guide-card}
+![](../assets/img/cards/kickoff.svg){.card-icon}
 
 ## tl;dr
 
@@ -32,25 +32,9 @@ or a [design document](design-workflow.qmd):
 crosslink kickoff run --doc .design/batch-retry-logic.md
 ```
 
-<!-- ```
-/kickoff "add batch retry logic"
-    |
-    +-- 1. Create feature branch   (feature/add-batch-retry-logic)
-    +-- 2. Create git worktree     (.worktrees/add-batch-retry-logic/)
-    +-- 3. Initialize crosslink    (agent identity, issue, sync)
-    +-- 4. Detect project tools    (cargo test, npm test, etc.)
-    +-- 5. Write agent prompt      (KICKOFF.md)
-    +-- 6. Launch tmux session     (feat-add-batch-retry-logic)
-            |
-            +-- Background agent runs autonomously:
-                  explore -> implement -> test -> commit -> done
-``` -->
-
 ::: {.column-screen .center}
 ![](../assets/img/kickoff-flow.svg){width="900px"}
 :::
-
-<!-- ![](../assets/img/kickoff.gif) -->
 
 ## Usage
 

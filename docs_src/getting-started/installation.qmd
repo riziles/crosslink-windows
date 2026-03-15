@@ -4,8 +4,12 @@ title: "Installation"
 
 &nbsp;
 
-::: {.feature-card}
-**tl;dr** --- Install crosslink via `cargo install crosslink`, then run `crosslink init` in your project directory to get started.
+::: {.guide-card}
+![](../assets/img/cards/installation.svg){.card-icon}
+
+## tl;dr
+
+Install crosslink via `cargo install crosslink`, then run `crosslink init` in your project directory to get started.
 :::
 
 &nbsp;

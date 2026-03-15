@@ -1,8 +1,8 @@
 ---
-title: "Swarm Orchestration"
+title: "Swarm orchestration"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/swarm.svg){.card-icon}
 
 ## tl;dr
@@ -14,7 +14,7 @@ Swarm orchestration lets you build a complex feature across multiple phases. You
 
 ## Overview
 
-...
+When a feature is too large for a single agent, swarm orchestration breaks it into phases and runs multiple agents in parallel. You provide a [design document](design-workflow.qmd) and optionally a budget window; the swarm handles decomposition, scheduling, and quality gating automatically.
 
 ```bash
 crosslink swarm init --doc DESIGN.md
@@ -24,32 +24,7 @@ crosslink swarm init --doc DESIGN.md
 ![](../assets/img/swarm-flow.svg){width="900px"}
 :::
 
-<!-- ```
-"Build this auth system from my design doc."
-    |
-    +-- swarm init --doc DESIGN.md
-    |       |
-    |       +-- Phase 1: Foundation
-    |       |     +-- Agent A (data layer)
-    |       |     +-- Agent B (config parsing)
-    |       |
-    |       +-- Phase 2: Core Logic
-    |       |     +-- Agent C (business rules)
-    |       |     +-- Agent D (API endpoints)
-    |       |
-    |       +-- Phase 3: Integration
-    |             +-- Agent E (end-to-end wiring)
-    |
-    +-- swarm launch 1        <- launch Phase 1 agents
-    +-- swarm gate 1          <- run test suite as quality gate
-    +-- swarm checkpoint 1    <- record progress
-    +-- swarm launch 2        <- advance to Phase 2
-    +-- ...
-``` -->
-
 &nbsp;
-
----
 
 ## Developing with swarms
 

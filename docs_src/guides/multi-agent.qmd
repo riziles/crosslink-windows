@@ -2,7 +2,7 @@
 title: "Multi-agent coordination"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/multi-agent.svg){.card-icon}
 
 ## tl;dr
@@ -19,8 +19,6 @@ Lock state is stored on a `crosslink/hub` git branch and synchronized via git. E
 ::: {.column-screen .center}
 ![](../assets/img/multi-agent-flow.svg){width="850px"}
 :::
-
-<!-- ![](../assets/img/multi-agent.gif) -->
 
 ### Agent registration
 

@@ -88,20 +88,32 @@ def generate():
 
     # ── Phase 4: Results (bottom) ─────────────────────────────────────────
     ry = 330
-    svg += rrect(50, ry, 800, 220, P["gray"], rx=28)
+    svg += rrect(50, ry, 800, 220, P["gray"], rx=28, opacity=0.12)
+    svg += rrect(53, ry + 3, 794, 214, P["white"], rx=26, opacity=0.85)
     svg += text(WIDTH / 2, ry + 30, "Outputs", cls="heading", size=18, fill=P["black"])
 
-    for cx_, cw, color, title, items in [
+    cards = [
         (70,  175, P["green"],  "Feature branch",
-         ["committed code", "tests passing", "clean lint"]),
+         [("committed code", False), ("tests passing", False), ("clean lint", False)]),
         (265, 175, P["yellow"], "Crosslink trail",
-         ["issue comments", "breadcrumbs", "handoff notes"]),
+         [("issue comments", False), ("breadcrumbs", False), ("handoff notes", False)]),
         (460, 175, P["blue"],   "Kickoff report",
-         ["spec validation", "phase timings", "verdict"]),
+         [("spec validation", False), ("phase timings", False), ("verdict", False)]),
         (655, 175, P["red"],    "Ready for review",
-         ["draft PR", "self-review done", "status: DONE"]),
-    ]:
-        svg += card(cx_, ry + 46, cw, 150, color, title, items)
+         [("draft PR", False), ("self-review done", False), ("status: DONE", True)]),
+    ]
+    card_top = ry + 46
+    for cx_, cw, color, title, items in cards:
+        svg += rrect(cx_, card_top, cw, 140, color, rx=18, opacity=0.08)
+        svg += text(cx_ + cw / 2, card_top + 20, title,
+                    cls="subheading", size=15, fill=color, weight="bold")
+        for j, (item, is_cmd) in enumerate(items):
+            iy = card_top + 45 + j * 24
+            svg += circle(cx_ + 18, iy - 3, 4, color, opacity=0.5)
+            svg += text(cx_ + 32, iy, item,
+                        cls="mono" if is_cmd else "body",
+                        size=11 if is_cmd else 13,
+                        fill=P["text"], anchor="start")
 
     # Arrows from agent/orchestration → results
     svg += arrow_straight(690, 255, 690, ry + 40, P["blue"], stroke_width=2)

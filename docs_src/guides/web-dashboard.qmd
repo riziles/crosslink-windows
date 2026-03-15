@@ -1,8 +1,8 @@
 ---
-title: "Web Dashboard"
+title: "Web dashboard"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/web-dashboard.svg){.card-icon}
 
 ## tl;dr
@@ -11,10 +11,6 @@ Monitor your agents and browse project state through a browser-based dashboard. 
 :::
 
 &nbsp;
-
----
-
- 
 
 ## Starting the dashboard
 
@@ -58,11 +54,7 @@ The dashboard provides these main pages:
 | **Config** | Current crosslink configuration, hook status, and trust settings |
 | **Sync** | Hub branch sync status, last sync time, and signature verification results |
 
-&nbsp;
-
----
-
-## Agent monitoring
+### Agent monitoring
 
 The Agents page provides real-time visibility into what each agent is doing:
 
@@ -72,11 +64,7 @@ The Agents page provides real-time visibility into what each agent is doing:
 
 No polling required. Open the page and watch agents coordinate in real time.
 
-&nbsp;
-
----
-
-## Orchestrator view
+### Orchestrator view
 
 For swarm builds, the dashboard includes an orchestrator view:
 

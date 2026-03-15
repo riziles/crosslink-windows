@@ -2,7 +2,7 @@
 title: "Design document workflow"
 ---
 
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/workflow.svg){.card-icon}
 
 ## tl;dr
@@ -25,19 +25,6 @@ This triggers the conversational design document workflow.
 ::: {.column-screen .center}
 ![](../assets/img/design-flow.svg){width="850px"}
 :::
-
-<!-- 
-```
-/design "add batch retry logic"
-    |
-    +-- 1. Explore codebase     (find related modules, types, patterns)
-    +-- 2. Interview             (3-5 questions grounded in findings)
-    +-- 3. Draft                 (.design/add-batch-retry-logic.md)
-    +-- 4. Validate              (requirements, criteria, real file refs)
-    +-- 5. Store as knowledge    (crosslink knowledge, tagged design-doc)
-``` -->
-
----
 
 ## Starting a design
 

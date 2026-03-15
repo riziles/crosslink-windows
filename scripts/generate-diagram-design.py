@@ -103,14 +103,27 @@ def generate():
     svg += arrow_straight(cx, vy + 65, cx, out_y + 10, P["muted"], stroke_width=1.5)
 
     card_y = out_y + 15
-    svg += card(30,  card_y, 155, 130, P["green"],  "Knowledge",
-                ["stored via git", "tagged: design-doc", "searchable"])
-    svg += card(200, card_y, 155, 130, P["blue"],   "Gap analysis",
-                ["kickoff plan", "files to modify", "tests needed"])
-    svg += card(370, card_y, 155, 130, P["yellow"], "Single agent",
-                ["kickoff run --doc", "validates ACs", "reports result"])
-    svg += card(540, card_y, 140, 130, P["red"],    "Swarm build",
-                ["swarm init --doc", "phased execution", "budget-aware"])
+    cards = [
+        (30,  160, P["green"],  "Knowledge",
+         [("stored via git", False), ("tagged: design-doc", False), ("searchable", False)]),
+        (200, 160, P["blue"],   "Gap analysis",
+         [("kickoff plan", False), ("files to modify", False), ("tests needed", False)]),
+        (370, 160, P["yellow"], "Single agent",
+         [("kickoff run --doc", True), ("validates ACs", False), ("reports result", False)]),
+        (540, 145, P["red"],    "Swarm build",
+         [("swarm init --doc", True), ("phased execution", False), ("budget-aware", False)]),
+    ]
+    for card_x, card_w, color, title, items in cards:
+        svg += rrect(card_x, card_y, card_w, 115, color, rx=18, opacity=0.08)
+        svg += text(card_x + card_w / 2, card_y + 20, title,
+                    cls="subheading", size=15, fill=color, weight="bold")
+        for j, (item, is_cmd) in enumerate(items):
+            iy = card_y + 45 + j * 24
+            svg += circle(card_x + 18, iy - 3, 4, color, opacity=0.5)
+            svg += text(card_x + 32, iy, item,
+                        cls="mono" if is_cmd else "body",
+                        size=11 if is_cmd else 13,
+                        fill=P["text"], anchor="start")
 
     # ── Confetti ──────────────────────────────────────────────────────────
     svg += confetti(rng, 10, 80, 60, 80, 5)

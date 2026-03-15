@@ -2,10 +2,12 @@
 title: "Your first agent session"
 ---
 
-&nbsp;
+::: {.guide-card}
+![](../assets/img/cards/quickstart.svg){.card-icon}
 
-::: {.feature-card}
-**tl;dr** --- Get crosslink running and watch your agent handle a task with persistent memory --- in under a minute.
+## tl;dr
+
+Get crosslink running and watch your agent handle a task with persistent memory — in under a minute.
 :::
 
 &nbsp;

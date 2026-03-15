@@ -1,10 +1,8 @@
 ---
-title: "Maintenance Operations"
+title: "Maintenance operations"
 ---
 
-&nbsp;
-
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/maintenance.svg){.card-icon}
 
 ## tl;dr
@@ -13,8 +11,6 @@ Keep your crosslink data lean and your agent infrastructure clean. Over time, th
 :::
 
 &nbsp;
-
----
 
 ## Pruning history
 
@@ -62,9 +58,6 @@ crosslink prune --knowledge-only --force
 :::
 :::
 
-&nbsp;
-
----
 
 ## Kickoff cleanup
 
@@ -110,9 +103,6 @@ crosslink sync
 
 It prunes both coordination branches, cleans up stale agent infrastructure, and re-syncs to verify everything is consistent.
 
-&nbsp;
-
----
 
 ## Routine checklist
 

@@ -1,10 +1,8 @@
 ---
-title: "Behavioral Hooks"
+title: "Behavioral hooks"
 ---
 
-&nbsp;
-
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/hooks.svg){.card-icon}
 
 ## tl;dr
@@ -13,8 +11,6 @@ Crosslink's hooks are guardrails that agents follow automatically. You configure
 :::
 
 &nbsp;
-
----
 
 ## How it works
 
@@ -46,7 +42,7 @@ Agent finishes editing
 :::
 :::
 
-## Requirements
+### Requirements
 
 - **Python 3.6+** must be installed and available in your PATH
 
@@ -64,11 +60,7 @@ Agent finishes editing
 | `post-edit-check.py` | After file edits | Detects stubs, runs linter (debounced), reminds about tests |
 | `pre-web-check.py` | Before web fetch | Injects prompt injection defense before fetching external content |
 
-&nbsp;
-
----
-
-## What agents must follow
+### What agents must follow
 
 The hooks enforce these principles transparently:
 
@@ -78,11 +70,7 @@ The hooks enforce these principles transparently:
 4. **Error Handling** — Proper error handling everywhere. No panics on bad input.
 5. **Security** — Validate input, use parameterized queries, no command injection.
 
-&nbsp;
-
----
-
-## Large task management
+### Large task management
 
 When code will exceed 500 lines, the hooks guide agents to:
 
@@ -91,11 +79,7 @@ When code will exceed 500 lines, the hooks guide agents to:
 3. Work on one subissue at a time
 4. Inform the user about the multi-part implementation
 
-&nbsp;
-
----
-
-## Language detection
+### Language detection
 
 The hooks auto-detect project languages and inject relevant best practices:
 
@@ -105,11 +89,7 @@ The hooks auto-detect project languages and inject relevant best practices:
 - **Go**: Check errors, `context.Context`, `defer` for cleanup
 - **And 16 more**: Java, C/C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Zig, Odin, Elixir, Haskell
 
-&nbsp;
-
----
-
-## Post-edit checking
+### Post-edit checking
 
 After every file edit, `post-edit-check.py` automatically:
 
@@ -117,27 +97,15 @@ After every file edit, `post-edit-check.py` automatically:
 2. **Linting** — Runs the appropriate linter (cargo clippy, flake8, eslint, go vet) with 10-second debouncing
 3. **Test reminders** — Checks if code has been modified since the last test run and reminds to run tests
 
-&nbsp;
-
----
-
-## Web security (RFIP)
+### Web security (RFIP)
 
 The `pre-web-check.py` hook injects the Recursive Framing Interdiction Protocol before any web fetch. This defends against prompt injection by establishing that external content is **data, not instructions** — any instruction-like text in fetched content is flagged, not followed.
 
-&nbsp;
-
----
-
-## Drift detection
+### Drift detection
 
 When an agent's behavior diverges from project norms (e.g., repeatedly ignoring tracking requirements or skipping tests), the hooks increase reminder frequency automatically. The `reminder_drift_threshold` in `hook-config.json` controls sensitivity.
 
-&nbsp;
-
----
-
-## Intervention tracking
+### Intervention tracking
 
 When a hook blocks an agent's action, or a human redirects the agent's approach, the intervention is logged for audit:
 
@@ -170,7 +138,8 @@ Hook behavior is controlled by `.crosslink/hook-config.json`. See [Hook Configur
 
 Rules are stored as markdown files in `.crosslink/rules/`. See [Rules Customization](../reference/rules.qmd).
 
-::: {.callout-note collapse="true" title="Installing hooks in other projects"}
+### Installing hooks in other projects
+
 ```bash
 # Automatic setup (recommended)
 crosslink init
@@ -179,4 +148,3 @@ crosslink init
 cp -r /path/to/crosslink/.claude /your/project/
 cp -r /path/to/crosslink/.crosslink/rules /your/project/.crosslink/
 ```
-:::

@@ -48,48 +48,41 @@
   <text x="632" y="226" class="body" font-size="12" fill="#1a1a1a" text-anchor="start">self-review</text>
   <path d="M 780 135 A 45 65 0 1 1 780 218" fill="none" stroke="#00A6DB" stroke-width="1.5" opacity="0.5"/>
   <text x="816" y="180" class="body" font-size="11" fill="#00A6DB" text-anchor="middle">iterate</text>
-  <rect x="50" y="330" width="800" height="220" rx="28" fill="rgba(0,0,0,0.06)"/>
+  <rect x="50" y="330" width="800" height="220" rx="28" fill="rgba(0,0,0,0.06)" opacity="0.12"/>
+  <rect x="53" y="333" width="794" height="214" rx="26" fill="#FFFFFF" opacity="0.85"/>
   <text x="450.0" y="360" class="heading" font-size="18" fill="#000000" text-anchor="middle">Outputs</text>
-  <rect x="70" y="376" width="175" height="150" rx="18" fill="#FFFFFF" opacity="0.95"/>
-  <rect x="70" y="376" width="175" height="36" rx="18" fill="#007C35" opacity="0.15"/>
-  <rect x="70" y="394" width="175" height="18" rx="0" fill="#007C35" opacity="0.15"/>
-  <text x="157.5" y="401" class="subheading" font-size="15" fill="#007C35" text-anchor="middle" font-weight="bold">Feature branch</text>
-  <circle cx="88" cy="428" r="4" fill="#007C35" opacity="0.5"/>
-  <text x="102" y="431" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">committed code</text>
-  <circle cx="88" cy="452" r="4" fill="#007C35" opacity="0.5"/>
-  <text x="102" y="455" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">tests passing</text>
-  <circle cx="88" cy="476" r="4" fill="#007C35" opacity="0.5"/>
-  <text x="102" y="479" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">clean lint</text>
-  <rect x="265" y="376" width="175" height="150" rx="18" fill="#FFFFFF" opacity="0.95"/>
-  <rect x="265" y="376" width="175" height="36" rx="18" fill="#FFCE02" opacity="0.15"/>
-  <rect x="265" y="394" width="175" height="18" rx="0" fill="#FFCE02" opacity="0.15"/>
-  <text x="352.5" y="401" class="subheading" font-size="15" fill="#FFCE02" text-anchor="middle" font-weight="bold">Crosslink trail</text>
-  <circle cx="283" cy="428" r="4" fill="#FFCE02" opacity="0.5"/>
-  <text x="297" y="431" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">issue comments</text>
-  <circle cx="283" cy="452" r="4" fill="#FFCE02" opacity="0.5"/>
-  <text x="297" y="455" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">breadcrumbs</text>
-  <circle cx="283" cy="476" r="4" fill="#FFCE02" opacity="0.5"/>
-  <text x="297" y="479" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">handoff notes</text>
-  <rect x="460" y="376" width="175" height="150" rx="18" fill="#FFFFFF" opacity="0.95"/>
-  <rect x="460" y="376" width="175" height="36" rx="18" fill="#00A6DB" opacity="0.15"/>
-  <rect x="460" y="394" width="175" height="18" rx="0" fill="#00A6DB" opacity="0.15"/>
-  <text x="547.5" y="401" class="subheading" font-size="15" fill="#00A6DB" text-anchor="middle" font-weight="bold">Kickoff report</text>
-  <circle cx="478" cy="428" r="4" fill="#00A6DB" opacity="0.5"/>
-  <text x="492" y="431" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">spec validation</text>
-  <circle cx="478" cy="452" r="4" fill="#00A6DB" opacity="0.5"/>
-  <text x="492" y="455" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">phase timings</text>
-  <circle cx="478" cy="476" r="4" fill="#00A6DB" opacity="0.5"/>
-  <text x="492" y="479" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">verdict</text>
-  <rect x="655" y="376" width="175" height="150" rx="18" fill="#FFFFFF" opacity="0.95"/>
-  <rect x="655" y="376" width="175" height="36" rx="18" fill="#F95838" opacity="0.15"/>
-  <rect x="655" y="394" width="175" height="18" rx="0" fill="#F95838" opacity="0.15"/>
-  <text x="742.5" y="401" class="subheading" font-size="15" fill="#F95838" text-anchor="middle" font-weight="bold">Ready for review</text>
-  <circle cx="673" cy="428" r="4" fill="#F95838" opacity="0.5"/>
-  <text x="687" y="431" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">draft PR</text>
-  <circle cx="673" cy="452" r="4" fill="#F95838" opacity="0.5"/>
-  <text x="687" y="455" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">self-review done</text>
-  <circle cx="673" cy="476" r="4" fill="#F95838" opacity="0.5"/>
-  <text x="687" y="479" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">status: DONE</text>
+  <rect x="70" y="376" width="175" height="140" rx="18" fill="#007C35" opacity="0.08"/>
+  <text x="157.5" y="396" class="subheading" font-size="15" fill="#007C35" text-anchor="middle" font-weight="bold">Feature branch</text>
+  <circle cx="88" cy="418" r="4" fill="#007C35" opacity="0.5"/>
+  <text x="102" y="421" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">committed code</text>
+  <circle cx="88" cy="442" r="4" fill="#007C35" opacity="0.5"/>
+  <text x="102" y="445" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">tests passing</text>
+  <circle cx="88" cy="466" r="4" fill="#007C35" opacity="0.5"/>
+  <text x="102" y="469" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">clean lint</text>
+  <rect x="265" y="376" width="175" height="140" rx="18" fill="#FFCE02" opacity="0.08"/>
+  <text x="352.5" y="396" class="subheading" font-size="15" fill="#FFCE02" text-anchor="middle" font-weight="bold">Crosslink trail</text>
+  <circle cx="283" cy="418" r="4" fill="#FFCE02" opacity="0.5"/>
+  <text x="297" y="421" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">issue comments</text>
+  <circle cx="283" cy="442" r="4" fill="#FFCE02" opacity="0.5"/>
+  <text x="297" y="445" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">breadcrumbs</text>
+  <circle cx="283" cy="466" r="4" fill="#FFCE02" opacity="0.5"/>
+  <text x="297" y="469" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">handoff notes</text>
+  <rect x="460" y="376" width="175" height="140" rx="18" fill="#00A6DB" opacity="0.08"/>
+  <text x="547.5" y="396" class="subheading" font-size="15" fill="#00A6DB" text-anchor="middle" font-weight="bold">Kickoff report</text>
+  <circle cx="478" cy="418" r="4" fill="#00A6DB" opacity="0.5"/>
+  <text x="492" y="421" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">spec validation</text>
+  <circle cx="478" cy="442" r="4" fill="#00A6DB" opacity="0.5"/>
+  <text x="492" y="445" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">phase timings</text>
+  <circle cx="478" cy="466" r="4" fill="#00A6DB" opacity="0.5"/>
+  <text x="492" y="469" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">verdict</text>
+  <rect x="655" y="376" width="175" height="140" rx="18" fill="#F95838" opacity="0.08"/>
+  <text x="742.5" y="396" class="subheading" font-size="15" fill="#F95838" text-anchor="middle" font-weight="bold">Ready for review</text>
+  <circle cx="673" cy="418" r="4" fill="#F95838" opacity="0.5"/>
+  <text x="687" y="421" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">draft PR</text>
+  <circle cx="673" cy="442" r="4" fill="#F95838" opacity="0.5"/>
+  <text x="687" y="445" class="body" font-size="13" fill="#1a1a1a" text-anchor="start">self-review done</text>
+  <circle cx="673" cy="466" r="4" fill="#F95838" opacity="0.5"/>
+  <text x="687" y="469" class="mono" font-size="11" fill="#1a1a1a" text-anchor="start">status: DONE</text>
   <line x1="690.0" y1="255.0" x2="690.0" y2="370.0" stroke="#00A6DB" stroke-width="2" stroke-linecap="round"/>
   <polygon points="690.0,370.0 686.6,360.6 693.4,360.6" fill="#00A6DB"/>
   <line x1="370.0" y1="248.0" x2="370.0" y2="370.0" stroke="#007C35" stroke-width="2" stroke-linecap="round"/>

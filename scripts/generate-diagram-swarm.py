@@ -110,7 +110,8 @@ def generate():
 
     # ── Budget bar (bottom) ───────────────────────────────────────────────
     bar_y = 470
-    svg += rrect(60, bar_y, 660, 45, P["gray"], rx=14)
+    svg += rrect(60, bar_y, 660, 45, P["gray"], rx=14, opacity=0.12)
+    svg += rrect(63, bar_y + 3, 654, 39, P["white"], rx=12, opacity=0.85)
     svg += text(cx, bar_y - 10, "Budget-aware scheduling", cls="subheading",
                 size=14, fill=P["muted"])
 

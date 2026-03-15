@@ -1,10 +1,8 @@
 ---
-title: "Tracking Modes"
+title: "Tracking modes"
 ---
 
-&nbsp;
-
-::: {.feature-card}
+::: {.guide-card}
 ![](../assets/img/cards/local-first.svg){.card-icon}
 
 ## tl;dr
@@ -13,8 +11,6 @@ Crosslink enforces issue tracking at three levels. You set the mode once; agents
 :::
 
 &nbsp;
-
----
 
 ## How it works
 
@@ -64,11 +60,7 @@ Edit `.crosslink/hook-config.json`:
 
 Changes take effect on the next prompt.
 
-&nbsp;
-
----
-
-## What's always enforced
+### What's always enforced
 
 Regardless of tracking mode, these are **always blocked**:
 
@@ -81,11 +73,7 @@ Regardless of tracking mode, these are **always blocked**:
 
 Read-only git commands (`git status`, `git diff`, `git log`, `git show`, `git branch`) are always allowed.
 
-&nbsp;
-
----
-
-## Strict mode
+### Strict mode
 
 **File:** `.crosslink/rules/tracking-strict.md`
 
@@ -97,21 +85,13 @@ crosslink quick "describe the work" -p medium -l feature
 
 This is the recommended mode for teams and production codebases.
 
-&nbsp;
-
----
-
-## Normal mode
+### Normal mode
 
 **File:** `.crosslink/rules/tracking-normal.md`
 
 Same check, but the hook **reminds** the agent instead of blocking. Operations proceed with a gentle nudge to create an issue. Good for solo developers who want tracking most of the time.
 
-&nbsp;
-
----
-
-## Relaxed mode
+### Relaxed mode
 
 **File:** `.crosslink/rules/tracking-relaxed.md`
 
