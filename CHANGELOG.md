@@ -6,6 +6,97 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-15
+
+### Added
+
+#### Swarm Review System
+- `swarm review` command for parallel adversarial codebase exploration ([GH-342])
+- `swarm fix` command for parallel issue-to-agent fix execution ([GH-345])
+- `swarm merge` subcommand for combining parallel agent worktree changes ([GH-346])
+- End-to-end `swarm review --fix` pipeline orchestrator ([GH-348])
+- Finding consolidation and deduplication for swarm reviews ([GH-343])
+- Seam detection and codebase auto-partitioning module ([GH-341])
+- Trust model configuration for swarm review triage ([GH-347])
+- Automatic GitHub issue creation from swarm review findings ([GH-344])
+
+#### Testing
+- Adversarial smoke test harness with 134 tests ([GH-354])
+- Test coverage boosted to 92.73% ([GH-355])
+
+#### Language Support
+- First-class Elixir support in kickoff conventions, context detection, hooks, and command docs ([GH-352])
+
+#### CLI Enhancements
+- `--skip-permissions` flag for `kickoff run` ([GH-357])
+- Git commit hash included in version string ([GH-339])
+
+#### Build Tooling
+- `justfile` with `render-docs` pipeline: SVG generation, quarto render via staging dir, collision detection for manually-maintained docs, asset lint for broken images/styles/scripts/links ([CL-192], [CL-193])
+
+### Fixed
+- Missing banner and wordmark SVGs in docs site deployment — banner ref escaped the `docs/` boundary, wordmark not copied by Quarto ([CL-192])
+- Swarm launch failure — write `.kickoff-status` sentinel on launch and treat missing status as failed ([GH-359])
+- V2 comment hydration bug found during smoke testing ([GH-354])
+- Swarm gate worktree bug ([GH-355])
+- Update resource templates and hooks to use canonical `crosslink issue` syntax ([GH-338])
+- 9 Windows compatibility issues across codebase ([GH-337])
+- Windows clipboard support via `clip.exe` ([GH-325])
+
+### Changed
+- Remove all `#[allow(dead_code)]` annotations and wire in unused code
+- Update CLAUDE.md to document canonical CLI syntax, `--quiet`, and `--json` flags ([GH-338])
+- Docs CI workflow now uses `just render-docs` with asset verification gate
+
+## [0.5.0] - 2026-03-11
+
+### Added
+
+#### Web Dashboard (`crosslink serve`)
+- `crosslink serve` subcommand with axum HTTP server scaffold ([GH-290])
+- React Vite dashboard scaffold with TypeScript, TailwindCSS 4, and shadcn/ui components
+- Agent monitoring REST endpoints and real-time WebSocket updates with filesystem watcher
+- Agent list page with AgentCard component and agent detail drilldown with HeartbeatTimeline and LockList
+- Issues CRUD REST endpoints, issue list and detail views, session management UI
+- Label manager, dependency editor, and bulk issue operations
+- Sessions, milestones, knowledge, search, sync, and config REST API endpoints
+- Knowledge browser, milestones, and command palette pages
+- Sync dashboard, config editor, and lock visualization
+- Usage graphs and cost breakdown components with token usage collection and storage
+- DAG and Gantt visualization for orchestrator execution
+- Execution controls and live monitoring components
+- Document import, stage editor, and LLM-assisted document decomposition orchestrator
+- DAG execution engine with topological sort and executor lifecycle management
+- Appearance settings page and orchestrator endpoint wiring
+
+#### CLI Enhancements
+- `crosslink prune` command for hub/knowledge history pruning ([GH-297])
+- `crosslink kickoff cleanup` command for pruning stale worktrees and tmux sessions ([GH-298])
+- `crosslink kickoff list` command with worktree, tmux, and Docker discovery
+- Refactor CLI into `issue`/`timer`/`migrate` subcommand groups ([CL-157])
+- Watchdog sidecar to nudge idle kickoff agents
+
+#### Knowledge Management
+- `--replace-section` and `--append-to-section` flags for `knowledge edit` command ([GH-264])
+
+#### TUI Improvements
+- Startup sync, periodic background sync, and manual `r` keybinding for refresh ([CL-169])
+
+#### CI
+- Fix CI concurrency groups and repo cleanup ([GH-287], [GH-291])
+
+### Fixed
+- Address 14 findings from adversarial codebase review
+- Restore view state on issue detail back navigation and clamp scroll bounds ([GH-293])
+- Add agent init verification and sync steps to kickoff instructions ([GH-289])
+- `ssh-keygen` verify checks both stdout and stderr, allow unsigned hub writes ([GH-299], [GH-301])
+- Replace `unwrap()` calls with `ok_or_else()` for strict clippy CI compliance
+- Resolve duplicate Agent type and stale field names in dashboard types
+- Fix clippy warnings in adversarial review fixes
+
+### Changed
+- Move `.crosslink/` ignores to inner `.gitignore` ([CL-175])
+
 ## [0.4.0] - 2026-03-10
 
 ### Added
@@ -52,6 +143,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Pre-flight check for required external commands in kickoff
 
 ### Changed
+- Clean up feature worktrees and tmux sessions (#180)
 - README updated with multi-agent orchestration, swarm, kickoff, knowledge, TUI, and hooks features
 
 ## [0.3.0] - 2026-03-05
