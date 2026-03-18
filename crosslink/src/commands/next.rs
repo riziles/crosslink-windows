@@ -63,7 +63,10 @@ fn to_suggested_issue(issue: &Issue, progress: &Progress) -> SuggestedIssue {
         title: issue.title.clone(),
         priority: issue.priority.clone(),
         description_preview,
-        progress: progress.map(|(c, t)| ProgressInfo { completed: c, total: t }),
+        progress: progress.map(|(c, t)| ProgressInfo {
+            completed: c,
+            total: t,
+        }),
     }
 }
 
@@ -97,10 +100,13 @@ pub fn run(db: &Database, crosslink_dir: &std::path::Path, json: bool) -> Result
 
     if ready.is_empty() {
         if json {
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                "recommended": null,
-                "also_ready": []
-            }))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "recommended": null,
+                    "also_ready": []
+                }))?
+            );
         } else {
             println!("No issues ready to work on.");
             println!(
@@ -166,22 +172,25 @@ pub fn run(db: &Database, crosslink_dir: &std::path::Path, json: bool) -> Result
             if let Some(parent_id) = issue.parent_id {
                 println!("       (subissue of {})", format_issue_id(parent_id));
             }
-        } else {
-            if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+        } else if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
                     "recommended": null,
                     "also_ready": []
-                }))?);
-            } else {
-                println!("No issues ready to work on.");
-            }
+                }))?
+            );
+        } else {
+            println!("No issues ready to work on.");
         }
         return Ok(());
     }
 
     if json {
         let (top, _, top_progress) = &scored[0];
-        let also: Vec<SuggestedIssue> = scored.iter().skip(1)
+        let also: Vec<SuggestedIssue> = scored
+            .iter()
+            .skip(1)
             .map(|(issue, _, progress)| to_suggested_issue(issue, progress))
             .collect();
         let suggestion = NextSuggestion {

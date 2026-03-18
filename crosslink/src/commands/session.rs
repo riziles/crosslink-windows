@@ -6,7 +6,12 @@ use crate::db::Database;
 use crate::utils::format_issue_id;
 use crate::SessionCommands;
 
-pub fn run(command: SessionCommands, db: &Database, crosslink_dir: &Path, json: bool) -> Result<()> {
+pub fn run(
+    command: SessionCommands,
+    db: &Database,
+    crosslink_dir: &Path,
+    json: bool,
+) -> Result<()> {
     match command {
         SessionCommands::Start => start(db, crosslink_dir),
         SessionCommands::End { notes } => end(db, notes.as_deref(), crosslink_dir),
@@ -133,9 +138,12 @@ pub fn status(db: &Database, crosslink_dir: &std::path::Path, json: bool) -> Res
         Some(s) => s,
         None => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-                    "active": false
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "active": false
+                    }))?
+                );
             } else {
                 println!("No active session. Use 'crosslink session start' to begin.");
             }
@@ -147,7 +155,8 @@ pub fn status(db: &Database, crosslink_dir: &std::path::Path, json: bool) -> Res
     let minutes = duration.num_minutes();
 
     if json {
-        let active_issue = session.active_issue_id
+        let active_issue = session
+            .active_issue_id
             .and_then(|id| db.get_issue(id).ok().flatten());
         let mut obj = serde_json::json!({
             "active": true,
