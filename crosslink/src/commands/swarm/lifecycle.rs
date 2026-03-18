@@ -90,25 +90,42 @@ pub fn archive(crosslink_dir: &Path) -> Result<()> {
         let _ = std::fs::remove_dir_all(sync.cache_path().join(ctx.base));
     }
 
-    // INTENTIONAL: stage/commit/push are best-effort — archive is saved locally even if push fails
     let cache = sync.cache_path();
-    let _ = std::process::Command::new("git")
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args(["add", "-A", "swarm/"])
-        .output();
-    let _ = std::process::Command::new("git")
+        .output()
+    {
+        if !o.status.success() {
+            eprintln!("Warning: git add failed during swarm archive: {}", String::from_utf8_lossy(&o.stderr).trim());
+        }
+    }
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args([
             "commit",
             "-m",
             &format!("swarm: archive '{}' to {}", plan.title, archive_prefix),
         ])
-        .output();
+        .output()
+    {
+        if !o.status.success() {
+            let msg = String::from_utf8_lossy(&o.stderr);
+            if !msg.contains("nothing to commit") {
+                eprintln!("Warning: git commit failed during swarm archive: {}", msg.trim());
+            }
+        }
+    }
     let remote = sync.remote();
-    let _ = std::process::Command::new("git")
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args(["push", remote, crate::sync::HUB_BRANCH])
-        .output();
+        .output()
+    {
+        if !o.status.success() {
+            eprintln!("Warning: could not push swarm archive to hub: {} — archive is saved locally", String::from_utf8_lossy(&o.stderr).trim());
+        }
+    }
 
     println!("Archived swarm '{}' to {}/", plan.title, archive_prefix);
     println!("Active swarm slot is now clear. Run `crosslink swarm init` to start a new swarm.");
@@ -142,21 +159,38 @@ pub fn reset(crosslink_dir: &Path, no_archive: bool) -> Result<()> {
         let _ = std::fs::remove_dir_all(sync.cache_path().join(ctx.base));
     }
 
-    // INTENTIONAL: stage/commit/push are best-effort — reset is saved locally even if push fails
     let cache = sync.cache_path();
-    let _ = std::process::Command::new("git")
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args(["add", "-A", "swarm/"])
-        .output();
-    let _ = std::process::Command::new("git")
+        .output()
+    {
+        if !o.status.success() {
+            eprintln!("Warning: git add failed during swarm reset: {}", String::from_utf8_lossy(&o.stderr).trim());
+        }
+    }
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args(["commit", "-m", "swarm: reset (no archive)"])
-        .output();
+        .output()
+    {
+        if !o.status.success() {
+            let msg = String::from_utf8_lossy(&o.stderr);
+            if !msg.contains("nothing to commit") {
+                eprintln!("Warning: git commit failed during swarm reset: {}", msg.trim());
+            }
+        }
+    }
     let remote = sync.remote();
-    let _ = std::process::Command::new("git")
+    if let Ok(o) = std::process::Command::new("git")
         .current_dir(cache)
         .args(["push", remote, crate::sync::HUB_BRANCH])
-        .output();
+        .output()
+    {
+        if !o.status.success() {
+            eprintln!("Warning: could not push swarm reset to hub: {} — reset is saved locally", String::from_utf8_lossy(&o.stderr).trim());
+        }
+    }
 
     println!("Swarm plan deleted. Active slot is clear.");
     Ok(())

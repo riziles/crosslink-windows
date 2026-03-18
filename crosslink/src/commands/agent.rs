@@ -43,8 +43,9 @@ pub fn run(command: AgentCommands, crosslink_dir: &Path) -> Result<()> {
             // Ensure the agent directory exists on the hub branch
             let cl_dir = target_path.join(".crosslink");
             if let Ok(s) = sync::SyncManager::new(&cl_dir) {
-                // INTENTIONAL: agent dir creation on hub is best-effort — will be created on next sync
-                let _ = s.ensure_agent_dir(&identity);
+                if let Err(e) = s.ensure_agent_dir(&identity) {
+                    eprintln!("Warning: could not create agent dir on hub: {e} — will be created on next sync");
+                }
             }
             Ok(())
         }
@@ -104,8 +105,9 @@ pub fn init(
 
                 // Configure signing on the hub cache worktree
                 if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
-                    // INTENTIONAL: signing config is best-effort — commits will be unsigned if this fails
-                    let _ = sync.configure_signing(crosslink_dir);
+                    if let Err(e) = sync.configure_signing(crosslink_dir) {
+                        eprintln!("Warning: could not configure commit signing: {e} — commits will be unsigned");
+                    }
                 }
             }
             Err(e) => {
@@ -270,12 +272,21 @@ pub fn bootstrap(
         &format!("bootstrap: register agent '{}'", agent_id),
     ])?;
 
-    // INTENTIONAL: push is best-effort — agent registration will be pushed on next sync
     let remote = crate::sync::read_tracker_remote(&crosslink_dir);
-    let _ = Command::new("git")
+    match Command::new("git")
         .current_dir(cache)
         .args(["push", &remote, crate::sync::HUB_BRANCH])
-        .output();
+        .output()
+    {
+        Ok(o) if !o.status.success() => {
+            eprintln!(
+                "Warning: could not push agent registration to hub: {} — will be pushed on next sync",
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+        }
+        Err(e) => eprintln!("Warning: could not push agent registration to hub: {e} — will be pushed on next sync"),
+        Ok(_) => {}
+    }
 
     // Step 8: Publish key to hub (before configuring signing to avoid
     // the chicken-and-egg where signing is required for the publish commit)
@@ -287,8 +298,9 @@ pub fn bootstrap(
     }
 
     // Step 9: Configure signing (after key is published)
-    // INTENTIONAL: signing config is best-effort — commits will be unsigned if this fails
-    let _ = sync.configure_signing(&crosslink_dir);
+    if let Err(e) = sync.configure_signing(&crosslink_dir) {
+        eprintln!("Warning: could not configure commit signing: {e} — commits will be unsigned");
+    }
 
     // Step 10: Print summary
     println!("Bootstrap complete:");

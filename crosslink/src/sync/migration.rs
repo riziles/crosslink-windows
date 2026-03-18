@@ -90,8 +90,9 @@ impl SyncManager {
             .git_in_repo(&["rev-parse", "--verify", OLD_BRANCH])
             .is_ok()
         {
-            // INTENTIONAL: old branch deletion is best-effort — leftover branch is harmless
-            let _ = self.git_in_repo(&["branch", "-D", OLD_BRANCH]);
+            if let Err(e) = self.git_in_repo(&["branch", "-D", OLD_BRANCH]) {
+                eprintln!("Note: could not delete old branch '{OLD_BRANCH}': {e} — you can remove it manually with `git branch -D {OLD_BRANCH}`");
+            }
         }
 
         eprintln!("Migration complete: coordination branch is now crosslink/hub");

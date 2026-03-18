@@ -139,8 +139,9 @@ fn auto_steal_if_configured(
                 "[auto-steal] Lock auto-stolen from agent '{}' (stale for {} min, threshold: {} min)",
                 stale_agent_id, stale_minutes, auto_steal_threshold
             );
-            // INTENTIONAL: audit comment failure is non-fatal — the lock steal succeeded
-            let _ = writer.add_comment(db, issue_id, &comment, "system");
+            if let Err(e) = writer.add_comment(db, issue_id, &comment, "system") {
+                eprintln!("Warning: could not add audit comment for lock steal: {e}");
+            }
         } else {
             return Ok(false);
         }
@@ -154,8 +155,9 @@ fn auto_steal_if_configured(
             "[auto-steal] Lock auto-stolen from agent '{}' (stale for {} min, threshold: {} min)",
             stale_agent_id, stale_minutes, auto_steal_threshold
         );
-        // INTENTIONAL: audit comment failure is non-fatal — the lock steal succeeded
-        let _ = db.add_comment(issue_id, &comment, "system");
+        if let Err(e) = db.add_comment(issue_id, &comment, "system") {
+            eprintln!("Warning: could not add audit comment for lock steal: {e}");
+        }
     }
 
     Ok(true)

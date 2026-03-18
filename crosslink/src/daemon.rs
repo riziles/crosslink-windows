@@ -133,9 +133,14 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let flag = Arc::clone(&should_exit);
-        // INTENTIONAL: signal registration is best-effort — daemon still works without graceful shutdown
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag));
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag));
+        if let Err(e) =
+            signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))
+        {
+            eprintln!("Warning: could not register SIGTERM handler: {e} — graceful shutdown unavailable");
+        }
+        if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGINT, flag) {
+            eprintln!("Warning: could not register SIGINT handler: {e} — graceful shutdown unavailable");
+        }
     }
 
     // Zombie prevention: Monitor stdin for closure.

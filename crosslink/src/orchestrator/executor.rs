@@ -141,9 +141,12 @@ impl OrchestratorExecutor {
                     "high",
                 )
                 .context("Failed to create phase parent issue")?;
-            // INTENTIONAL: label failures are non-fatal — the issue was created successfully
-            let _ = db.add_label(phase_issue_id, "orchestrator");
-            let _ = db.add_label(phase_issue_id, "phase");
+            if let Err(e) = db.add_label(phase_issue_id, "orchestrator") {
+                eprintln!("Warning: could not label phase issue #{phase_issue_id}: {e}");
+            }
+            if let Err(e) = db.add_label(phase_issue_id, "phase") {
+                eprintln!("Warning: could not label phase issue #{phase_issue_id}: {e}");
+            }
             phase_issues.insert(phase.id.clone(), phase_issue_id);
         }
 
@@ -165,13 +168,18 @@ impl OrchestratorExecutor {
                     )
                     .context("Failed to create stage subissue")?;
 
-                // INTENTIONAL: label/milestone failures are non-fatal — the issue was created successfully
-                let _ = db.add_label(issue_id, "orchestrator");
-                let _ = db.add_label(issue_id, "stage");
+                if let Err(e) = db.add_label(issue_id, "orchestrator") {
+                    eprintln!("Warning: could not label stage issue #{issue_id}: {e}");
+                }
+                if let Err(e) = db.add_label(issue_id, "stage") {
+                    eprintln!("Warning: could not label stage issue #{issue_id}: {e}");
+                }
 
                 // Assign to phase milestone.
                 let milestone_id = phase_milestones[&phase.id];
-                let _ = db.add_issue_to_milestone(milestone_id, issue_id);
+                if let Err(e) = db.add_issue_to_milestone(milestone_id, issue_id) {
+                    eprintln!("Warning: could not add stage issue #{issue_id} to milestone #{milestone_id}: {e}");
+                }
 
                 stage_issue_map.insert(stage.id.clone(), issue_id);
                 dag.set_issue_id(&stage.id, issue_id)?;
@@ -184,8 +192,9 @@ impl OrchestratorExecutor {
                 let blocked_id = stage_issue_map[&stage.id];
                 for dep_id in &stage.depends_on {
                     if let Some(&blocker_id) = stage_issue_map.get(dep_id) {
-                        // INTENTIONAL: dependency failures are non-fatal — execution proceeds without the graph edge
-                        let _ = db.add_dependency(blocked_id, blocker_id);
+                        if let Err(e) = db.add_dependency(blocked_id, blocker_id) {
+                            eprintln!("Warning: could not set dependency #{blocker_id} -> #{blocked_id}: {e}");
+                        }
                     }
                 }
             }
@@ -376,8 +385,9 @@ impl OrchestratorExecutor {
 
         // Close the stage's crosslink issue.
         if let Some(issue_id) = self.snapshot.dag.get(stage_id).and_then(|n| n.issue_id) {
-            // INTENTIONAL: close failure is non-fatal — execution proceeds regardless
-            let _ = db.close_issue(issue_id);
+            if let Err(e) = db.close_issue(issue_id) {
+                eprintln!("Warning: could not close stage issue #{issue_id}: {e}");
+            }
         }
 
         let newly_ready = self.snapshot.dag.mark_done(stage_id)?;
@@ -385,12 +395,15 @@ impl OrchestratorExecutor {
         // Check if the phase is complete (all stages in this phase are done).
         let phase_complete = self.check_phase_complete(&phase_id);
         if phase_complete {
-            // INTENTIONAL: close failures are non-fatal — execution proceeds regardless
             if let Some(&milestone_id) = self.snapshot.phase_milestones.get(&phase_id) {
-                let _ = db.close_milestone(milestone_id);
+                if let Err(e) = db.close_milestone(milestone_id) {
+                    eprintln!("Warning: could not close phase milestone #{milestone_id}: {e}");
+                }
             }
             if let Some(&phase_issue_id) = self.snapshot.phase_issues.get(&phase_id) {
-                let _ = db.close_issue(phase_issue_id);
+                if let Err(e) = db.close_issue(phase_issue_id) {
+                    eprintln!("Warning: could not close phase issue #{phase_issue_id}: {e}");
+                }
             }
         }
 

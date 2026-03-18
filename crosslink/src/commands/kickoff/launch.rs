@@ -343,14 +343,15 @@ pub(super) fn init_worktree_agent(
     if wt_crosslink.exists() {
         // Only init if not already configured
         if AgentConfig::load(&wt_crosslink)?.is_none() {
-            // INTENTIONAL: agent init failure is non-fatal — agent can still work without its own identity
-            let _ = super::super::agent::init(
+            if let Err(e) = super::super::agent::init(
                 &wt_crosslink,
                 &agent_id,
                 Some(&format!("Kickoff agent for: {}", slug)),
                 true, // no-key: inherit parent's key
                 false,
-            );
+            ) {
+                eprintln!("Warning: could not initialize agent identity in worktree: {e} — agent will work without its own identity");
+            }
 
             // Copy parent's SSH key info into the new agent config and publish
             // the key under the new agent ID so `crosslink trust approve` can find it.
@@ -363,8 +364,9 @@ pub(super) fn init_worktree_agent(
 
                         let agent_json = wt_crosslink.join("agent.json");
                         if let Ok(json) = serde_json::to_string_pretty(&child_config) {
-                            // INTENTIONAL: agent config write is best-effort — agent can work with inherited config
-                            let _ = std::fs::write(&agent_json, json);
+                            if let Err(e) = std::fs::write(&agent_json, json) {
+                                eprintln!("Warning: could not write agent config to {}: {e} — agent will use inherited config", agent_json.display());
+                            }
                         }
 
                         // Publish the parent's public key under the new agent ID
