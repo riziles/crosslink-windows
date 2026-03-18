@@ -64,12 +64,10 @@ impl CompactionLockGuard {
             let is_self = info.agent_id == agent_id;
 
             if is_stale || (force && is_self) {
-                // INTENTIONAL: lock file removal is best-effort — try_create below handles the race
                 let _ = fs::remove_file(&path);
                 return Self::try_create(&path, agent_id).map(Some).or(Ok(None));
             }
         } else if force {
-            // INTENTIONAL: lock file removal is best-effort — try_create below handles the race
             let _ = fs::remove_file(&path);
             return Self::try_create(&path, agent_id).map(Some).or(Ok(None));
         }
@@ -114,7 +112,6 @@ impl CompactionLockGuard {
 
 impl Drop for CompactionLockGuard {
     fn drop(&mut self) {
-        // INTENTIONAL: lock cleanup in Drop is best-effort — stale locks are handled on next acquisition
         let _ = fs::remove_file(&self.path);
     }
 }
@@ -194,8 +191,11 @@ pub fn compact(cache_dir: &Path, agent_id: &str, force: bool) -> Result<Option<C
 
     if all_events.is_empty() && watermark.is_some() {
         // Still run git-based skew detection even with no new events
-        let git_violations =
-            crate::clock_skew::detect_git_skew_violations(cache_dir).unwrap_or_default();
+        let git_violations = crate::clock_skew::detect_git_skew_violations(cache_dir)
+            .unwrap_or_else(|e| {
+                eprintln!("warning: git skew detection failed, defaulting to no violations: {e}");
+                Vec::new()
+            });
         let git_skew_violations = git_violations.len();
         crate::clock_skew::write_skew_violations(cache_dir, &git_violations)?;
 
@@ -252,7 +252,10 @@ pub fn compact(cache_dir: &Path, agent_id: &str, force: bool) -> Result<Option<C
 
     // Run git-based clock skew detection
     let git_violations =
-        crate::clock_skew::detect_git_skew_violations(cache_dir).unwrap_or_default();
+        crate::clock_skew::detect_git_skew_violations(cache_dir).unwrap_or_else(|e| {
+            eprintln!("warning: git skew detection failed, defaulting to no violations: {e}");
+            Vec::new()
+        });
     let git_skew_violations = git_violations.len();
     crate::clock_skew::write_skew_violations(cache_dir, &git_violations)?;
 

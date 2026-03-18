@@ -174,7 +174,37 @@ impl SharedWriter {
 
     /// Derive the `.crosslink/` directory from the cache path.
     pub(super) fn crosslink_dir(&self) -> &Path {
-        self.cache_dir.parent().unwrap_or(&self.cache_dir)
+        self.cache_dir.parent().unwrap_or_else(|| {
+            eprintln!("Warning: cache_dir has no parent, falling back to cache_dir itself");
+            &self.cache_dir
+        })
+    }
+
+    /// Hydrate hub cache into SQLite with a single retry on failure.
+    ///
+    /// If the first attempt fails, prints a warning and retries once.
+    /// If the retry also fails, warns the user to run `crosslink sync`
+    /// and returns `Ok(())` so the caller can continue gracefully.
+    pub fn hydrate_with_retry(&self, db: &Database) -> Result<()> {
+        match crate::hydration::hydrate_to_sqlite(&self.cache_dir, db) {
+            Ok(_) => Ok(()),
+            Err(first_err) => {
+                eprintln!(
+                    "Warning: hydration failed ({}), retrying once...",
+                    first_err
+                );
+                match crate::hydration::hydrate_to_sqlite(&self.cache_dir, db) {
+                    Ok(_) => Ok(()),
+                    Err(retry_err) => {
+                        eprintln!(
+                            "Warning: hydration retry failed ({}). Run `crosslink sync` to recover.",
+                            retry_err
+                        );
+                        Ok(())
+                    }
+                }
+            }
+        }
     }
 
     /// Path to the promoted-UUIDs tracking file (machine-local, not shared).

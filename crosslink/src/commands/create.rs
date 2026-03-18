@@ -6,6 +6,34 @@ use crate::utils::format_issue_id;
 
 const VALID_PRIORITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 
+/// Best-effort lock release: tries v2 first, then falls back to v1.
+/// Mirrors the helper in `session.rs`.
+fn release_lock_best_effort(crosslink_dir: &std::path::Path, issue_id: i64) {
+    if let Ok(Some(agent)) = crate::identity::AgentConfig::load(crosslink_dir) {
+        if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
+            if sync.is_initialized() {
+                if sync.is_v2_layout() {
+                    if let Ok(Some(writer)) = SharedWriter::new(crosslink_dir) {
+                        if let Err(e) = writer.release_lock_v2(issue_id) {
+                            eprintln!(
+                                "Warning: Could not release lock on {}: {}",
+                                format_issue_id(issue_id),
+                                e
+                            );
+                        }
+                    }
+                } else if let Err(e) = sync.release_lock(&agent, issue_id, false) {
+                    eprintln!(
+                        "Warning: Could not release lock on {}: {}",
+                        format_issue_id(issue_id),
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Built-in issue templates
 pub struct Template {
     pub name: &'static str,
@@ -184,6 +212,8 @@ pub fn run(
 
     // Set as active session work item
     if opts.work {
+        let mut freshly_claimed = false;
+
         // Check lock status before allowing work on this issue
         if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id, db)?;
@@ -196,6 +226,7 @@ pub fn run(
                             if let Ok(Some(writer)) = SharedWriter::new(dir) {
                                 match writer.claim_lock_v2(id, None) {
                                     Ok(crate::shared_writer::LockClaimResult::Claimed) => {
+                                        freshly_claimed = true;
                                         if !opts.quiet {
                                             println!(
                                                 "Auto-claimed lock on issue {}",
@@ -221,6 +252,7 @@ pub fn run(
                         } else {
                             match sync.claim_lock(&agent, id, None, false) {
                                 Ok(true) => {
+                                    freshly_claimed = true;
                                     if !opts.quiet {
                                         println!(
                                             "Auto-claimed lock on issue {}",
@@ -243,7 +275,16 @@ pub fn run(
                 .map(|a| a.agent_id)
         });
         if let Ok(Some(session)) = db.get_current_session_for_agent(agent_id.as_deref()) {
-            db.set_session_issue(session.id, id)?;
+            // If set_session_issue fails after we claimed a lock, release the lock
+            // to avoid orphaned locks.
+            if let Err(e) = db.set_session_issue(session.id, id) {
+                if freshly_claimed {
+                    if let Some(dir) = opts.crosslink_dir {
+                        release_lock_best_effort(dir, id);
+                    }
+                }
+                return Err(e.into());
+            }
             if !opts.quiet {
                 println!("Now working on: {} {}", format_issue_id(id), title);
             }
@@ -314,6 +355,8 @@ pub fn run_subissue(
 
     // Set as active session work item
     if opts.work {
+        let mut freshly_claimed = false;
+
         // Check lock status before allowing work on this issue
         if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id, db)?;
@@ -326,6 +369,7 @@ pub fn run_subissue(
                             if let Ok(Some(writer)) = SharedWriter::new(dir) {
                                 match writer.claim_lock_v2(id, None) {
                                     Ok(crate::shared_writer::LockClaimResult::Claimed) => {
+                                        freshly_claimed = true;
                                         if !opts.quiet {
                                             println!(
                                                 "Auto-claimed lock on issue {}",
@@ -351,6 +395,7 @@ pub fn run_subissue(
                         } else {
                             match sync.claim_lock(&agent, id, None, false) {
                                 Ok(true) => {
+                                    freshly_claimed = true;
                                     if !opts.quiet {
                                         println!(
                                             "Auto-claimed lock on issue {}",
@@ -373,7 +418,16 @@ pub fn run_subissue(
                 .map(|a| a.agent_id)
         });
         if let Ok(Some(session)) = db.get_current_session_for_agent(agent_id.as_deref()) {
-            db.set_session_issue(session.id, id)?;
+            // If set_session_issue fails after we claimed a lock, release the lock
+            // to avoid orphaned locks.
+            if let Err(e) = db.set_session_issue(session.id, id) {
+                if freshly_claimed {
+                    if let Some(dir) = opts.crosslink_dir {
+                        release_lock_best_effort(dir, id);
+                    }
+                }
+                return Err(e.into());
+            }
             if !opts.quiet {
                 println!("Now working on: {} {}", format_issue_id(id), title);
             }

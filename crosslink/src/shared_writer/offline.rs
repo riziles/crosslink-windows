@@ -5,7 +5,6 @@ use std::cell::Cell;
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::hydration::hydrate_to_sqlite;
 use crate::issue_file::read_issue_file;
 
 use super::core::{PushOutcome, SharedWriter, WriteSet};
@@ -143,7 +142,7 @@ impl SharedWriter {
         }
 
         // Re-hydrate with new positive IDs
-        hydrate_to_sqlite(&self.cache_dir, db)?;
+        self.hydrate_with_retry(db)?;
 
         // Record promoted UUIDs so they are never re-promoted (gh#313).
         let promoted_uuids: Vec<Uuid> = offline_info.iter().map(|(uuid, _)| *uuid).collect();
