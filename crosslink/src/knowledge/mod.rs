@@ -1,5 +1,5 @@
 mod core;
-mod edit;
+pub mod edit;
 mod pages;
 mod search;
 mod sync;
@@ -14,7 +14,3 @@ pub use self::core::{
     KnowledgeManager, PageFrontmatter, PageInfo, SearchMatch, Source, SyncOutcome,
     KNOWLEDGE_BRANCH, KNOWLEDGE_CACHE_DIR,
 };
-
-// Re-export edit helpers used by commands/knowledge/operations.rs
-#[allow(unused_imports)]
-pub use self::edit::{append_to_section_content, extract_body, replace_section_content, truncate};

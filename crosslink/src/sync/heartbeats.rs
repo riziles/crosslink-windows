@@ -50,9 +50,7 @@ impl SyncManager {
             if err_str.contains("Could not resolve host")
                 || err_str.contains("Could not read from remote")
             {
-                eprintln!(
-                    "Warning: heartbeat push failed (offline), changes saved locally only"
-                );
+                eprintln!("Warning: heartbeat push failed (offline), changes saved locally only");
                 return Ok(());
             }
             // If push is rejected (conflict), clean dirty state and try pull+push once
@@ -62,9 +60,7 @@ impl SyncManager {
 
                 let _ = self.clean_dirty_state();
                 let _ = self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
-                if let Err(retry_err) =
-                    self.git_in_cache(&["push", &self.remote, HUB_BRANCH])
-                {
+                if let Err(retry_err) = self.git_in_cache(&["push", &self.remote, HUB_BRANCH]) {
                     eprintln!(
                         "Warning: heartbeat push failed after retry (conflict), changes saved locally only: {}",
                         retry_err
@@ -207,8 +203,8 @@ impl SyncManager {
                         if attempt < 2 {
                             // Bail if local has diverged too far — sign of a rebase loop
                             self.check_divergence()?;
-                            let _ = self
-                                .git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
+                            let _ =
+                                self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
                             continue;
                         }
                         bail!("Push failed after 3 retries for agent dir {}", agent_id);

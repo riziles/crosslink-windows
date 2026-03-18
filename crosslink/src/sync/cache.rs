@@ -186,8 +186,7 @@ impl SyncManager {
         // Check for unpushed local commits (e.g. offline-created issues).
         // If any exist, rebase instead of reset --hard to preserve them.
         let remote_ref = format!("{}/{}", self.remote, HUB_BRANCH);
-        let log_result =
-            self.git_in_cache(&["log", &format!("{}..HEAD", remote_ref), "--oneline"]);
+        let log_result = self.git_in_cache(&["log", &format!("{}..HEAD", remote_ref), "--oneline"]);
         if let Ok(output) = &log_result {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.trim().is_empty() {

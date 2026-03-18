@@ -121,17 +121,15 @@ impl SyncManager {
             locks.locks.insert(issue_id.to_string(), lock);
             locks.save(&self.cache_dir.join("locks.json"))?;
 
-            match self.commit_and_push_locks(&format!(
-                "{}: claim lock on #{}",
-                agent.agent_id, issue_id
-            )) {
+            match self
+                .commit_and_push_locks(&format!("{}: claim lock on #{}", agent.agent_id, issue_id))
+            {
                 Ok(()) => return Ok(true),
                 Err(e) => {
                     let err_str = e.to_string();
                     if err_str.contains("Push failed after") && attempt < 2 {
                         // Push conflict — pull latest and re-check lock ownership
-                        let _ =
-                            self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
+                        let _ = self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
                         continue;
                     }
                     return Err(e);

@@ -1,7 +1,7 @@
 use super::*;
-use chrono::Utc;
 use crate::identity::AgentConfig;
 use crate::locks::{Heartbeat, Keyring, LocksFile};
+use chrono::Utc;
 use std::path::Path;
 use std::process::Command;
 use tempfile::tempdir;
@@ -2214,11 +2214,7 @@ fn test_fetch_with_unpushed_local_commits_and_remote() {
         .unwrap();
 
     // Make a local commit (not pushed)
-    std::fs::write(
-        manager.cache_dir.join("test-local.txt"),
-        "local change\n",
-    )
-    .unwrap();
+    std::fs::write(manager.cache_dir.join("test-local.txt"), "local change\n").unwrap();
     manager.git_in_cache(&["add", "test-local.txt"]).unwrap();
     manager
         .git_in_cache(&["commit", "-m", "local unpushed commit"])
@@ -2369,11 +2365,7 @@ fn test_migrate_from_locks_branch_with_old_local_cache() {
     // Create old .locks-cache directory (simulates leftover from old version)
     let old_cache = crosslink_dir.join(OLD_CACHE_DIR);
     std::fs::create_dir_all(&old_cache).unwrap();
-    std::fs::write(
-        old_cache.join("locks.json"),
-        r#"{"version":1,"locks":{}}"#,
-    )
-    .unwrap();
+    std::fs::write(old_cache.join("locks.json"), r#"{"version":1,"locks":{}}"#).unwrap();
 
     let manager = SyncManager::new(&crosslink_dir).unwrap();
 

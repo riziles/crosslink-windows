@@ -289,9 +289,7 @@ impl SyncManager {
                 fingerprint,
                 principal,
             })
-        } else if stderr.contains("NODATA")
-            || stderr.contains("no signature")
-            || stderr.is_empty()
+        } else if stderr.contains("NODATA") || stderr.contains("no signature") || stderr.is_empty()
         {
             Ok(SignatureVerification::Unsigned { commit })
         } else if stderr.contains("allowedSignersFile needs to be configured") {
