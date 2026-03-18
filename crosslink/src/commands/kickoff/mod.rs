@@ -834,10 +834,9 @@ pub(crate) fn build_prompt(
 ## Environment
 
 You are running in a git worktree — an isolated working directory that shares git objects with
-the main repo. Issue mutations (create, comment, close) are synced to the crosslink/hub branch
-via SharedWriter, making them visible to other agents and the driver. If sync fails, changes are
-saved locally and will be pushed on the next successful `crosslink sync`. Other agents may be
-working concurrently in different worktrees.
+the main repo. The `.crosslink/issues.db` is shared across all worktrees via the crosslink/hub
+branch. Other agents may be working concurrently in different worktrees. If you need to see the
+latest state from other agents, run `crosslink sync`.
 
 ## Blocked Actions
 
@@ -1362,10 +1361,7 @@ while true; do
         NOW=$(date +%s)
         AGE=$((NOW - LAST))
         if [ "$AGE" -gt {staleness} ]; then
-            if [ "$NUDGES" -ge {max_nudges} ]; then
-                echo "STALLED (inactive for ${{AGE}}s after ${{NUDGES}} nudges)" > "{worktree}/.kickoff-status"
-                exit 1
-            fi
+            if [ "$NUDGES" -ge {max_nudges} ]; then exit 1; fi
             NUDGES=$((NUDGES + 1))
             tmux send-keys -t "{session}" "continue working, the task is not yet complete" Enter
         fi
@@ -1654,27 +1650,6 @@ fn init_worktree_agent(worktree_dir: &Path, crosslink_dir: &Path, slug: &str) ->
         }
     }
 
-    // Verify SharedWriter is functional — this is the mechanism that syncs
-    // agent issue mutations back to the hub branch. If it fails here, agent
-    // writes will be local-only (the core bug described in #372).
-    let wt_crosslink = worktree_dir.join(".crosslink");
-    match crate::shared_writer::SharedWriter::new(&wt_crosslink) {
-        Ok(Some(_)) => {} // SharedWriter operational
-        Ok(None) => {
-            eprintln!(
-                "Warning: SharedWriter not available in worktree. \
-                 Agent issue mutations will be local-only until sync is configured."
-            );
-        }
-        Err(e) => {
-            eprintln!(
-                "Warning: SharedWriter failed to initialize in worktree: {}. \
-                 Agent issue mutations will be local-only.",
-                e
-            );
-        }
-    }
-
     Ok(agent_id)
 }
 
@@ -1760,18 +1735,9 @@ fn launch_local(
     std::fs::write(worktree_dir.join(".kickoff-status"), "LAUNCHING\n")
         .context("Failed to write initial .kickoff-status")?;
 
-    // Wrap the command so .kickoff-status is written on exit regardless
-    // of how the agent session ends (normal completion, crash, timeout).
-    // This prevents #394 where agents finish work but can't write DONE
-    // because their session dropped and hooks block cleanup steps.
-    let wrapped_cmd = format!(
-        "{}; STATUS=$?; if [ $STATUS -eq 0 ]; then echo DONE > .kickoff-status; else echo \"FAILED (exit $STATUS)\" > .kickoff-status; fi",
-        cmd
-    );
-
     // Send the command to the tmux session
     let output = Command::new("tmux")
-        .args(["send-keys", "-t", session_name, &wrapped_cmd, "Enter"])
+        .args(["send-keys", "-t", session_name, &cmd, "Enter"])
         .output()
         .context("Failed to send command to tmux session")?;
 
@@ -3345,11 +3311,9 @@ pub fn plan(crosslink_dir: &Path, db: &Database, opts: &PlanOpts) -> Result<()> 
 
 /// Display a gap report from a previous plan analysis.
 pub fn show_plan(crosslink_dir: &Path, agent: &str) -> Result<()> {
-    let local_root = crosslink_dir
+    let root = crosslink_dir
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Cannot determine repo root"))?;
-    let root = crate::utils::resolve_main_repo_root(local_root)
-        .unwrap_or_else(|| local_root.to_path_buf());
 
     let slug = agent
         .strip_prefix("feature/")
@@ -4584,7 +4548,6 @@ end"#,
             title: "Batch Retry".to_string(),
             summary: "Add retry logic.".to_string(),
             requirements: vec!["REQ-1: Retry 3 times".to_string()],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: Tests pass".to_string()],
             architecture: "Middleware pattern".to_string(),
             open_questions: Vec::new(),
@@ -4629,7 +4592,6 @@ end"#,
             title: "Batch Retry".to_string(),
             summary: "Add retry logic.".to_string(),
             requirements: vec!["REQ-1: Retry 3 times".to_string()],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: Tests pass".to_string()],
             architecture: "Middleware".to_string(),
             open_questions: Vec::new(),
@@ -4657,7 +4619,6 @@ end"#,
             title: "Auth".to_string(),
             summary: String::new(),
             requirements: Vec::new(),
-            requirement_groups: Vec::new(),
             acceptance_criteria: Vec::new(),
             architecture: String::new(),
             open_questions: vec!["Q1: OAuth or JWT?".to_string()],
@@ -4678,7 +4639,6 @@ end"#,
             title: "Test".to_string(),
             summary: "S".to_string(),
             requirements: Vec::new(),
-            requirement_groups: Vec::new(),
             acceptance_criteria: Vec::new(),
             architecture: String::new(),
             open_questions: Vec::new(),
@@ -4726,7 +4686,6 @@ end"#,
             title: "Auth Feature".to_string(),
             summary: "Add auth.".to_string(),
             requirements: vec!["REQ-1: Login".to_string()],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: Can log in".to_string()],
             architecture: String::new(),
             open_questions: vec![
@@ -4801,7 +4760,6 @@ end"#,
             title: String::new(),
             summary: String::new(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: First".to_string(), "AC-2: Second".to_string()],
             architecture: String::new(),
             open_questions: vec![],
@@ -4823,7 +4781,6 @@ end"#,
             title: String::new(),
             summary: String::new(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["First item".to_string(), "Second item".to_string()],
             architecture: String::new(),
             open_questions: vec![],
@@ -4844,7 +4801,6 @@ end"#,
             title: String::new(),
             summary: String::new(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec![
                 "AC-1: Explicit first".to_string(),
                 "Auto assigned".to_string(),
@@ -4905,7 +4861,6 @@ end"#,
             title: "Test".to_string(),
             summary: "Summary".to_string(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["Users can log in".to_string()],
             architecture: String::new(),
             open_questions: vec![],
@@ -4945,7 +4900,6 @@ end"#,
             title: "Test".to_string(),
             summary: "Summary".to_string(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec![],
             architecture: String::new(),
             open_questions: vec![],
@@ -4982,7 +4936,6 @@ end"#,
             title: "Test".to_string(),
             summary: "Summary".to_string(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["Criterion one".to_string()],
             architecture: String::new(),
             open_questions: vec![],
@@ -5637,7 +5590,6 @@ end"#,
             title: "Test Feature".to_string(),
             summary: String::new(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: Widget renders".to_string()],
             architecture: String::new(),
             open_questions: vec![],
@@ -5684,7 +5636,6 @@ end"#,
             title: "Validated Feature".to_string(),
             summary: String::new(),
             requirements: vec![],
-            requirement_groups: Vec::new(),
             acceptance_criteria: vec!["AC-1: Must work".to_string()],
             architecture: String::new(),
             open_questions: vec![],
