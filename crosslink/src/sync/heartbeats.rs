@@ -62,8 +62,8 @@ impl SyncManager {
                 let _ = self.clean_dirty_state();
                 let _ = self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
                 if let Err(retry_err) = self.git_in_cache(&["push", &self.remote, HUB_BRANCH]) {
-                    eprintln!(
-                        "Warning: heartbeat push failed after retry (conflict), changes saved locally only: {}",
+                    tracing::warn!(
+                        "heartbeat push failed after retry (conflict), changes saved locally only: {}",
                         retry_err
                     );
                 }

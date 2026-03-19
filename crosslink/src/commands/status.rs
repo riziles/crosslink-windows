@@ -216,11 +216,7 @@ pub fn close_all(
     for issue in &issues {
         match close(db, writer, issue.id, update_changelog, crosslink_dir) {
             Ok(()) => closed_count += 1,
-            Err(e) => eprintln!(
-                "Warning: Failed to close {}: {}",
-                format_issue_id(issue.id),
-                e
-            ),
+            Err(e) => tracing::warn!("Failed to close {}: {}", format_issue_id(issue.id), e),
         }
     }
 

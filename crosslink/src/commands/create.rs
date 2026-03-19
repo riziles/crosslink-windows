@@ -15,16 +15,16 @@ fn release_lock_best_effort(crosslink_dir: &std::path::Path, issue_id: i64) {
                 if sync.is_v2_layout() {
                     if let Ok(Some(writer)) = SharedWriter::new(crosslink_dir) {
                         if let Err(e) = writer.release_lock_v2(issue_id) {
-                            eprintln!(
-                                "Warning: Could not release lock on {}: {}",
+                            tracing::warn!(
+                                "Could not release lock on {}: {}",
                                 format_issue_id(issue_id),
                                 e
                             );
                         }
                     }
                 } else if let Err(e) = sync.release_lock(&agent, issue_id, false) {
-                    eprintln!(
-                        "Warning: Could not release lock on {}: {}",
+                    tracing::warn!(
+                        "Could not release lock on {}: {}",
                         format_issue_id(issue_id),
                         e
                     );
@@ -238,8 +238,8 @@ pub fn run(
                                     Ok(crate::shared_writer::LockClaimResult::Contended {
                                         winner_agent_id,
                                     }) => {
-                                        eprintln!(
-                                            "Warning: Lock on {} won by '{}'",
+                                        tracing::warn!(
+                                            "Lock on {} won by '{}'",
                                             format_issue_id(id),
                                             winner_agent_id
                                         );
@@ -381,8 +381,8 @@ pub fn run_subissue(
                                     Ok(crate::shared_writer::LockClaimResult::Contended {
                                         winner_agent_id,
                                     }) => {
-                                        eprintln!(
-                                            "Warning: Lock on {} won by '{}'",
+                                        tracing::warn!(
+                                            "Lock on {} won by '{}'",
                                             format_issue_id(id),
                                             winner_agent_id
                                         );

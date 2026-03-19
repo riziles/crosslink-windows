@@ -375,11 +375,10 @@ pub(super) fn init_worktree_agent(
                             &agent_id,
                             public_key,
                         ) {
-                            eprintln!(
-                                "Warning: Could not publish key for agent '{}': {}",
+                            tracing::warn!(
+                                "Could not publish key for agent '{}': {} — key will be auto-published on next `crosslink sync`.",
                                 agent_id, e
                             );
-                            eprintln!("Key will be auto-published on next `crosslink sync`.");
                         }
                     }
                 }

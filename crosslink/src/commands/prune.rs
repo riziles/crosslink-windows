@@ -314,7 +314,7 @@ fn squash_branch(
 pub fn run(crosslink_dir: &Path, opts: &PruneOpts, json: bool) -> Result<()> {
     if !opts.force && !opts.dry_run {
         tracing::warn!("This will rewrite branch history and force-push.");
-        eprintln!("Use --force to confirm, or --dry-run to preview.");
+        println!("Use --force to confirm, or --dry-run to preview.");
         return Ok(());
     }
 
@@ -373,7 +373,7 @@ pub fn run(crosslink_dir: &Path, opts: &PruneOpts, json: bool) -> Result<()> {
             )?;
             results.push(stats);
         } else {
-            eprintln!("Knowledge branch not initialized, skipping.");
+            tracing::info!("Knowledge branch not initialized, skipping.");
         }
     }
 

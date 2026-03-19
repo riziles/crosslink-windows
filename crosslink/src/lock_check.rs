@@ -176,7 +176,8 @@ pub fn enforce_lock(crosslink_dir: &Path, issue_id: i64, db: &Database) -> Resul
                     Ok(true) => {
                         tracing::info!(
                             "Auto-stole stale lock on issue #{} from '{}'.",
-                            issue_id, agent_id
+                            issue_id,
+                            agent_id
                         );
                         return Ok(());
                     }
@@ -184,14 +185,16 @@ pub fn enforce_lock(crosslink_dir: &Path, issue_id: i64, db: &Database) -> Resul
                     Err(e) => {
                         tracing::warn!(
                             "Auto-steal of stale lock on #{} failed: {}. Proceeding.",
-                            issue_id, e
+                            issue_id,
+                            e
                         );
                     }
                 }
 
                 tracing::warn!(
                     "Issue #{} is locked by '{}' but the lock appears STALE. Proceeding.",
-                    issue_id, agent_id
+                    issue_id,
+                    agent_id
                 );
                 Ok(())
             } else {

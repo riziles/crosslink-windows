@@ -258,8 +258,8 @@ pub fn steal(crosslink_dir: &Path, issue_id: i64) -> Result<()> {
         let is_stale = stale_locks.iter().any(|(id, _)| *id == issue_id);
 
         if !is_stale {
-            eprintln!(
-                "Warning: Lock on {} held by '{}' is NOT stale. Stealing anyway.",
+            tracing::warn!(
+                "Lock on {} held by '{}' is NOT stale. Stealing anyway.",
                 format_issue_id(issue_id),
                 existing.agent_id
             );

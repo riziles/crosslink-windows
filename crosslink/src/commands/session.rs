@@ -110,8 +110,8 @@ pub fn end(db: &Database, notes: Option<&str>, crosslink_dir: &std::path::Path) 
         match crate::shared_writer::SharedWriter::new(crosslink_dir) {
             Ok(Some(w)) => {
                 if let Err(e) = w.add_comment(db, issue_id, notes_text, "handoff") {
-                    eprintln!(
-                        "Warning: Handoff notes saved locally but could not be synced to hub: {}",
+                    tracing::warn!(
+                        "Handoff notes saved locally but could not be synced to hub: {}",
                         e
                     );
                     if let Err(e) = db.add_comment(issue_id, notes_text, "handoff") {
