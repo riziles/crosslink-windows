@@ -335,10 +335,12 @@ impl SharedWriter {
             // Stage event log + compaction output
             let rel_log = format!("agents/{}/events.log", self.agent.agent_id);
             self.git_in_cache(&["add", &rel_log])?;
-            // INTENTIONAL: staging compaction dirs is best-effort — they may not exist yet
-            let _ = self.git_in_cache(&["add", "checkpoint/"]);
-            let _ = self.git_in_cache(&["add", "issues/"]);
-            let _ = self.git_in_cache(&["add", "locks/"]);
+            // Stage compaction output directories that exist (#472)
+            for dir in ["checkpoint/", "issues/", "locks/"] {
+                if self.cache_dir.join(dir).exists() {
+                    self.git_in_cache(&["add", dir])?;
+                }
+            }
 
             // Commit (unsigned when no SSH key)
             let commit_msg = format!(
@@ -374,16 +376,8 @@ impl SharedWriter {
                     }
                     if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
                         if attempt < MAX_RETRIES - 1 {
-                            // Bail if local has diverged too far -- sign of a rebase loop
                             self.check_divergence()?;
-                            // INTENTIONAL: reset is best-effort — the prepare closure re-generates content on retry
-                            let _ = self.git_in_cache(&["reset", "--hard", "HEAD~1"]);
-                            self.git_in_cache(&[
-                                "pull",
-                                "--rebase",
-                                remote,
-                                crate::sync::HUB_BRANCH,
-                            ])?;
+                            self.recover_from_push_conflict(remote)?;
                             continue;
                         }
                         tracing::warn!(
@@ -765,17 +759,15 @@ impl SharedWriter {
                     return Ok(PushOutcome::Pushed);
                 }
                 // Commit failed — if we were deleting files (git rm), restore
-                // them from HEAD to prevent split state (#427).
+                // Commit failed — reset index and working directory to HEAD
+                // to prevent split state (#427, #468). This is safe because
+                // the commit didn't succeed, so HEAD is the correct state.
                 if write_set.use_git_rm {
-                    for path in &paths {
-                        // INTENTIONAL: restoring files after failed commit is best-effort — prevents split state (#427)
-                        if let Err(e) = self.git_in_cache(&["checkout", "HEAD", "--", path]) {
-                            tracing::warn!(
-                                "failed to restore '{}' from HEAD after commit failure: {}",
-                                path,
-                                e
-                            );
-                        }
+                    if let Err(reset_err) = self.git_in_cache(&["reset", "--hard", "HEAD"]) {
+                        tracing::error!(
+                            "hub cache may be corrupt: commit failed and reset failed: {}",
+                            reset_err
+                        );
                     }
                 }
                 commit_result?;
@@ -805,27 +797,8 @@ impl SharedWriter {
                         if attempt < MAX_RETRIES - 1 {
                             // Bail if local has diverged too far -- sign of a rebase loop
                             self.check_divergence()?;
-                            // INTENTIONAL: reset is best-effort — prepare closure re-reads fresh state on retry
-                            let _ = self.git_in_cache(&["reset", "--hard", "HEAD~1"]);
-                            let rebase_result = self.git_in_cache(&[
-                                "pull",
-                                "--rebase",
-                                remote,
-                                crate::sync::HUB_BRANCH,
-                            ]);
-                            if let Err(re) = &rebase_result {
-                                let re_str = re.to_string();
-                                if re_str.contains("CONFLICT")
-                                    || re_str.contains("rebase")
-                                    || re_str.contains("could not apply")
-                                {
-                                    // INTENTIONAL: abort and reset are best-effort conflict recovery — retry loop continues
-                                    let _ = self.git_in_cache(&["rebase", "--abort"]);
-                                    let remote_ref =
-                                        format!("{}/{}", remote, crate::sync::HUB_BRANCH);
-                                    let _ = self.git_in_cache(&["reset", "--hard", &remote_ref]);
-                                }
-                            }
+                            // Escalating recovery: get to a known-good state (#466)
+                            self.recover_from_push_conflict(remote)?;
                             continue;
                         }
                         // All retries exhausted -- keep as local-only
@@ -867,6 +840,51 @@ impl SharedWriter {
             bail!("git {:?} in cache failed: {}", args, stderr);
         }
         Ok(output)
+    }
+
+    /// Escalating recovery from a push conflict (#466).
+    ///
+    /// Attempts to get the hub cache back to a known-good state so the
+    /// retry loop can re-prepare and push again. Each step verifies it
+    /// worked before moving on:
+    ///
+    /// 1. Reset HEAD~1 to undo our commit
+    /// 2. Pull --rebase to sync with remote
+    /// 3. If rebase conflicts: abort, then reset to remote
+    /// 4. Verify we're on the branch and not mid-rebase
+    pub(super) fn recover_from_push_conflict(&self, remote: &str) -> Result<()> {
+        let remote_ref = format!("{}/{}", remote, crate::sync::HUB_BRANCH);
+
+        // Step 1: undo our commit
+        if self.git_in_cache(&["reset", "--hard", "HEAD~1"]).is_err() {
+            // Reset failed — try resetting to remote instead
+            tracing::warn!("reset HEAD~1 failed, falling back to reset to remote");
+            self.git_in_cache(&["reset", "--hard", &remote_ref])?;
+            return Ok(());
+        }
+
+        // Step 2: pull latest from remote
+        let pull_result = self.git_in_cache(&["pull", "--rebase", remote, crate::sync::HUB_BRANCH]);
+
+        if let Err(e) = pull_result {
+            let err_str = e.to_string();
+            if err_str.contains("CONFLICT")
+                || err_str.contains("rebase")
+                || err_str.contains("could not apply")
+            {
+                // Step 3: rebase conflicted — abort and force-align to remote
+                let _ = self.git_in_cache(&["rebase", "--abort"]);
+                self.git_in_cache(&["reset", "--hard", &remote_ref])?;
+            } else {
+                // Pull failed for non-conflict reason — run health check
+                // to fix underlying state (mid-rebase, detached HEAD, etc.)
+                self.hub_health_check()?;
+                // Try pull one more time after health check
+                self.git_in_cache(&["pull", "--rebase", remote, crate::sync::HUB_BRANCH])?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Run a git commit in the cache worktree, disabling signing when

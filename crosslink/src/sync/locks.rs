@@ -153,8 +153,15 @@ impl SyncManager {
                 Err(e) => {
                     let err_str = e.to_string();
                     if err_str.contains("Push failed after") && attempt < 2 {
-                        // INTENTIONAL: pull/rebase failure is non-fatal — retry loop re-checks lock ownership
-                        let _ = self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
+                        // Pull to sync before retry (#473). If pull fails,
+                        // health check and retry pull — don't push stale state.
+                        if self
+                            .git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH])
+                            .is_err()
+                        {
+                            self.hub_health_check()?;
+                            self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH])?;
+                        }
                     } else {
                         return Err(e);
                     }

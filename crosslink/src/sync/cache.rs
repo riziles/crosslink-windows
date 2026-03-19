@@ -120,8 +120,7 @@ impl SyncManager {
             crate::issue_file::CURRENT_LAYOUT_VERSION,
         )?;
 
-        // INTENTIONAL: staging is best-effort — we check for actual changes before committing
-        let _ = self.git_in_cache(&["add", "-A"]);
+        self.git_in_cache(&["add", "-A"])?;
         let has_changes = self.git_in_cache(&["diff", "--cached", "--quiet"]).is_err();
         if has_changes {
             self.git_in_cache(&[
@@ -135,6 +134,74 @@ impl SyncManager {
         }
 
         Ok(migrated)
+    }
+
+    /// Automatically find and remove stale V1 flat files that have V2
+    /// equivalents. Runs during every sync so layout inconsistencies are
+    /// corrected without user intervention (#478).
+    ///
+    /// Returns the number of stale files cleaned up.
+    pub fn cleanup_stale_layout_files(&self) -> Result<usize> {
+        let issues_dir = self.cache_dir.join("issues");
+        if !issues_dir.is_dir() {
+            return Ok(0);
+        }
+
+        let meta_dir = self.cache_dir.join("meta");
+        let version = crate::issue_file::read_layout_version(&meta_dir).unwrap_or(1);
+        if version < 2 {
+            return Ok(0); // V1 hub — V1 files are correct
+        }
+
+        // Find V1 flat files that also have a V2 directory
+        let mut stale_v1: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&issues_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if path.is_file() && name.ends_with(".json") {
+                    let uuid = name.trim_end_matches(".json");
+                    let v2_dir = issues_dir.join(uuid);
+                    if v2_dir.join("issue.json").exists() {
+                        // Both V1 and V2 exist — V1 is stale
+                        stale_v1.push(path);
+                    } else if !v2_dir.exists() {
+                        // V1 exists without V2 on a V2 hub — migrate it
+                        if let Ok(content) = std::fs::read(&path) {
+                            if std::fs::create_dir_all(&v2_dir).is_ok()
+                                && std::fs::write(v2_dir.join("issue.json"), &content).is_ok()
+                            {
+                                stale_v1.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if stale_v1.is_empty() {
+            return Ok(0);
+        }
+
+        // Remove the stale files and commit
+        for path in &stale_v1 {
+            std::fs::remove_file(path)?;
+        }
+
+        self.git_in_cache(&["add", "-A"])?;
+        let has_changes = self.git_in_cache(&["diff", "--cached", "--quiet"]).is_err();
+        if has_changes {
+            self.git_in_cache(&[
+                "commit",
+                "-m",
+                &format!(
+                    "sync: auto-cleanup {} stale V1 layout file(s)",
+                    stale_v1.len()
+                ),
+            ])?;
+        }
+
+        Ok(stale_v1.len())
     }
 
     /// Detect and recover from broken git states in the hub cache worktree.
@@ -237,14 +304,28 @@ impl SyncManager {
                 if stdout.trim().is_empty() {
                     return Ok(false);
                 }
-                // INTENTIONAL: dirty state recovery is best-effort — if staging/commit fails, we still return Ok
-                let _ = self.git_in_cache(&["add", "-A"]);
-                let _ = self.git_in_cache(&[
+                // Stage and commit dirty state. If this fails, the caller
+                // needs to know — lying about success causes downstream
+                // failures that are harder to diagnose (#465).
+                self.git_in_cache(&["add", "-A"])?;
+                let commit_result = self.git_in_cache(&[
                     "commit",
                     "-m",
                     "sync: auto-stage dirty hub state (recovery)",
                 ]);
-                Ok(true)
+                match commit_result {
+                    Ok(_) => Ok(true),
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        if err_str.contains("nothing to commit")
+                            || err_str.contains("no changes added")
+                        {
+                            Ok(false) // git add staged nothing — working dir is clean
+                        } else {
+                            Err(e)
+                        }
+                    }
+                }
             }
             Err(_) => Ok(false), // Can't check status — don't block
         }
@@ -383,11 +464,16 @@ impl SyncManager {
                     }
                     if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
                         if attempt < 2 {
-                            // Bail if local has diverged too far — sign of a rebase loop
                             self.check_divergence()?;
-                            // INTENTIONAL: pull/rebase failure is non-fatal — retry loop will bail on persistent conflicts
-                            let _ =
-                                self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH]);
+                            // Pull to sync with remote before retry (#473).
+                            // If pull fails, run health check and try once more.
+                            if self
+                                .git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH])
+                                .is_err()
+                            {
+                                self.hub_health_check()?;
+                                self.git_in_cache(&["pull", "--rebase", &self.remote, HUB_BRANCH])?;
+                            }
                             continue;
                         }
                         bail!("Push failed after 3 retries for locks.json");
