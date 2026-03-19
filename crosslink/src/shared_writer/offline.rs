@@ -1,6 +1,6 @@
 //! Offline issue promotion and local reference rewriting.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::cell::Cell;
 use uuid::Uuid;
 
@@ -112,56 +112,23 @@ impl SharedWriter {
         )?;
 
         if outcome == PushOutcome::LocalOnly {
-            // Still offline — revert display_id assignments so they can be
-            // re-claimed on next sync. Use a NEW commit instead of --amend
-            // to avoid creating ghost commits when the amend produces an
-            // empty commit (#452).
-            for (uuid, _) in &offline_info {
-                let path = self.issue_path(uuid);
-                if let Ok(mut issue) = read_issue_file(&path) {
-                    issue.display_id = None;
-                    let json = serde_json::to_string_pretty(&issue)?;
-                    std::fs::write(&path, json)
-                        .with_context(|| format!("failed to revert display_id for {}", uuid))?;
-                }
-            }
-            // Revert counter (#467)
-            if let Ok(mut counters) = self.read_counters() {
-                if counters.next_display_id > count {
-                    counters.next_display_id -= count;
-                }
-                self.write_counters_to_cache(&counters)?;
-            }
-            // Create a new revert commit (not --amend) so the promotion
-            // commit is cleanly cancelled rather than left as a ghost (#452).
-            if let Err(e) = self.git_in_cache(&["add", "."]) {
-                tracing::warn!("failed to stage reverted state: {}", e);
-            }
-            let revert_result = self.git_in_cache(&[
-                "commit",
-                "-m",
-                &format!(
-                    "{}: revert offline promotion (still offline) at {}",
-                    self.agent.agent_id,
-                    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
-                ),
-            ]);
-            match &revert_result {
-                Ok(_) => {}
-                Err(e) => {
-                    let err_str = e.to_string();
-                    // Empty commit means the revert exactly matches the
-                    // pre-promotion state — that's fine, nothing to commit.
-                    if !err_str.contains("nothing to commit")
-                        && !err_str.contains("no changes added")
-                    {
-                        tracing::warn!("failed to commit reverted state: {}", err_str);
-                        if let Err(cleanup_err) = self.sync.clean_dirty_state() {
-                            tracing::warn!("dirty state cleanup also failed: {}", cleanup_err);
-                        }
-                    }
-                }
-            }
+            // Keep the promotion commit local — don't revert (#467).
+            //
+            // The old approach reverted display_ids and counters on disk, then
+            // created a revert commit. This had 6 failure points that each
+            // needed error handling and could leave orphaned IDs or desynced
+            // counters.
+            //
+            // The new approach: do nothing. The promotion commit stays local
+            // with the correct display_ids and counter. On next sync:
+            // - If connectivity restored: push succeeds, promotion is published
+            // - If push conflicts: write_commit_push's retry loop resets and
+            //   the prepare closure re-reads fresh counters after rebase,
+            //   re-claiming from the correct value. No collision.
+            tracing::info!(
+                "promotion of {} issue(s) saved locally (push failed), will retry on next sync",
+                count
+            );
             return Ok(vec![]);
         }
 

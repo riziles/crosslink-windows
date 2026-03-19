@@ -900,10 +900,9 @@ impl SharedWriter {
 
         // Step 1: undo our commit
         if self.git_in_cache(&["reset", "--hard", "HEAD~1"]).is_err() {
-            // Reset failed — try resetting to remote instead
             tracing::warn!("reset HEAD~1 failed, falling back to reset to remote");
             self.git_in_cache(&["reset", "--hard", &remote_ref])?;
-            return Ok(());
+            return self.verify_clean_state();
         }
 
         // Step 2: pull latest from remote
@@ -919,12 +918,42 @@ impl SharedWriter {
                 let _ = self.git_in_cache(&["rebase", "--abort"]);
                 self.git_in_cache(&["reset", "--hard", &remote_ref])?;
             } else {
-                // Pull failed for non-conflict reason — run health check
-                // to fix underlying state (mid-rebase, detached HEAD, etc.)
+                // Pull failed for non-conflict reason — health check + retry
                 self.hub_health_check()?;
-                // Try pull one more time after health check
                 self.git_in_cache(&["pull", "--rebase", remote, crate::sync::HUB_BRANCH])?;
             }
+        }
+
+        // Step 4: verify we're in a known-good state before returning
+        self.verify_clean_state()
+    }
+
+    /// Verify the hub cache is in a clean, usable state.
+    ///
+    /// Checks: on the correct branch, not mid-rebase, clean working directory.
+    /// Called after recovery operations to confirm they actually worked.
+    fn verify_clean_state(&self) -> Result<()> {
+        // Must be on the hub branch, not detached
+        if self.git_in_cache(&["symbolic-ref", "HEAD"]).is_err() {
+            bail!("hub cache recovery failed: HEAD is still detached");
+        }
+
+        // Must not be mid-rebase
+        let git_dir = self
+            .git_in_cache(&["rev-parse", "--git-dir"])
+            .map(|o| {
+                let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                let p = PathBuf::from(&raw);
+                if p.is_absolute() {
+                    p
+                } else {
+                    self.cache_dir.join(p)
+                }
+            })
+            .unwrap_or_else(|_| self.cache_dir.join(".git"));
+
+        if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+            bail!("hub cache recovery failed: still in mid-rebase state");
         }
 
         Ok(())
