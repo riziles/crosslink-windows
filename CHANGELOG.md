@@ -6,31 +6,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-## [0.5.2] - 2026-03-18
+## [0.5.2] - 2026-03-19
 
 ### Added
 
+#### External Source Querying
+- `crosslink issue --from` and `crosslink knowledge --from` flags for querying external repositories ([CL-206], [GH-428])
+- External repository resolution with GitHub API integration
+
 #### Init & Onboarding
 - Greenfield scaffold with interactive design questions and CLAUDE.md template generation ([CL-369])
-- First-user feedback fixes for smoother onboarding experience ([CL-369])
+- `crosslink-guide` Claude skill for in-session feature discoverability ([GH-404])
+- Implementation rigor guardrail with auto-discovered rule files ([GH-366])
 
 #### Swarm Enhancements
 - Multi-swarm UUID data model and swarm lifecycle commands (`swarm create`, `swarm list`, `swarm switch`) ([CL-371])
-- Swarm workflow ergonomics improvements — better status output, cleaner phase transitions ([CL-371])
 - Swarm plan editing commands: `move`, `merge`, `split`, `remove`, `reorder`, `rename` ([CL-373])
 - Explicit layer/phase header support in `swarm init` design doc parsing ([CL-373])
 
 #### CLI Enhancements
 - `--json` support for `swarm status`, `session status`, `issue tree`, `blocked`, `ready`, and `next` commands ([CL-375], [CL-377])
+- Local time displayed alongside UTC timestamps in TUI issue detail ([GH-402])
 - Token-budget-aware behavioral guard reinjection for long sessions ([CL-384])
-- Auto-discover rule files in `build.rs` with `quality.md` rules ([CL-387])
+
+#### Testing
+- Concurrency, coordination, and lifecycle smoke test suites ([GH-364])
+- Dashboard unit tests (App, color utilities, general utils) with Vitest ([GH-364])
+- VS Code extension platform detection tests ([GH-364])
+
+#### Build & Infrastructure
+- Integrity layout check and centralized hub file path constants ([GH-428])
+- Auto-discover rule files and command files from resources directories in `build.rs` ([CL-387])
 
 ### Fixed
+
+#### Hub & Sync
+- V1/V2 hub layout coexistence — resolve inconsistent write paths and cache corruption ([GH-428])
+- Prevent hydration data loss and resolve `--parent` cache lookup failure ([GH-427])
+- Preserve local-only close events during sync fetch ([GH-430])
+- Preserve session work state across hydration cycles ([GH-443])
 - Prevent hub cache corruption and ensure agent issue mutations sync correctly ([CL-372])
-- Resolve main repo root in `kickoff show-plan` for worktree support ([CL-374])
+
+#### CLI & Display
+- Render local issues as `Ln` instead of `#-n` across all commands ([GH-424])
+- Resolve worktree paths relative to main repo root, not pwd ([GH-425])
 - Recognize local issue `L-` prefix in `work-check` hook ([CL-370])
 - Detect Claude Code sub-agent worktrees in `is_agent_context` ([CL-420])
-- Replace `unwrap`/`expect` with proper error handling in `build.rs`
+- Resolve main repo root in `kickoff show-plan` for worktree support ([CL-374])
+
+#### Reliability
+- Make `delete_issue` atomic — restore files on commit failure ([GH-427])
+- Migrate `eprintln!` to `tracing` in sync/hydration paths to prevent TUI screen corruption ([GH-447])
+- Replace `unwrap`/`expect` with proper error handling in `build.rs` and sync paths ([CL-206])
 - Make `detect_hostname` test non-flaky in parallel test suites
 
 #### Adversarial Review Fixes
@@ -45,15 +72,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Decompose 6 god files into focused submodules — `shared_writer.rs`, `kickoff.rs`, `db.rs`, `sync.rs`, `knowledge.rs`, `commands/knowledge.rs` ([CL-413])
 - Split `kickoff.rs` into 10 submodules (conventions, container, plan, prompt, report, status, watchdog, worktree, wizard, cleanup) ([CL-413])
 - Split `commands/knowledge.rs` into `mod.rs` + `operations.rs` ([CL-413])
-- Make decomposed module edit functions `pub` and remove `#[allow(dead_code)]` ([CL-413])
 - Properly wire all swarm paths through `SwarmContext`, remove `allow(dead_code)` annotations
+
+#### Observability
+- Migrate logging from `eprintln!` to `tracing` crate across sync, hydration, and daemon modules ([GH-364], [GH-447])
+- Route tracing output to stderr to avoid polluting structured CLI output
 
 ## [0.5.1] - 2026-03-15
 
 ### Added
-- Create GH issues for init flow revision and TUI config editing (#213)
-- Add install setup step for shell alias (xl) configuration (#195)
-- Create GH issue for external source querying in knowledge/issue commands (#202)
 
 #### Swarm Review System
 - `swarm review` command for parallel adversarial codebase exploration ([GH-342])
@@ -80,9 +107,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `justfile` with `render-docs` pipeline: SVG generation, quarto render via staging dir, collision detection for manually-maintained docs, asset lint for broken images/styles/scripts/links ([CL-192], [CL-193])
 
 ### Fixed
-- File GH bug for V1/V2 hub layout coexistence conflict (#216)
-- File GH bug for worktree path resolution (#215)
-- File GH bug for inconsistent issue number rendering (#214)
 - Missing banner and wordmark SVGs in docs site deployment — banner ref escaped the `docs/` boundary, wordmark not copied by Quarto ([CL-192])
 - Swarm launch failure — write `.kickoff-status` sentinel on launch and treat missing status as failed ([GH-359])
 - V2 comment hydration bug found during smoke testing ([GH-354])
