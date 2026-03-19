@@ -1,6 +1,6 @@
 //! Offline issue promotion and local reference rewriting.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::cell::Cell;
 use uuid::Uuid;
 
@@ -120,19 +120,17 @@ impl SharedWriter {
                 let path = self.issue_path(uuid);
                 if let Ok(mut issue) = read_issue_file(&path) {
                     issue.display_id = None;
-                    if let Ok(json) = serde_json::to_string_pretty(&issue) {
-                        // INTENTIONAL: reverting display_id on disk is best-effort — offline issues will be re-assigned on next push
-                        let _ = std::fs::write(&path, json);
-                    }
+                    let json = serde_json::to_string_pretty(&issue)?;
+                    std::fs::write(&path, json)
+                        .with_context(|| format!("failed to revert display_id for {}", uuid))?;
                 }
             }
-            // Revert counter
+            // Revert counter (#467)
             if let Ok(mut counters) = self.read_counters() {
                 if counters.next_display_id > count {
                     counters.next_display_id -= count;
                 }
-                // INTENTIONAL: counter revert is best-effort — counters will be corrected on next push
-                let _ = self.write_counters_to_cache(&counters);
+                self.write_counters_to_cache(&counters)?;
             }
             // Create a new revert commit (not --amend) so the promotion
             // commit is cleanly cancelled rather than left as a ghost (#452).
@@ -158,8 +156,9 @@ impl SharedWriter {
                         && !err_str.contains("no changes added")
                     {
                         tracing::warn!("failed to commit reverted state: {}", err_str);
-                        // INTENTIONAL: last-resort dirty state cleanup is best-effort
-                        let _ = self.sync.clean_dirty_state();
+                        if let Err(cleanup_err) = self.sync.clean_dirty_state() {
+                            tracing::warn!("dirty state cleanup also failed: {}", cleanup_err);
+                        }
                     }
                 }
             }
@@ -292,8 +291,12 @@ impl SharedWriter {
             ]) {
                 tracing::warn!("failed to commit rewritten references: {}", e);
             }
-            // INTENTIONAL: push is best-effort — rewritten references will be pushed on next sync
-            let _ = self.git_in_cache(&["push", self.sync.remote(), crate::sync::HUB_BRANCH]);
+            // Push rewritten references — if offline, next sync will push.
+            if let Err(e) =
+                self.git_in_cache(&["push", self.sync.remote(), crate::sync::HUB_BRANCH])
+            {
+                tracing::info!("reference rewrite push deferred to next sync: {}", e);
+            }
         }
 
         // 2. Rewrite session notes in SQLite
