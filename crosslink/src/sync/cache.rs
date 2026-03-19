@@ -176,24 +176,35 @@ impl SyncManager {
             }
         };
 
-        // Fix 1: Mid-rebase state (#454)
+        // Fix 1: Mid-rebase state (#454) — abort and verify
         let rebase_merge = git_dir.join("rebase-merge");
         let rebase_apply = git_dir.join("rebase-apply");
         if rebase_merge.exists() || rebase_apply.exists() {
-            tracing::warn!("hub cache is stuck in mid-rebase state, aborting rebase to recover");
-            // INTENTIONAL: rebase --abort is best-effort recovery — failure is non-fatal
+            tracing::warn!("hub cache is stuck in mid-rebase state, aborting to recover");
             let _ = self.git_in_cache(&["rebase", "--abort"]);
+            // Verify the fix worked — if rebase state persists, force-clean it
+            if rebase_merge.exists() {
+                tracing::warn!("rebase --abort didn't clear rebase-merge, removing manually");
+                let _ = std::fs::remove_dir_all(&rebase_merge);
+            }
+            if rebase_apply.exists() {
+                tracing::warn!("rebase --abort didn't clear rebase-apply, removing manually");
+                let _ = std::fs::remove_dir_all(&rebase_apply);
+            }
         }
 
-        // Fix 2: Detached HEAD (#455)
-        let symbolic_ref_result = self.git_in_cache(&["symbolic-ref", "HEAD"]);
-        if symbolic_ref_result.is_err() {
+        // Fix 2: Detached HEAD (#455) — re-attach and verify
+        if self.git_in_cache(&["symbolic-ref", "HEAD"]).is_err() {
             tracing::warn!("hub cache HEAD is detached, re-attaching to {}", HUB_BRANCH);
-            // INTENTIONAL: checkout is best-effort recovery — failure is non-fatal
             let _ = self.git_in_cache(&["checkout", HUB_BRANCH]);
+            // Verify — if still detached, try creating the branch from HEAD
+            if self.git_in_cache(&["symbolic-ref", "HEAD"]).is_err() {
+                tracing::warn!("checkout failed, creating branch from current HEAD");
+                let _ = self.git_in_cache(&["checkout", "-B", HUB_BRANCH]);
+            }
         }
 
-        // Fix 3: Stale index.lock (#456)
+        // Fix 3: Stale index.lock (#456) — remove and verify
         let index_lock = git_dir.join("index.lock");
         if index_lock.exists() {
             let is_stale = std::fs::metadata(&index_lock)
@@ -202,8 +213,9 @@ impl SyncManager {
                 .unwrap_or(false);
             if is_stale {
                 tracing::warn!("removing stale index.lock from hub cache (older than 30s)");
-                // INTENTIONAL: lock removal is best-effort recovery — failure is non-fatal
-                let _ = std::fs::remove_file(&index_lock);
+                if let Err(e) = std::fs::remove_file(&index_lock) {
+                    tracing::warn!("failed to remove stale index.lock: {}", e);
+                }
             }
         }
 

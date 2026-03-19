@@ -259,26 +259,19 @@ impl SharedWriter {
 
         let _ = self.write_commit_push(
             |writer| {
+                // Don't delete files here — let `git rm -r` in the staging
+                // loop handle both index and disk removal so the commit
+                // failure path can restore from HEAD (#427).
                 if writer.layout_version() >= 2 {
-                    // V2: remove the entire issue directory (issue.json + comments/)
-                    // to prevent orphaned comment files (#460).
-                    let issue_dir = writer.cache_dir.join("issues").join(uuid.to_string());
-                    if issue_dir.exists() {
-                        // INTENTIONAL: dir removal is best-effort — git rm -r handles the index
-                        let _ = std::fs::remove_dir_all(&issue_dir);
-                    }
-                    // Also remove stale V1 flat file if present (#428)
-                    let v1_path = writer.cache_dir.join(format!("issues/{}.json", uuid));
-                    if v1_path.exists() {
-                        let _ = std::fs::remove_file(&v1_path);
-                    }
+                    // V2: pass the directory path so git rm -r removes
+                    // issue.json + comments/ recursively (#460)
                     Ok(WriteSet {
                         files: vec![(format!("issues/{}", uuid), vec![])],
                         counters: None,
                         use_git_rm: true,
                     })
                 } else {
-                    // V1: remove the single flat file
+                    // V1: pass the flat file path
                     Ok(WriteSet {
                         files: vec![(format!("issues/{}.json", uuid), vec![])],
                         counters: None,
@@ -288,6 +281,26 @@ impl SharedWriter {
             },
             &format!("delete issue #{}", display_id),
         )?;
+
+        // Post-commit cleanup: remove any untracked remnants (e.g. comment
+        // files created between commits that git rm didn't know about). Safe
+        // to do now because the commit already succeeded (#460).
+        let issue_dir = self.cache_dir.join("issues").join(uuid.to_string());
+        if issue_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&issue_dir) {
+                tracing::debug!(
+                    "post-delete cleanup of {} failed: {}",
+                    issue_dir.display(),
+                    e
+                );
+            }
+        }
+        let v1_path = self.cache_dir.join(format!("issues/{}.json", uuid));
+        if v1_path.exists() {
+            if let Err(e) = std::fs::remove_file(&v1_path) {
+                tracing::debug!("post-delete cleanup of {} failed: {}", v1_path.display(), e);
+            }
+        }
 
         self.hydrate_with_retry(db)?;
         Ok(())
