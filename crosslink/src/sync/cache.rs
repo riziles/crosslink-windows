@@ -115,6 +115,9 @@ impl SyncManager {
         let migrated =
             crate::hydration::migrate_inline_comments_to_v2(&self.cache_dir).unwrap_or(0);
 
+        // Write version marker to disk (included in the commit below).
+        // If the commit fails, we DON'T leave the marker — we delete it
+        // so the next sync retries the full migration (#470).
         crate::issue_file::write_layout_version(
             &meta_dir,
             crate::issue_file::CURRENT_LAYOUT_VERSION,
@@ -123,14 +126,23 @@ impl SyncManager {
         self.git_in_cache(&["add", "-A"])?;
         let has_changes = self.git_in_cache(&["diff", "--cached", "--quiet"]).is_err();
         if has_changes {
-            self.git_in_cache(&[
+            let commit_result = self.git_in_cache(&[
                 "commit",
                 "-m",
                 &format!(
                     "sync: upgrade hub layout v1\u{2192}v2 ({} comment files migrated)",
                     migrated
                 ),
-            ])?;
+            ]);
+            if let Err(e) = commit_result {
+                // Commit failed — remove the version marker so next sync
+                // retries the migration instead of thinking it's done (#470).
+                let version_path = meta_dir.join("version.json");
+                if version_path.exists() {
+                    let _ = std::fs::remove_file(&version_path);
+                }
+                return Err(e);
+            }
         }
 
         Ok(migrated)
@@ -304,10 +316,17 @@ impl SyncManager {
                 if stdout.trim().is_empty() {
                     return Ok(false);
                 }
-                // Stage and commit dirty state. If this fails, the caller
-                // needs to know — lying about success causes downstream
-                // failures that are harder to diagnose (#465).
-                self.git_in_cache(&["add", "-A"])?;
+                // Stage and commit dirty state (#465). If staging fails,
+                // escalate to git reset --hard HEAD to force-align the
+                // working directory with the last commit.
+                if self.git_in_cache(&["add", "-A"]).is_err() {
+                    tracing::warn!(
+                        "git add -A failed in dirty state cleanup, \
+                         escalating to reset --hard HEAD"
+                    );
+                    self.git_in_cache(&["reset", "--hard", "HEAD"])?;
+                    return Ok(true);
+                }
                 let commit_result = self.git_in_cache(&[
                     "commit",
                     "-m",
