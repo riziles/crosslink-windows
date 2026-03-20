@@ -313,8 +313,8 @@ fn squash_branch(
 /// Entry point for `crosslink prune`.
 pub fn run(crosslink_dir: &Path, opts: &PruneOpts, json: bool) -> Result<()> {
     if !opts.force && !opts.dry_run {
-        eprintln!("Warning: This will rewrite branch history and force-push.");
-        eprintln!("Use --force to confirm, or --dry-run to preview.");
+        tracing::warn!("This will rewrite branch history and force-push.");
+        println!("Use --force to confirm, or --dry-run to preview.");
         return Ok(());
     }
 
@@ -334,7 +334,7 @@ pub fn run(crosslink_dir: &Path, opts: &PruneOpts, json: bool) -> Result<()> {
         } else {
             let removed = remove_stale_hub_data(cache_dir)?;
             if !removed.is_empty() {
-                // Stage and commit the cleanup
+                // INTENTIONAL: staging is best-effort — we check for actual changes before committing
                 let _ = git_in_dir(cache_dir, &["add", "-A"]);
                 let has_changes = git_in_dir(cache_dir, &["diff", "--cached", "--quiet"]).is_err();
                 if has_changes {
@@ -373,7 +373,7 @@ pub fn run(crosslink_dir: &Path, opts: &PruneOpts, json: bool) -> Result<()> {
             )?;
             results.push(stats);
         } else {
-            eprintln!("Knowledge branch not initialized, skipping.");
+            tracing::info!("Knowledge branch not initialized, skipping.");
         }
     }
 

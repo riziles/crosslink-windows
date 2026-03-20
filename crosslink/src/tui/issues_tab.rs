@@ -246,6 +246,10 @@ impl IssuesTab {
     }
 
     /// Handle key events in list view mode. Returns true if consumed.
+    ///
+    /// INTENTIONAL: `let _ =` on refresh/build_tree calls throughout this handler —
+    /// TUI event handlers cannot propagate errors, so DB failures are silently ignored
+    /// and the UI shows stale data until the next successful refresh.
     fn handle_list_key(&mut self, key: KeyEvent, db: Option<&Database>) -> TabAction {
         if self.searching {
             match key.code {
@@ -473,6 +477,7 @@ impl IssuesTab {
     }
 
     /// Handle key events in tree view mode.
+    /// INTENTIONAL: `let _ =` on build_tree calls — TUI event handlers cannot propagate errors.
     fn handle_tree_key(&mut self, key: KeyEvent, db: Option<&Database>) -> TabAction {
         match key.code {
             KeyCode::Esc => {
@@ -832,13 +837,44 @@ impl IssuesTab {
             Span::styled("Milestone: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(milestone_str),
         ]));
-        lines.push(Line::from(vec![
+        // Show timestamps with local time when terminal is wide enough (#402)
+        let created_utc = issue.created_at.format("%Y-%m-%d %H:%M UTC").to_string();
+        let updated_utc = issue.updated_at.format("%Y-%m-%d %H:%M UTC").to_string();
+        let wide_enough = area.width >= 90;
+
+        let mut ts_spans = vec![
             Span::styled(" Created: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(issue.created_at.format("%Y-%m-%d").to_string()),
-            Span::raw("  "),
-            Span::styled("Updated: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(issue.updated_at.format("%Y-%m-%d").to_string()),
-        ]));
+            Span::raw(created_utc),
+        ];
+        if wide_enough {
+            let local_created = issue
+                .created_at
+                .with_timezone(&chrono::Local)
+                .format("(%I:%M %p %Z)")
+                .to_string();
+            ts_spans.push(Span::styled(
+                format!("  {}", local_created),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        ts_spans.push(Span::raw("  "));
+        ts_spans.push(Span::styled(
+            "Updated: ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        ts_spans.push(Span::raw(updated_utc));
+        if wide_enough {
+            let local_updated = issue
+                .updated_at
+                .with_timezone(&chrono::Local)
+                .format("(%I:%M %p %Z)")
+                .to_string();
+            ts_spans.push(Span::styled(
+                format!("  {}", local_updated),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(ts_spans));
 
         // Dependencies
         let blocked_by_str = if detail.blocked_by.is_empty() {
@@ -1053,6 +1089,7 @@ impl super::Tab for IssuesTab {
     fn on_enter(&mut self) {}
     fn on_leave(&mut self) {}
 
+    /// INTENTIONAL: `let _ =` on refresh/build_tree — force_refresh is best-effort, TUI shows stale data on failure.
     fn force_refresh(&mut self) {
         if let Ok(db) = self.open_db() {
             match self.view_mode {

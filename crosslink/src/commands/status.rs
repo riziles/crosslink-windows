@@ -55,6 +55,16 @@ fn close_inner(
         bail!("Issue {} not found", format_issue_id(id));
     }
 
+    // Clear session active work item if this was the active issue
+    // Prevents the cascade where closing the active issue leaves the session
+    // without a work item, causing work-check hook to block all tool calls (#399)
+    if let Ok(Some(session)) = db.get_current_session_for_agent(None) {
+        if session.active_issue_id == Some(id) {
+            // INTENTIONAL: clearing stale session issue is best-effort — prevents work-check hook from blocking
+            let _ = db.clear_session_issue(session.id);
+        }
+    }
+
     // Auto-release lock in multi-agent mode
     if let Ok(Some(agent)) = crate::identity::AgentConfig::load(crosslink_dir) {
         if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
@@ -89,7 +99,7 @@ fn close_inner(
         // Create CHANGELOG.md if it doesn't exist
         if !changelog_path.exists() {
             if let Err(e) = create_changelog(&changelog_path) {
-                eprintln!("Warning: Could not create CHANGELOG.md: {}", e);
+                tracing::warn!("Could not create CHANGELOG.md: {}", e);
             } else {
                 println!("Created CHANGELOG.md");
             }
@@ -100,7 +110,7 @@ fn close_inner(
             let entry = format!("- {} ({})\n", issue.title, format_issue_id(id));
 
             if let Err(e) = append_to_changelog(&changelog_path, &category, &entry) {
-                eprintln!("Warning: Could not update CHANGELOG.md: {}", e);
+                tracing::warn!("Could not update CHANGELOG.md: {}", e);
             } else if !quiet {
                 println!("Added to CHANGELOG.md under {}", category);
             }
@@ -206,11 +216,7 @@ pub fn close_all(
     for issue in &issues {
         match close(db, writer, issue.id, update_changelog, crosslink_dir) {
             Ok(()) => closed_count += 1,
-            Err(e) => eprintln!(
-                "Warning: Failed to close {}: {}",
-                format_issue_id(issue.id),
-                e
-            ),
+            Err(e) => tracing::warn!("Failed to close {}: {}", format_issue_id(issue.id), e),
         }
     }
 

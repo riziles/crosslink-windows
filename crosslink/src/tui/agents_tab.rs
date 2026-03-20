@@ -138,6 +138,7 @@ impl AgentsTab {
 
         std::thread::spawn(move || {
             let result = load_agents_data(&crosslink_dir);
+            // INTENTIONAL: send failure means the receiver was dropped — TUI is shutting down
             let _ = tx.send(result);
         });
     }
@@ -510,7 +511,7 @@ impl AgentsTab {
                     };
 
                     Row::new(vec![
-                        format!("#{}", lock.issue_id),
+                        crate::utils::format_issue_id(lock.issue_id),
                         truncate_str(&lock.agent_id, 35),
                         truncate_str(lock.branch.as_deref().unwrap_or("—"), 22),
                         lock.claimed_ago.clone(),
@@ -860,7 +861,7 @@ fn load_agents_data(crosslink_dir: &Path) -> AgentsLoadResult {
         };
     }
 
-    // Fetch latest state (ignore fetch errors — may be offline)
+    // INTENTIONAL: fetch is best-effort — agent data is shown from cache if offline
     let _ = sync.fetch();
 
     // Read locks

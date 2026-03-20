@@ -6,6 +6,34 @@ use crate::utils::format_issue_id;
 
 const VALID_PRIORITIES: [&str; 4] = ["low", "medium", "high", "critical"];
 
+/// Best-effort lock release: tries v2 first, then falls back to v1.
+/// Mirrors the helper in `session.rs`.
+fn release_lock_best_effort(crosslink_dir: &std::path::Path, issue_id: i64) {
+    if let Ok(Some(agent)) = crate::identity::AgentConfig::load(crosslink_dir) {
+        if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
+            if sync.is_initialized() {
+                if sync.is_v2_layout() {
+                    if let Ok(Some(writer)) = SharedWriter::new(crosslink_dir) {
+                        if let Err(e) = writer.release_lock_v2(issue_id) {
+                            tracing::warn!(
+                                "Could not release lock on {}: {}",
+                                format_issue_id(issue_id),
+                                e
+                            );
+                        }
+                    }
+                } else if let Err(e) = sync.release_lock(&agent, issue_id, false) {
+                    tracing::warn!(
+                        "Could not release lock on {}: {}",
+                        format_issue_id(issue_id),
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Built-in issue templates
 pub struct Template {
     pub name: &'static str,
@@ -135,28 +163,38 @@ pub fn run(
     }
 
     let id = if let Some(w) = writer {
-        w.create_issue(db, title, final_description.as_deref(), &final_priority)?
+        let id = w.create_issue(db, title, final_description.as_deref(), &final_priority)?;
+
+        // Auto-add label from template
+        if let Some(lbl) = template_label {
+            w.add_label(db, id, lbl)?;
+        }
+
+        // Add user-specified labels
+        for lbl in opts.labels {
+            w.add_label(db, id, lbl)?;
+        }
+
+        id
     } else {
-        db.create_issue(title, final_description.as_deref(), &final_priority)?
+        // Wrap create + labels in a transaction so a label failure
+        // doesn't leave an issue without its labels.
+        db.transaction(|| {
+            let id = db.create_issue(title, final_description.as_deref(), &final_priority)?;
+
+            // Auto-add label from template
+            if let Some(lbl) = template_label {
+                db.add_label(id, lbl)?;
+            }
+
+            // Add user-specified labels
+            for lbl in opts.labels {
+                db.add_label(id, lbl)?;
+            }
+
+            Ok(id)
+        })?
     };
-
-    // Auto-add label from template
-    if let Some(lbl) = template_label {
-        if let Some(w) = writer {
-            w.add_label(db, id, lbl)?;
-        } else {
-            db.add_label(id, lbl)?;
-        }
-    }
-
-    // Add user-specified labels
-    for lbl in opts.labels {
-        if let Some(w) = writer {
-            w.add_label(db, id, lbl)?;
-        } else {
-            db.add_label(id, lbl)?;
-        }
-    }
 
     if opts.defer_id && !opts.quiet {
         println!(
@@ -174,6 +212,8 @@ pub fn run(
 
     // Set as active session work item
     if opts.work {
+        let mut freshly_claimed = false;
+
         // Check lock status before allowing work on this issue
         if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id, db)?;
@@ -186,6 +226,7 @@ pub fn run(
                             if let Ok(Some(writer)) = SharedWriter::new(dir) {
                                 match writer.claim_lock_v2(id, None) {
                                     Ok(crate::shared_writer::LockClaimResult::Claimed) => {
+                                        freshly_claimed = true;
                                         if !opts.quiet {
                                             println!(
                                                 "Auto-claimed lock on issue {}",
@@ -197,20 +238,21 @@ pub fn run(
                                     Ok(crate::shared_writer::LockClaimResult::Contended {
                                         winner_agent_id,
                                     }) => {
-                                        eprintln!(
-                                            "Warning: Lock on {} won by '{}'",
+                                        tracing::warn!(
+                                            "Lock on {} won by '{}'",
                                             format_issue_id(id),
                                             winner_agent_id
                                         );
                                     }
                                     Err(e) => {
-                                        eprintln!("Warning: Could not auto-claim lock: {}", e)
+                                        tracing::warn!("Could not auto-claim lock: {}", e)
                                     }
                                 }
                             }
                         } else {
                             match sync.claim_lock(&agent, id, None, false) {
                                 Ok(true) => {
+                                    freshly_claimed = true;
                                     if !opts.quiet {
                                         println!(
                                             "Auto-claimed lock on issue {}",
@@ -219,7 +261,7 @@ pub fn run(
                                     }
                                 }
                                 Ok(false) => {}
-                                Err(e) => eprintln!("Warning: Could not auto-claim lock: {}", e),
+                                Err(e) => tracing::warn!("Could not auto-claim lock: {}", e),
                             }
                         }
                     }
@@ -233,12 +275,21 @@ pub fn run(
                 .map(|a| a.agent_id)
         });
         if let Ok(Some(session)) = db.get_current_session_for_agent(agent_id.as_deref()) {
-            db.set_session_issue(session.id, id)?;
+            // If set_session_issue fails after we claimed a lock, release the lock
+            // to avoid orphaned locks.
+            if let Err(e) = db.set_session_issue(session.id, id) {
+                if freshly_claimed {
+                    if let Some(dir) = opts.crosslink_dir {
+                        release_lock_best_effort(dir, id);
+                    }
+                }
+                return Err(e);
+            }
             if !opts.quiet {
                 println!("Now working on: {} {}", format_issue_id(id), title);
             }
         } else if !opts.quiet {
-            eprintln!("Warning: --work specified but no active session");
+            tracing::warn!("--work specified but no active session");
         }
     }
 
@@ -269,19 +320,28 @@ pub fn run_subissue(
     }
 
     let id = if let Some(w) = writer {
-        w.create_subissue(db, parent_id, title, description, priority)?
-    } else {
-        db.create_subissue(parent_id, title, description, priority)?
-    };
+        let id = w.create_subissue(db, parent_id, title, description, priority)?;
 
-    // Add user-specified labels
-    for lbl in opts.labels {
-        if let Some(w) = writer {
+        // Add user-specified labels
+        for lbl in opts.labels {
             w.add_label(db, id, lbl)?;
-        } else {
-            db.add_label(id, lbl)?;
         }
-    }
+
+        id
+    } else {
+        // Wrap create + labels in a transaction so a label failure
+        // doesn't leave a subissue without its labels.
+        db.transaction(|| {
+            let id = db.create_subissue(parent_id, title, description, priority)?;
+
+            // Add user-specified labels
+            for lbl in opts.labels {
+                db.add_label(id, lbl)?;
+            }
+
+            Ok(id)
+        })?
+    };
 
     if opts.quiet {
         println!("{}", id);
@@ -295,6 +355,8 @@ pub fn run_subissue(
 
     // Set as active session work item
     if opts.work {
+        let mut freshly_claimed = false;
+
         // Check lock status before allowing work on this issue
         if let Some(dir) = opts.crosslink_dir {
             crate::lock_check::enforce_lock(dir, id, db)?;
@@ -307,6 +369,7 @@ pub fn run_subissue(
                             if let Ok(Some(writer)) = SharedWriter::new(dir) {
                                 match writer.claim_lock_v2(id, None) {
                                     Ok(crate::shared_writer::LockClaimResult::Claimed) => {
+                                        freshly_claimed = true;
                                         if !opts.quiet {
                                             println!(
                                                 "Auto-claimed lock on issue {}",
@@ -318,20 +381,21 @@ pub fn run_subissue(
                                     Ok(crate::shared_writer::LockClaimResult::Contended {
                                         winner_agent_id,
                                     }) => {
-                                        eprintln!(
-                                            "Warning: Lock on {} won by '{}'",
+                                        tracing::warn!(
+                                            "Lock on {} won by '{}'",
                                             format_issue_id(id),
                                             winner_agent_id
                                         );
                                     }
                                     Err(e) => {
-                                        eprintln!("Warning: Could not auto-claim lock: {}", e)
+                                        tracing::warn!("Could not auto-claim lock: {}", e)
                                     }
                                 }
                             }
                         } else {
                             match sync.claim_lock(&agent, id, None, false) {
                                 Ok(true) => {
+                                    freshly_claimed = true;
                                     if !opts.quiet {
                                         println!(
                                             "Auto-claimed lock on issue {}",
@@ -340,7 +404,7 @@ pub fn run_subissue(
                                     }
                                 }
                                 Ok(false) => {}
-                                Err(e) => eprintln!("Warning: Could not auto-claim lock: {}", e),
+                                Err(e) => tracing::warn!("Could not auto-claim lock: {}", e),
                             }
                         }
                     }
@@ -354,12 +418,21 @@ pub fn run_subissue(
                 .map(|a| a.agent_id)
         });
         if let Ok(Some(session)) = db.get_current_session_for_agent(agent_id.as_deref()) {
-            db.set_session_issue(session.id, id)?;
+            // If set_session_issue fails after we claimed a lock, release the lock
+            // to avoid orphaned locks.
+            if let Err(e) = db.set_session_issue(session.id, id) {
+                if freshly_claimed {
+                    if let Some(dir) = opts.crosslink_dir {
+                        release_lock_best_effort(dir, id);
+                    }
+                }
+                return Err(e);
+            }
             if !opts.quiet {
                 println!("Now working on: {} {}", format_issue_id(id), title);
             }
         } else if !opts.quiet {
-            eprintln!("Warning: --work specified but no active session");
+            tracing::warn!("--work specified but no active session");
         }
     }
 

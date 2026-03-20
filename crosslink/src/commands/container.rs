@@ -192,10 +192,9 @@ fn check_staleness() {
     };
     if let Some(image_hash) = get_image_hash() {
         if image_hash != binary_hash {
-            eprintln!(
-                "Warning: container image is stale (built from a different crosslink binary)."
+            tracing::warn!(
+                "container image is stale (built from a different crosslink binary). Run 'crosslink container build' to update."
             );
-            eprintln!("Run 'crosslink container build' to update.");
         }
     }
 }
@@ -204,6 +203,7 @@ fn check_staleness() {
 struct BuildDirCleanup(PathBuf);
 impl Drop for BuildDirCleanup {
     fn drop(&mut self) {
+        // INTENTIONAL: temp dir cleanup in Drop is best-effort — OS will reclaim it eventually
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -589,7 +589,7 @@ pub fn kill(name: &str) -> Result<()> {
     }
 
     println!("Stopping and removing container: {}", name);
-    // Stop first (ignore errors — may already be stopped)
+    // INTENTIONAL: stop may fail if container is already stopped — rm -f below handles that
     let _ = Command::new("docker").args(["stop", name]).status();
     let status = Command::new("docker")
         .args(["rm", "-f", name])

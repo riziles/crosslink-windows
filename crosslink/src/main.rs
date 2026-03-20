@@ -5,6 +5,7 @@ mod compaction;
 mod daemon;
 mod db;
 mod events;
+mod external;
 mod findings;
 mod hydration;
 mod identity;
@@ -44,6 +45,19 @@ struct Cli {
     /// Output as JSON (supported by list, show, search, session status)
     #[arg(long, global = true)]
     json: bool,
+
+    /// Log level for diagnostic output (error, warn, info, debug, trace)
+    #[arg(long, global = true, default_value = "warn", env = "CROSSLINK_LOG")]
+    log_level: String,
+
+    /// Log format (text, json)
+    #[arg(
+        long,
+        global = true,
+        default_value = "text",
+        env = "CROSSLINK_LOG_FORMAT"
+    )]
+    log_format: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -488,12 +502,24 @@ enum IssueCommands {
         /// Filter by priority
         #[arg(short, long)]
         priority: Option<String>,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
 
     /// Search issues by text
     Search {
         /// Search query
         query: String,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
 
     /// Show issue details
@@ -501,6 +527,12 @@ enum IssueCommands {
         /// Issue ID
         #[arg(value_parser = parse_issue_id_clap)]
         id: i64,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
 
     /// Update an issue
@@ -1090,11 +1122,20 @@ enum KnowledgeCommands {
         /// Import from a design document file
         #[arg(long, value_name = "PATH")]
         from_doc: Option<PathBuf>,
+        /// (Rejected — external sources are read-only)
+        #[arg(long, hide = true)]
+        repo: Option<String>,
     },
     /// Display a knowledge page
     Show {
         /// Page slug
         slug: String,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
     /// List all knowledge pages
     List {
@@ -1110,6 +1151,12 @@ enum KnowledgeCommands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
     /// Update an existing knowledge page
     Edit {
@@ -1133,14 +1180,27 @@ enum KnowledgeCommands {
         /// Add source URL (repeatable)
         #[arg(long)]
         source: Vec<String>,
+        /// Replace content from a document file
+        #[arg(long, value_name = "PATH")]
+        from_doc: Option<PathBuf>,
+        /// (Rejected — external sources are read-only)
+        #[arg(long, hide = true)]
+        repo: Option<String>,
     },
     /// Remove a knowledge page
     Remove {
         /// Page slug
         slug: String,
+        /// (Rejected — external sources are read-only)
+        #[arg(long, hide = true)]
+        repo: Option<String>,
     },
     /// Manually sync from remote
-    Sync,
+    Sync {
+        /// (Rejected — external sources are read-only)
+        #[arg(long, hide = true)]
+        repo: Option<String>,
+    },
     /// Bulk import markdown files as knowledge pages
     Import {
         /// Directory containing .md files to import
@@ -1154,6 +1214,9 @@ enum KnowledgeCommands {
         /// Preview imports without writing
         #[arg(long = "dry-run")]
         dry_run: bool,
+        /// (Rejected — external sources are read-only)
+        #[arg(long, hide = true)]
+        repo: Option<String>,
     },
     /// Search knowledge page content
     Search {
@@ -1174,6 +1237,12 @@ enum KnowledgeCommands {
         /// Filter results by contributor
         #[arg(long)]
         contributor: Option<String>,
+        /// Query an external repository (URL, local path, or @alias)
+        #[arg(long)]
+        repo: Option<String>,
+        /// Force refresh of cached external data
+        #[arg(long)]
+        refresh: bool,
     },
 }
 
@@ -1200,6 +1269,12 @@ enum IntegrityCommands {
     /// Verify SQLite schema version
     Schema {
         /// Re-run migrations to update schema
+        #[arg(long)]
+        repair: bool,
+    },
+    /// Detect mixed V1/V2 hub layout files
+    Layout {
+        /// Migrate V1 files to V2 and remove stale duplicates
         #[arg(long)]
         repair: bool,
     },
@@ -1363,14 +1438,38 @@ enum SwarmCommands {
         #[arg(long, value_name = "PATH")]
         doc: PathBuf,
     },
-    /// Show current swarm status (agents, phases, progress)
+    /// Show current swarm status (agents, phases, progress, next steps)
     Status,
     /// Reconstruct state and show next steps for resuming
     Resume,
+    /// Sync agent statuses from live worktree state into phase JSON
+    SyncStatus,
+    /// Associate an external agent/branch with a swarm slot
+    Adopt {
+        /// Agent slug or branch name of the external agent
+        agent: String,
+        /// Swarm slot slug to assign the agent to
+        #[arg(long, value_name = "SLUG")]
+        slot: String,
+    },
+    /// Archive the current swarm and clear the active slot
+    Archive,
+    /// Reset the active swarm (archives by default)
+    Reset {
+        /// Delete without archiving
+        #[arg(long)]
+        no_archive: bool,
+    },
+    /// List active and archived swarms
+    #[command(name = "list")]
+    ListSwarms,
     /// Launch all planned agents for a phase
     Launch {
         /// Phase slug (e.g. "phase-1")
         phase: String,
+        /// Retry only previously failed agents
+        #[arg(long)]
+        retry_failed: bool,
         /// Check budget before launching; block if insufficient
         #[arg(long)]
         budget_aware: bool,
@@ -1460,6 +1559,50 @@ enum SwarmCommands {
         #[arg(long, value_name = "SLUGS")]
         agents: Option<String>,
     },
+    /// Move an agent to a different phase
+    #[command(name = "move")]
+    MoveAgent {
+        /// Agent slug to move
+        agent: String,
+        /// Target phase name
+        #[arg(long, value_name = "PHASE")]
+        to_phase: String,
+    },
+    /// Merge two phases into one
+    MergePhases {
+        /// First phase name
+        phase_a: String,
+        /// Second phase name
+        phase_b: String,
+    },
+    /// Split a phase after a specific agent
+    SplitPhase {
+        /// Phase name to split
+        phase: String,
+        /// Split after this agent slug
+        #[arg(long, value_name = "SLUG")]
+        after: String,
+    },
+    /// Remove an agent from the plan
+    RemoveAgent {
+        /// Agent slug to remove
+        agent: String,
+    },
+    /// Reorder a phase to a new position
+    Reorder {
+        /// Phase name to move
+        phase: String,
+        /// New position (1-based)
+        #[arg(long)]
+        position: usize,
+    },
+    /// Rename a phase
+    RenamePhase {
+        /// Current phase name
+        old: String,
+        /// New phase name
+        new: String,
+    },
     /// Continue a paused pipeline (e.g., after human checkpoint)
     ReviewContinue,
     /// Show pipeline status
@@ -1502,6 +1645,22 @@ enum ContextCommands {
     Check,
 }
 
+fn init_tracing(log_level: &str, log_format: &str) {
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    let filter = EnvFilter::try_new(log_level).unwrap_or_else(|_| EnvFilter::new("warn"));
+    if log_format == "json" {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt::layer().json().with_writer(std::io::stderr))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt::layer().with_target(false).with_writer(std::io::stderr))
+            .init();
+    }
+}
+
 fn find_crosslink_dir() -> Result<PathBuf> {
     let mut current = env::current_dir()?;
 
@@ -1541,7 +1700,7 @@ fn get_writer(crosslink_dir: &std::path::Path) -> Option<shared_writer::SharedWr
     match shared_writer::SharedWriter::new(crosslink_dir) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("Warning: SharedWriter unavailable: {}", e);
+            tracing::warn!("SharedWriter unavailable: {}", e);
             None
         }
     }
@@ -1576,7 +1735,7 @@ fn parse_issue_id(s: &str) -> Result<i64> {
 /// Emit a hint to stderr (suppressed in quiet mode).
 fn hint(quiet: bool, msg: &str) {
     if !quiet {
-        eprintln!("hint: {}", msg);
+        tracing::info!("hint: {}", msg);
     }
 }
 
@@ -1685,30 +1844,79 @@ fn dispatch_issue(action: IssueCommands, quiet: bool, json: bool) -> Result<()> 
             status,
             label,
             priority,
+            repo,
+            refresh,
         } => {
-            let db = get_db()?;
-            if json {
-                commands::list::run_json(&db, Some(&status), label.as_deref(), priority.as_deref())
+            if let Some(repo_value) = repo {
+                let crosslink_dir = find_crosslink_dir()?;
+                commands::external_issues::list(
+                    &crosslink_dir,
+                    &repo_value,
+                    Some(&status),
+                    label.as_deref(),
+                    priority.as_deref(),
+                    refresh,
+                    json,
+                    quiet,
+                )
             } else {
-                commands::list::run(&db, Some(&status), label.as_deref(), priority.as_deref())
+                let db = get_db()?;
+                if json {
+                    commands::list::run_json(
+                        &db,
+                        Some(&status),
+                        label.as_deref(),
+                        priority.as_deref(),
+                    )
+                } else {
+                    commands::list::run(&db, Some(&status), label.as_deref(), priority.as_deref())
+                }
             }
         }
 
-        IssueCommands::Search { query } => {
-            let db = get_db()?;
-            if json {
-                commands::search::run_json(&db, &query)
+        IssueCommands::Search {
+            query,
+            repo,
+            refresh,
+        } => {
+            if let Some(repo_value) = repo {
+                let crosslink_dir = find_crosslink_dir()?;
+                commands::external_issues::search(
+                    &crosslink_dir,
+                    &repo_value,
+                    &query,
+                    refresh,
+                    json,
+                    quiet,
+                )
             } else {
-                commands::search::run(&db, &query)
+                let db = get_db()?;
+                if json {
+                    commands::search::run_json(&db, &query)
+                } else {
+                    commands::search::run(&db, &query)
+                }
             }
         }
 
-        IssueCommands::Show { id } => {
-            let db = get_db()?;
-            if json {
-                commands::show::run_json(&db, id)
+        IssueCommands::Show { id, repo, refresh } => {
+            if let Some(repo_value) = repo {
+                let crosslink_dir = find_crosslink_dir()?;
+                commands::external_issues::show(
+                    &crosslink_dir,
+                    &repo_value,
+                    id,
+                    refresh,
+                    json,
+                    quiet,
+                )
             } else {
-                commands::show::run(&db, id)
+                let db = get_db()?;
+                if json {
+                    commands::show::run_json(&db, id)
+                } else {
+                    commands::show::run(&db, id)
+                }
             }
         }
 
@@ -1837,12 +2045,12 @@ fn dispatch_issue(action: IssueCommands, quiet: bool, json: bool) -> Result<()> 
 
         IssueCommands::Blocked => {
             let db = get_db()?;
-            commands::deps::list_blocked(&db)
+            commands::deps::list_blocked(&db, json)
         }
 
         IssueCommands::Ready => {
             let db = get_db()?;
-            commands::deps::list_ready(&db)
+            commands::deps::list_ready(&db, json)
         }
 
         IssueCommands::Relate { id, related } => {
@@ -1872,7 +2080,7 @@ fn dispatch_issue(action: IssueCommands, quiet: bool, json: bool) -> Result<()> 
 
         IssueCommands::Tree { status } => {
             let db = get_db()?;
-            commands::tree::run(&db, Some(&status))
+            commands::tree::run(&db, Some(&status), json)
         }
 
         IssueCommands::Tested => {
@@ -1884,6 +2092,12 @@ fn dispatch_issue(action: IssueCommands, quiet: bool, json: bool) -> Result<()> 
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    let log_format = match &cli.command {
+        Commands::Serve { .. } if cli.log_format == "text" => "json",
+        _ => cli.log_format.as_str(),
+    };
+    init_tracing(&cli.log_level, log_format);
 
     match cli.command {
         Commands::Init {
@@ -1991,12 +2205,22 @@ fn main() -> Result<()> {
                 status,
                 label,
                 priority,
+                repo: None,
+                refresh: false,
             },
             cli.quiet,
             cli.json,
         ),
 
-        Commands::Show { id } => dispatch_issue(IssueCommands::Show { id }, cli.quiet, cli.json),
+        Commands::Show { id } => dispatch_issue(
+            IssueCommands::Show {
+                id,
+                repo: None,
+                refresh: false,
+            },
+            cli.quiet,
+            cli.json,
+        ),
 
         Commands::Close { id, no_changelog } => dispatch_issue(
             IssueCommands::Close { id, no_changelog },
@@ -2050,6 +2274,8 @@ fn main() -> Result<()> {
                         status,
                         label,
                         priority,
+                        repo: None,
+                        refresh: false,
                     },
                     cli.quiet,
                     cli.json,
@@ -2064,6 +2290,8 @@ fn main() -> Result<()> {
                         status: "open".to_string(),
                         label: None,
                         priority: None,
+                        repo: None,
+                        refresh: false,
                     },
                     cli.quiet,
                     cli.json,
@@ -2179,7 +2407,7 @@ fn main() -> Result<()> {
         Commands::Session { action } => {
             let db = get_db()?;
             let crosslink_dir = find_crosslink_dir()?;
-            commands::session::run(action, &db, &crosslink_dir)
+            commands::session::run(action, &db, &crosslink_dir, cli.json)
         }
 
         Commands::Daemon { action } => match action {
@@ -2315,15 +2543,33 @@ fn main() -> Result<()> {
             let crosslink_dir = find_crosslink_dir()?;
             match action {
                 SwarmCommands::Init { doc } => commands::swarm::init(&crosslink_dir, &doc),
-                SwarmCommands::Status => commands::swarm::status(&crosslink_dir),
+                SwarmCommands::Status => commands::swarm::status(&crosslink_dir, cli.json),
                 SwarmCommands::Resume => commands::swarm::resume(&crosslink_dir),
+                SwarmCommands::SyncStatus => commands::swarm::sync_status(&crosslink_dir),
+                SwarmCommands::Adopt { agent, slot } => {
+                    commands::swarm::adopt(&crosslink_dir, &agent, &slot)
+                }
+                SwarmCommands::Archive => commands::swarm::archive(&crosslink_dir),
+                SwarmCommands::Reset { no_archive } => {
+                    commands::swarm::reset(&crosslink_dir, no_archive)
+                }
+                SwarmCommands::ListSwarms => commands::swarm::list_swarms(&crosslink_dir),
                 SwarmCommands::Launch {
                     phase,
                     budget_aware,
+                    retry_failed,
                 } => {
                     let db = get_db()?;
                     let writer = get_writer(&crosslink_dir);
-                    if budget_aware {
+                    if retry_failed {
+                        commands::swarm::launch_retry_failed(
+                            &crosslink_dir,
+                            &db,
+                            writer.as_ref(),
+                            &phase,
+                            cli.quiet,
+                        )
+                    } else if budget_aware {
                         commands::swarm::launch_budget_aware(
                             &crosslink_dir,
                             &db,
@@ -2390,6 +2636,24 @@ fn main() -> Result<()> {
                     dry_run,
                     agents,
                 } => commands::swarm::merge(&crosslink_dir, &branch, dry_run, agents.as_deref()),
+                SwarmCommands::MoveAgent { agent, to_phase } => {
+                    commands::swarm::move_agent(&crosslink_dir, &agent, &to_phase)
+                }
+                SwarmCommands::MergePhases { phase_a, phase_b } => {
+                    commands::swarm::merge_phases(&crosslink_dir, &phase_a, &phase_b)
+                }
+                SwarmCommands::SplitPhase { phase, after } => {
+                    commands::swarm::split_phase(&crosslink_dir, &phase, &after)
+                }
+                SwarmCommands::RemoveAgent { agent } => {
+                    commands::swarm::remove_agent(&crosslink_dir, &agent)
+                }
+                SwarmCommands::Reorder { phase, position } => {
+                    commands::swarm::reorder_phase(&crosslink_dir, &phase, position)
+                }
+                SwarmCommands::RenamePhase { old, new } => {
+                    commands::swarm::rename_phase(&crosslink_dir, &old, &new)
+                }
                 SwarmCommands::ReviewContinue => commands::swarm::review_continue(&crosslink_dir),
                 SwarmCommands::ReviewStatus => commands::swarm::review_status(&crosslink_dir),
                 SwarmCommands::Pipeline {

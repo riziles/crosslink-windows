@@ -36,7 +36,7 @@ pub fn check_lock(crosslink_dir: &Path, issue_id: i64) -> Result<LockStatus> {
         Err(_) => return Ok(LockStatus::NotConfigured),
     };
 
-    // Best-effort init and fetch — don't fail if offline
+    // INTENTIONAL: init and fetch are best-effort — don't fail if offline
     let _ = sync.init_cache();
     let _ = sync.fetch();
 
@@ -139,7 +139,9 @@ fn auto_steal_if_configured(
                 "[auto-steal] Lock auto-stolen from agent '{}' (stale for {} min, threshold: {} min)",
                 stale_agent_id, stale_minutes, auto_steal_threshold
             );
-            let _ = writer.add_comment(db, issue_id, &comment, "system");
+            if let Err(e) = writer.add_comment(db, issue_id, &comment, "system") {
+                tracing::warn!("could not add audit comment for lock steal: {e}");
+            }
         } else {
             return Ok(false);
         }
@@ -153,7 +155,9 @@ fn auto_steal_if_configured(
             "[auto-steal] Lock auto-stolen from agent '{}' (stale for {} min, threshold: {} min)",
             stale_agent_id, stale_minutes, auto_steal_threshold
         );
-        let _ = db.add_comment(issue_id, &comment, "system");
+        if let Err(e) = db.add_comment(issue_id, &comment, "system") {
+            tracing::warn!("could not add audit comment for lock steal: {e}");
+        }
     }
 
     Ok(true)
@@ -170,32 +174,35 @@ pub fn enforce_lock(crosslink_dir: &Path, issue_id: i64, db: &Database) -> Resul
             if stale {
                 match auto_steal_if_configured(crosslink_dir, issue_id, &agent_id, db) {
                     Ok(true) => {
-                        eprintln!(
+                        tracing::info!(
                             "Auto-stole stale lock on issue #{} from '{}'.",
-                            issue_id, agent_id
+                            issue_id,
+                            agent_id
                         );
                         return Ok(());
                     }
                     Ok(false) => {}
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Auto-steal of stale lock on #{} failed: {}. Proceeding.",
-                            issue_id, e
+                        tracing::warn!(
+                            "Auto-steal of stale lock on #{} failed: {}. Proceeding.",
+                            issue_id,
+                            e
                         );
                     }
                 }
 
-                eprintln!(
-                    "Warning: Issue #{} is locked by '{}' but the lock appears STALE. Proceeding.",
-                    issue_id, agent_id
+                tracing::warn!(
+                    "Issue {} is locked by '{}' but the lock appears STALE. Proceeding.",
+                    crate::utils::format_issue_id(issue_id),
+                    agent_id
                 );
                 Ok(())
             } else {
                 bail!(
-                    "Issue #{} is locked by agent '{}'. \
+                    "Issue {} is locked by agent '{}'. \
                      Use 'crosslink locks check {}' for details. \
                      Ask the human to release it or wait for the lock to expire.",
-                    issue_id,
+                    crate::utils::format_issue_id(issue_id),
                     agent_id,
                     issue_id
                 )

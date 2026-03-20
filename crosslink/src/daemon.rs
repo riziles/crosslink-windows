@@ -23,7 +23,7 @@ pub fn start(crosslink_dir: &Path) -> Result<()> {
             println!("Daemon already running (PID {})", pid);
             return Ok(());
         }
-        // Stale PID file, remove it
+        // INTENTIONAL: stale PID file removal is best-effort — we proceed either way
         let _ = fs::remove_file(&pid_file);
     }
 
@@ -133,8 +133,17 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         let flag = Arc::clone(&should_exit);
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag));
-        let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag));
+        if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))
+        {
+            tracing::warn!(
+                "could not register SIGTERM handler: {e} — graceful shutdown unavailable"
+            );
+        }
+        if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGINT, flag) {
+            tracing::warn!(
+                "could not register SIGINT handler: {e} — graceful shutdown unavailable"
+            );
+        }
     }
 
     // Zombie prevention: Monitor stdin for closure.
@@ -151,13 +160,13 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
             match stdin.read(&mut buf) {
                 Ok(0) => {
                     // EOF - parent closed stdin, time to exit
-                    eprintln!("Stdin closed, daemon shutting down (zombie prevention)");
+                    tracing::info!("Stdin closed, daemon shutting down (zombie prevention)");
                     should_exit_clone.store(true, Ordering::SeqCst);
                     break;
                 }
                 Err(_) => {
                     // Error reading stdin - parent likely crashed
-                    eprintln!("Stdin error, daemon shutting down (zombie prevention)");
+                    tracing::info!("Stdin error, daemon shutting down (zombie prevention)");
                     should_exit_clone.store(true, Ordering::SeqCst);
                     break;
                 }
@@ -203,7 +212,7 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
 
                     if let Ok(json) = serde_json::to_string_pretty(&session_data) {
                         if let Err(e) = fs::write(&session_file, json) {
-                            eprintln!("Failed to write session file: {}", e);
+                            tracing::warn!("Failed to write session file: {}", e);
                         } else {
                             println!(
                                 "Session flushed at {}",
@@ -215,13 +224,14 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
             }
             Err(e) => {
                 consecutive_db_failures += 1;
-                eprintln!(
+                tracing::warn!(
                     "Failed to open database: {} (failure #{})",
-                    e, consecutive_db_failures
+                    e,
+                    consecutive_db_failures
                 );
                 if consecutive_db_failures == FAILURE_WARN_THRESHOLD {
-                    eprintln!(
-                        "WARNING: {} consecutive database failures. Daemon may not be functioning correctly.",
+                    tracing::warn!(
+                        "{} consecutive database failures. Daemon may not be functioning correctly.",
                         FAILURE_WARN_THRESHOLD
                     );
                 }
@@ -236,6 +246,7 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
                     match crate::sync::SyncManager::new(crosslink_dir) {
                         Ok(sync) => {
                             consecutive_sync_failures = 0;
+                            // INTENTIONAL: cache init is best-effort — heartbeat will retry next interval
                             let _ = sync.init_cache();
 
                             // Push heartbeat
@@ -244,7 +255,7 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
                                     "Heartbeat pushed at {}",
                                     chrono::Utc::now().format("%H:%M:%S")
                                 ),
-                                Err(e) => eprintln!("Heartbeat push failed: {}", e),
+                                Err(e) => tracing::warn!("Heartbeat push failed: {}", e),
                             }
 
                             // Fetch latest coordination branch and hydrate SQLite
@@ -261,22 +272,23 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
                                                     );
                                                 }
                                             }
-                                            Err(e) => eprintln!("Hydration failed: {}", e),
+                                            Err(e) => tracing::warn!("Hydration failed: {}", e),
                                         }
                                     }
                                 }
-                                Err(e) => eprintln!("Fetch failed: {}", e),
+                                Err(e) => tracing::warn!("Fetch failed: {}", e),
                             }
                         }
                         Err(e) => {
                             consecutive_sync_failures += 1;
-                            eprintln!(
+                            tracing::warn!(
                                 "Sync init failed: {} (failure #{})",
-                                e, consecutive_sync_failures
+                                e,
+                                consecutive_sync_failures
                             );
                             if consecutive_sync_failures == FAILURE_WARN_THRESHOLD {
-                                eprintln!(
-                                    "WARNING: {} consecutive sync failures. Daemon may not be functioning correctly.",
+                                tracing::warn!(
+                                    "{} consecutive sync failures. Daemon may not be functioning correctly.",
                                     FAILURE_WARN_THRESHOLD
                                 );
                             }
@@ -284,7 +296,7 @@ pub fn run_daemon(crosslink_dir: &Path) -> Result<()> {
                     }
                 }
                 Ok(None) => {} // No agent configured, skip sync
-                Err(e) => eprintln!("Failed to load agent config: {}", e),
+                Err(e) => tracing::warn!("Failed to load agent config: {}", e),
             }
         }
     }
