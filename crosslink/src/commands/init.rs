@@ -1441,16 +1441,26 @@ mod tests {
     /// Required because init now checks for .git and HEAD (#401).
     fn test_dir() -> tempfile::TempDir {
         let dir = tempdir().unwrap();
-        std::process::Command::new("git")
+        let init = std::process::Command::new("git")
             .current_dir(dir.path())
             .args(["init"])
             .output()
-            .unwrap();
-        std::process::Command::new("git")
+            .expect("git init failed");
+        assert!(init.status.success(), "git init failed");
+        // Set identity so commit works in CI where no global config exists
+        for (key, val) in [("user.name", "test"), ("user.email", "test@test")] {
+            std::process::Command::new("git")
+                .current_dir(dir.path())
+                .args(["config", key, val])
+                .output()
+                .unwrap();
+        }
+        let commit = std::process::Command::new("git")
             .current_dir(dir.path())
             .args(["commit", "--allow-empty", "-m", "init"])
             .output()
-            .unwrap();
+            .expect("git commit failed");
+        assert!(commit.status.success(), "git commit --allow-empty failed");
         dir
     }
 

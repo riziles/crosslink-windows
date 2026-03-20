@@ -72,7 +72,12 @@ impl SharedWriter {
                 // No agent configured -- try anonymous hub writes if hub exists
                 let sync = SyncManager::new(crosslink_dir)?;
                 if !sync.is_initialized() {
-                    // Auto-initialize hub cache if the branch exists remotely
+                    // Only auto-initialize hub cache if the remote actually
+                    // exists. Without a remote there is nothing to sync with,
+                    // so fall back to direct SQLite writes.
+                    if !sync.remote_exists() {
+                        return Ok(None);
+                    }
                     if sync.init_cache().is_err() {
                         return Ok(None);
                     }
