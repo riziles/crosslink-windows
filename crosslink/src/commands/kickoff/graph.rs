@@ -40,6 +40,8 @@ struct BranchNode {
     tip_commit: String,
     intermediate_count: usize,
     annotation: Annotation,
+    /// Whether this branch has been merged back into its base branch.
+    merged: bool,
 }
 
 /// JSON output structure.
@@ -55,6 +57,7 @@ struct BranchJsonEntry {
     base: String,
     intermediate_commits: usize,
     annotation: serde_json::Value,
+    merged: bool,
 }
 
 /// Entry point for `crosslink kickoff graph`.
@@ -229,6 +232,9 @@ fn build_branch_node(
         return Ok(None);
     };
 
+    // Check if this branch has been merged back into its base
+    let merged = git_is_ancestor(&tip, &base_branch);
+
     Ok(Some(BranchNode {
         branch_name: branch.to_string(),
         fork_point,
@@ -236,6 +242,7 @@ fn build_branch_node(
         tip_commit: tip,
         intermediate_count,
         annotation,
+        merged,
     }))
 }
 
@@ -308,6 +315,15 @@ fn git_merge_base(a: &str, b: &str) -> Option<String> {
     }
 }
 
+/// Check if `commit` is an ancestor of `branch` (i.e., the commit has been merged into the branch).
+fn git_is_ancestor(commit: &str, branch: &str) -> bool {
+    Command::new("git")
+        .args(["merge-base", "--is-ancestor", commit, branch])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Run `git rev-list --count <from>..<to>` and return the count.
 fn git_rev_list_count(from: &str, to: &str) -> Option<usize> {
     let range = format!("{}..{}", from, to);
@@ -338,6 +354,7 @@ fn output_json(base_branches: &[String], nodes: &[BranchNode]) -> Result<()> {
                 base: n.base_branch.clone(),
                 intermediate_commits: n.intermediate_count,
                 annotation: annotation_value,
+                merged: n.merged,
             }
         })
         .collect();
@@ -387,15 +404,20 @@ fn render_ascii(base_branches: &[String], nodes: &[BranchNode], term_width: usiz
         // Draw feature branches that fork from this base
         if let Some(branches) = by_base.get(base) {
             for branch in branches {
+                if branch.merged {
+                    // Merged branch: show merge back into base, then commits, then fork
+                    println!("  |\\");
+                }
                 // Draw intermediate commits
                 for _ in 0..branch.intermediate_count {
-                    println!("  *");
+                    println!("  | *");
                 }
                 // Draw branch tip with annotation
                 let label = format!("{}", branch.annotation);
-                let tip_line = format!("{} [{}]", branch.branch_name, label);
+                let merged_tag = if branch.merged { " ✓merged" } else { "" };
+                let tip_line = format!("{} [{}]{}", branch.branch_name, label, merged_tag);
                 let tip_display = truncate_str(&tip_line, label_max);
-                println!("  * {}", tip_display);
+                println!("  | * {}", tip_display);
                 // Draw fork junction
                 println!("  |/");
             }
