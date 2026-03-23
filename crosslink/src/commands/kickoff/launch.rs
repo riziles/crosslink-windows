@@ -433,7 +433,11 @@ pub(super) fn init_worktree_agent(
     // Use the compact name as the agent ID directly
     let agent_id = compact_name.to_string();
 
-    // Initialize agent identity in worktree (skip key gen — inherits from parent)
+    // Initialize agent identity with its own signing key (#505).
+    // Previous approach inherited the parent's key with no_key=true, but
+    // that failed when no parent agent config existed (e.g. driver-invoked
+    // kickoff). Now each subagent gets a dedicated keypair, and is
+    // auto-approved since the driver explicitly launched it.
     let wt_crosslink = worktree_dir.join(".crosslink");
     if wt_crosslink.exists() {
         // Only init if not already configured
@@ -442,41 +446,20 @@ pub(super) fn init_worktree_agent(
                 &wt_crosslink,
                 &agent_id,
                 Some(&format!("Kickoff agent for: {}", compact_name)),
-                true, // no-key: inherit parent's key
+                false, // generate dedicated signing key
                 false,
             ) {
                 tracing::warn!("could not initialize agent identity in worktree: {e} — agent will work without its own identity");
             }
 
-            // Copy parent's SSH key info into the new agent config and publish
-            // the key under the new agent ID so `crosslink trust approve` can find it.
-            if let Some(parent_config) = AgentConfig::load(crosslink_dir)? {
-                if let Some(ref public_key) = parent_config.ssh_public_key {
-                    if let Ok(Some(mut child_config)) = AgentConfig::load(&wt_crosslink) {
-                        child_config.ssh_key_path = parent_config.ssh_key_path.clone();
-                        child_config.ssh_fingerprint = parent_config.ssh_fingerprint.clone();
-                        child_config.ssh_public_key = Some(public_key.clone());
-
-                        let agent_json = wt_crosslink.join("agent.json");
-                        if let Ok(json) = serde_json::to_string_pretty(&child_config) {
-                            if let Err(e) = std::fs::write(&agent_json, json) {
-                                tracing::warn!("could not write agent config to {}: {e} — agent will use inherited config", agent_json.display());
-                            }
-                        }
-
-                        // Publish the parent's public key under the new agent ID
-                        if let Err(e) = super::super::trust::publish_agent_key(
-                            &wt_crosslink,
-                            &agent_id,
-                            public_key,
-                        ) {
-                            tracing::warn!(
-                                "Could not publish key for agent '{}': {} — key will be auto-published on next `crosslink sync`.",
-                                agent_id, e
-                            );
-                        }
-                    }
-                }
+            // Auto-approve: the driver explicitly invoked kickoff, so trust
+            // is implicit. This eliminates the manual sync → pending → approve
+            // workflow that blocked autonomous agent operation.
+            if let Err(e) = super::super::trust::approve(crosslink_dir, &agent_id) {
+                tracing::warn!(
+                    "could not auto-approve agent '{}': {e} — run `crosslink trust approve {}` manually",
+                    agent_id, agent_id
+                );
             }
         }
     }
