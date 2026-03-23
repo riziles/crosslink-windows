@@ -1628,11 +1628,14 @@ fn populate_agent_tool_commands(config_path: &Path, project_root: &Path) -> Resu
 
     let conv = super::kickoff::detect_conventions(project_root);
 
+    let mut changed = false;
+
     if lint_empty && !conv.lint_commands.is_empty() {
         overrides.insert(
             "agent_lint_commands".to_string(),
             serde_json::json!(conv.lint_commands),
         );
+        changed = true;
     }
 
     if test_empty {
@@ -1641,11 +1644,14 @@ fn populate_agent_tool_commands(config_path: &Path, project_root: &Path) -> Resu
                 "agent_test_commands".to_string(),
                 serde_json::json!([test_cmd]),
             );
+            changed = true;
         }
     }
 
-    let output = serde_json::to_string_pretty(&config)?;
-    fs::write(config_path, format!("{output}\n"))?;
+    if changed {
+        let output = serde_json::to_string_pretty(&config)?;
+        fs::write(config_path, format!("{output}\n"))?;
+    }
 
     Ok(())
 }
