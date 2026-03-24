@@ -28,6 +28,10 @@ crosslink-enterprise/
 .worktrees/
 OPUS_4_6_SUGGESTIONS.md
 
+# Pipeline state files (machine-local, ephemeral)
+*.pipeline.json
+*.plan.json
+
 # === Crosslink managed (do not edit between markers) ===
 # .crosslink/ — machine-local state (never commit)
 .crosslink/issues.db
@@ -41,11 +45,11 @@ OPUS_4_6_SUGGESTIONS.md
 .crosslink/keys/
 .crosslink/.hub-cache/
 .crosslink/.knowledge-cache/
-.crosslink/.external-cache/
 .crosslink/.cache/
 .crosslink/hook-config.local.json
 .crosslink/integrations/
 .crosslink/rules.local/
+.crosslink/driver-key.pub
 
 # .crosslink/ — DO track these (project-level policy):
 #   .crosslink/hook-config.json   — shared team configuration
@@ -56,6 +60,7 @@ OPUS_4_6_SUGGESTIONS.md
 .claude/hooks/
 .claude/commands/
 .claude/mcp/
+.claude/worktrees/
 
 # .claude/ — DO track these (if manually configured):
 #   .claude/settings.json         — Claude Code project settings

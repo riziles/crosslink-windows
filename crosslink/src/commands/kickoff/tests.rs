@@ -104,21 +104,24 @@ fn test_parse_verify_level() {
 #[test]
 fn test_tmux_session_name() {
     assert_eq!(
-        tmux_session_name("add-batch-retry-logic"),
-        "feat-add-batch-retry-logic"
+        tmux_session_name("XZ3j-81jF-add-batch-retry-logic"),
+        "XZ3j-81jF-add-batch-retry-logic"
     );
 }
 
 #[test]
 fn test_tmux_session_name_sanitization() {
-    assert_eq!(tmux_session_name("fix.auth:bug"), "feat-fix-auth-bug");
+    assert_eq!(
+        tmux_session_name("XZ3j-81jF-fix.auth:bug"),
+        "XZ3j-81jF-fix-auth-bug"
+    );
 }
 
 #[test]
 fn test_tmux_session_name_truncation() {
-    let long = "a".repeat(60);
+    let long = "a".repeat(70);
     let name = tmux_session_name(&long);
-    assert!(name.len() <= 50);
+    assert!(name.len() <= 64);
 }
 
 #[test]
@@ -622,7 +625,7 @@ fn test_parse_duration_large_value() {
 
 #[test]
 fn test_tmux_session_name_empty() {
-    assert_eq!(tmux_session_name(""), "feat-");
+    assert_eq!(tmux_session_name(""), "");
 }
 
 #[test]
@@ -803,7 +806,7 @@ fn test_build_plan_prompt_contains_essentials() {
         out_of_scope: Vec::new(),
         unknown_sections: Vec::new(),
     };
-    let prompt = build_plan_prompt(&doc, Some(42));
+    let prompt = build_plan_prompt(&doc, Some(42), None);
 
     assert!(prompt.contains("KICKOFF PLAN"));
     assert!(prompt.contains("Batch Retry"));
@@ -831,7 +834,7 @@ fn test_build_plan_prompt_with_open_questions() {
         out_of_scope: Vec::new(),
         unknown_sections: Vec::new(),
     };
-    let prompt = build_plan_prompt(&doc, None);
+    let prompt = build_plan_prompt(&doc, None, None);
 
     assert!(prompt.contains("Escalation Required"));
     assert!(prompt.contains("Q1: OAuth or JWT?"));
@@ -852,7 +855,7 @@ fn test_build_plan_prompt_without_issue() {
         out_of_scope: Vec::new(),
         unknown_sections: Vec::new(),
     };
-    let prompt = build_plan_prompt(&doc, None);
+    let prompt = build_plan_prompt(&doc, None, None);
 
     assert!(prompt.contains("KICKOFF PLAN"));
     // No issue line when None

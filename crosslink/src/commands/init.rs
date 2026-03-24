@@ -544,21 +544,35 @@ fn write_settings_json_merged(settings_path: &Path, python_prefix: &str) -> Resu
     Ok(())
 }
 
-/// TUI walkthrough choices for `crosslink init`.
+use crate::commands::config::{ConfigGroup, ConfigType, PRESET_SOLO, PRESET_TEAM, REGISTRY};
+use std::collections::HashMap;
+
+/// TUI walkthrough choices for `crosslink init` — registry-driven.
 struct TuiChoices {
-    tracking_mode: String,
-    intervention_tracking: bool,
-    comment_discipline: String,
-    kickoff_verification: String,
+    values: HashMap<String, serde_json::Value>,
+    install_alias: bool,
 }
 
 impl Default for TuiChoices {
     fn default() -> Self {
+        let mut values = HashMap::new();
+        // Default values from the embedded config
+        let defaults: serde_json::Value =
+            serde_json::from_str(HOOK_CONFIG_JSON).unwrap_or_default();
+        for entry in REGISTRY {
+            if matches!(
+                entry.config_type,
+                ConfigType::StringArray | ConfigType::Map | ConfigType::Integer
+            ) {
+                continue;
+            }
+            if let Some(v) = defaults.get(entry.key) {
+                values.insert(entry.key.to_string(), v.clone());
+            }
+        }
         Self {
-            tracking_mode: "strict".to_string(),
-            intervention_tracking: true,
-            comment_discipline: "encouraged".to_string(),
-            kickoff_verification: "local".to_string(),
+            values,
+            install_alias: false,
         }
     }
 }
@@ -668,126 +682,288 @@ impl InitUI {
             println!();
         } else {
             println!("Crosslink initialized successfully!");
-            println!("\nNext steps:");
-            println!("  crosslink session start     # Start a session");
+            println!();
+            println!("Crosslink tracks issues, comments, and sessions in .crosslink/issues.db.");
+            println!("AI agents use it to coordinate work across sessions and worktrees.");
+            println!();
+            println!("Quick start:");
             println!("  crosslink create \"Task\"     # Create an issue");
+            println!("  crosslink list              # See all issues");
+            println!("  crosslink session start     # Start a work session");
+            println!();
+            println!("Multi-agent features (agents, signing, locks, containers) are optional");
+            println!("and only needed when multiple AI agents collaborate on the same repo.");
         }
     }
 }
 
-// ── Ratatui TUI walkthrough ─────────────────────────────────────────────────
+// ── Ratatui TUI walkthrough (registry-driven, REQ-5) ────────────────────────
 
-struct WalkthroughQuestion {
-    title: &'static str,
-    description: &'static str,
-    options: Vec<(&'static str, &'static str)>,
-    selected: usize,
-}
-
-struct WalkthroughApp {
-    questions: Vec<WalkthroughQuestion>,
-    current: usize,
-    confirming: bool,
+struct InitWalkthroughApp {
+    /// 0 = preset, 1..N = group screens, N+1 = alias, N+2 = confirm
+    screen: usize,
+    preset_selected: usize, // 0=Team, 1=Solo, 2=Custom
+    group_names: Vec<&'static str>,
+    group_keys: Vec<Vec<usize>>,       // indices into REGISTRY
+    group_selections: Vec<Vec<usize>>, // per-group, per-key selected option
+    group_cursor: usize,
+    /// Shell alias question
+    alias_selected: usize, // 0=Yes, 1=No
+    _shell_name: String,
+    shell_config_file: String,
     finished: bool,
     cancelled: bool,
 }
 
-impl WalkthroughApp {
-    fn new(
-        tracking_default: usize,
-        intervention_default: usize,
-        comment_default: usize,
-        kickoff_default: usize,
-    ) -> Self {
+impl InitWalkthroughApp {
+    fn new(existing: &serde_json::Value) -> Self {
+        let groups = ConfigGroup::all();
+        let mut group_names = Vec::new();
+        let mut group_keys: Vec<Vec<usize>> = Vec::new();
+        let mut group_selections: Vec<Vec<usize>> = Vec::new();
+
+        for group in groups {
+            let mut keys_in_group = Vec::new();
+            let mut selections = Vec::new();
+
+            for (idx, entry) in REGISTRY.iter().enumerate() {
+                if entry.group != *group {
+                    continue;
+                }
+                // Skip arrays, maps, integers — advanced settings
+                if matches!(
+                    entry.config_type,
+                    ConfigType::StringArray | ConfigType::Map | ConfigType::Integer
+                ) {
+                    continue;
+                }
+                keys_in_group.push(idx);
+                let current_val = existing.get(entry.key);
+                let sel = match entry.config_type {
+                    ConfigType::Bool => {
+                        let val = current_val.and_then(|v| v.as_bool()).unwrap_or(false);
+                        if val {
+                            0
+                        } else {
+                            1
+                        }
+                    }
+                    ConfigType::Enum(options) => {
+                        let val = current_val.and_then(|v| v.as_str()).unwrap_or("");
+                        options.iter().position(|o| *o == val).unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                selections.push(sel);
+            }
+
+            if !keys_in_group.is_empty() {
+                group_names.push(group.label());
+                group_keys.push(keys_in_group);
+                group_selections.push(selections);
+            }
+        }
+
+        // Detect shell for alias question
+        let shell_env = std::env::var("SHELL").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let (shell_name, shell_config_file) = if shell_env.ends_with("fish") {
+            (
+                "fish".to_string(),
+                format!("{home}/.config/fish/config.fish"),
+            )
+        } else if shell_env.ends_with("zsh") {
+            ("zsh".to_string(), format!("{home}/.zshrc"))
+        } else if shell_env.ends_with("bash") {
+            ("bash".to_string(), format!("{home}/.bashrc"))
+        } else {
+            ("unknown".to_string(), String::new())
+        };
+
+        // Check if alias already installed
+        let alias_already = if !shell_config_file.is_empty() {
+            let alias_line = if shell_name == "fish" {
+                "abbr -a xl crosslink"
+            } else {
+                "alias xl='crosslink'"
+            };
+            fs::read_to_string(&shell_config_file)
+                .map(|c| c.lines().any(|l| l.trim() == alias_line))
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         Self {
-            questions: vec![
-                WalkthroughQuestion {
-                    title: "Issue Tracking Enforcement",
-                    description: "How strictly should agents be required to track work in issues?",
-                    options: vec![
-                        ("Strict", "Block tool calls without an active issue"),
-                        ("Normal", "Remind agents but don't block"),
-                        ("Relaxed", "No enforcement"),
-                    ],
-                    selected: tracking_default,
-                },
-                WalkthroughQuestion {
-                    title: "Driver Intervention Tracking",
-                    description: "Log when the human operator steps in to redirect an agent?",
-                    options: vec![
-                        ("Enabled", "Record interventions for process improvement"),
-                        ("Disabled", "Don't track interventions"),
-                    ],
-                    selected: intervention_default,
-                },
-                WalkthroughQuestion {
-                    title: "Comment Discipline",
-                    description: "Should agents document their decisions on issues?",
-                    options: vec![
-                        ("Encouraged", "Remind agents to document decisions"),
-                        ("Required", "Block after prolonged silence"),
-                        ("Off", "No comment requirements"),
-                    ],
-                    selected: comment_default,
-                },
-                WalkthroughQuestion {
-                    title: "Kickoff Verification Depth",
-                    description: "How thoroughly should background agents verify their work?",
-                    options: vec![
-                        ("Local", "Tests + self-review only"),
-                        ("CI", "Push and wait for CI"),
-                        ("Thorough", "CI + adversarial review"),
-                    ],
-                    selected: kickoff_default,
-                },
-            ],
-            current: 0,
-            confirming: false,
+            screen: 0,
+            preset_selected: 2,
+            group_names,
+            group_keys,
+            group_selections,
+            group_cursor: 0,
+            alias_selected: if alias_already { 1 } else { 0 },
+            _shell_name: shell_name,
+            shell_config_file,
             finished: false,
             cancelled: false,
         }
     }
 
+    fn total_screens(&self) -> usize {
+        // preset + groups + alias + confirm
+        1 + self.group_names.len() + 1 + 1
+    }
+
+    fn is_preset_screen(&self) -> bool {
+        self.screen == 0
+    }
+
+    fn is_alias_screen(&self) -> bool {
+        self.screen == self.total_screens() - 2
+    }
+
+    fn is_confirm_screen(&self) -> bool {
+        self.screen == self.total_screens() - 1
+    }
+
+    fn current_group_idx(&self) -> Option<usize> {
+        if self.screen >= 1 && self.screen < 1 + self.group_names.len() {
+            Some(self.screen - 1)
+        } else {
+            None
+        }
+    }
+
+    fn options_for_key(registry_idx: usize) -> Vec<&'static str> {
+        let entry = &REGISTRY[registry_idx];
+        match entry.config_type {
+            ConfigType::Bool => vec!["true", "false"],
+            ConfigType::Enum(opts) => opts.to_vec(),
+            _ => vec![],
+        }
+    }
+
     fn move_up(&mut self) {
-        let q = &mut self.questions[self.current];
-        if q.selected > 0 {
-            q.selected -= 1;
+        if self.is_preset_screen() {
+            self.preset_selected = self.preset_selected.saturating_sub(1);
+        } else if self.is_alias_screen() {
+            self.alias_selected = self.alias_selected.saturating_sub(1);
+        } else if let Some(gi) = self.current_group_idx() {
+            self.group_cursor = self.group_cursor.saturating_sub(1);
+            let _ = gi;
         }
     }
 
     fn move_down(&mut self) {
-        let q = &mut self.questions[self.current];
-        if q.selected < q.options.len() - 1 {
-            q.selected += 1;
+        if self.is_preset_screen() {
+            if self.preset_selected < 2 {
+                self.preset_selected += 1;
+            }
+        } else if self.is_alias_screen() {
+            if self.alias_selected < 1 {
+                self.alias_selected += 1;
+            }
+        } else if let Some(gi) = self.current_group_idx() {
+            let max = self.group_keys[gi].len().saturating_sub(1);
+            if self.group_cursor < max {
+                self.group_cursor += 1;
+            }
         }
     }
 
-    fn confirm(&mut self) {
-        if self.confirming {
+    fn cycle_value(&mut self) {
+        if let Some(gi) = self.current_group_idx() {
+            if self.group_cursor < self.group_keys[gi].len() {
+                let reg_idx = self.group_keys[gi][self.group_cursor];
+                let options = Self::options_for_key(reg_idx);
+                if !options.is_empty() {
+                    let current = self.group_selections[gi][self.group_cursor];
+                    self.group_selections[gi][self.group_cursor] = (current + 1) % options.len();
+                }
+            }
+        }
+    }
+
+    fn confirm_action(&mut self) {
+        if self.is_confirm_screen() {
             self.finished = true;
-        } else if self.current + 1 < self.questions.len() {
-            self.current += 1;
+        } else if self.is_preset_screen() {
+            if self.preset_selected < 2 {
+                self.apply_preset_selections();
+                // Skip group screens, go to alias
+                self.screen = 1 + self.group_names.len();
+                self.group_cursor = 0;
+            } else {
+                self.screen = 1;
+                self.group_cursor = 0;
+            }
         } else {
-            self.confirming = true;
+            self.screen += 1;
+            self.group_cursor = 0;
         }
     }
 
     fn go_back(&mut self) {
-        if self.confirming {
-            self.confirming = false;
-        } else if self.current > 0 {
-            self.current -= 1;
+        if self.screen > 0 {
+            if self.is_alias_screen() && self.preset_selected < 2 {
+                // Came from preset, go back to preset
+                self.screen = 0;
+            } else {
+                self.screen -= 1;
+            }
+            self.group_cursor = 0;
+        }
+    }
+
+    fn apply_preset_selections(&mut self) {
+        let preset = if self.preset_selected == 0 {
+            PRESET_TEAM
+        } else {
+            PRESET_SOLO
+        };
+        for (key, value) in preset {
+            for (gi, keys) in self.group_keys.iter().enumerate() {
+                for (ki, &reg_idx) in keys.iter().enumerate() {
+                    if REGISTRY[reg_idx].key == *key {
+                        let options = Self::options_for_key(reg_idx);
+                        if let Some(pos) = options.iter().position(|o| o == value) {
+                            self.group_selections[gi][ki] = pos;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn build_choices(&self) -> TuiChoices {
+        let mut values = HashMap::new();
+        for (gi, keys) in self.group_keys.iter().enumerate() {
+            for (ki, &reg_idx) in keys.iter().enumerate() {
+                let entry = &REGISTRY[reg_idx];
+                let options = Self::options_for_key(reg_idx);
+                let selected = self.group_selections[gi][ki];
+                if selected < options.len() {
+                    let val_str = options[selected];
+                    let val = match entry.config_type {
+                        ConfigType::Bool => match val_str {
+                            "true" => serde_json::Value::Bool(true),
+                            _ => serde_json::Value::Bool(false),
+                        },
+                        _ => serde_json::Value::String(val_str.to_string()),
+                    };
+                    values.insert(entry.key.to_string(), val);
+                }
+            }
+        }
+        TuiChoices {
+            values,
+            install_alias: self.alias_selected == 0,
         }
     }
 }
 
-fn draw_walkthrough(frame: &mut Frame, app: &WalkthroughApp) {
+fn draw_init_walkthrough(frame: &mut Frame, app: &InitWalkthroughApp) {
     let area = frame.area();
-
-    if app.confirming {
-        draw_confirmation(frame, app, area);
-        return;
-    }
 
     let outer = Block::default()
         .borders(Borders::ALL)
@@ -807,93 +983,83 @@ fn draw_walkthrough(frame: &mut Frame, app: &WalkthroughApp) {
     let inner = outer.inner(area);
     frame.render_widget(outer, area);
 
-    // Build layout: progress, spacer, previous answers (if any), question, description, spacer, options, help
-    let has_previous = app.current > 0;
-    let previous_height = if has_previous {
-        app.current as u16 + 1 // +1 for spacer after previous answers
-    } else {
-        0
-    };
-
-    let chunks = Layout::vertical([
-        Constraint::Length(1),               // progress dots
-        Constraint::Length(1),               // spacer
-        Constraint::Length(previous_height), // previous answers + spacer
-        Constraint::Length(1),               // question title
-        Constraint::Length(1),               // description
-        Constraint::Length(1),               // spacer
-        Constraint::Min(3),                  // options list
-        Constraint::Length(1),               // help bar
-    ])
-    .split(inner);
-
     // Progress dots
-    let progress_spans: Vec<Span> = (0..app.questions.len())
+    let total = app.total_screens();
+    let progress_spans: Vec<Span> = (0..total)
         .map(|i| {
-            if i < app.current {
-                Span::styled(" ● ", Style::default().fg(Color::Green))
-            } else if i == app.current {
+            if i < app.screen {
+                Span::styled(" \u{25cf} ", Style::default().fg(Color::Green))
+            } else if i == app.screen {
                 Span::styled(
-                    " ● ",
+                    " \u{25cf} ",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                Span::styled(" ○ ", Style::default().fg(Color::DarkGray))
+                Span::styled(" \u{25cb} ", Style::default().fg(Color::DarkGray))
             }
         })
         .collect();
-    frame.render_widget(Paragraph::new(Line::from(progress_spans)), chunks[0]);
 
-    // Previous selections
-    if has_previous {
-        let summary_lines: Vec<Line> = app.questions[..app.current]
-            .iter()
-            .map(|pq| {
-                let chosen = pq.options[pq.selected].0;
-                Line::from(vec![
-                    Span::styled("  ✓ ", Style::default().fg(Color::Green)),
-                    Span::styled(pq.title, Style::default().fg(Color::DarkGray)),
-                    Span::styled(": ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(chosen, Style::default().fg(Color::Green)),
-                ])
-            })
-            .collect();
-        frame.render_widget(Paragraph::new(summary_lines), chunks[2]);
+    if app.is_preset_screen() {
+        draw_init_preset(frame, app, inner, progress_spans);
+    } else if app.is_alias_screen() {
+        draw_init_alias(frame, app, inner, progress_spans);
+    } else if app.is_confirm_screen() {
+        draw_init_confirm(frame, app, inner, progress_spans);
+    } else if let Some(gi) = app.current_group_idx() {
+        draw_init_group(frame, app, gi, inner, progress_spans);
     }
+}
 
-    let q = &app.questions[app.current];
+fn draw_init_preset(
+    frame: &mut Frame,
+    app: &InitWalkthroughApp,
+    area: Rect,
+    progress_spans: Vec<Span>,
+) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(area);
 
-    // Question title
+    frame.render_widget(Paragraph::new(Line::from(progress_spans)), chunks[0]);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            q.title,
+            "Quick-start presets",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ))),
+        chunks[2],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Choose a preset or configure each setting individually",
+            Style::default().fg(Color::DarkGray),
+        ))),
         chunks[3],
     );
 
-    // Description
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            q.description,
-            Style::default().fg(Color::DarkGray),
-        ))),
-        chunks[4],
-    );
-
-    // Options list
-    let items: Vec<ListItem> = q
-        .options
+    let presets = [
+        ("Team", "strict tracking, CI verification, signing enforced"),
+        ("Solo", "relaxed tracking, local verification, no signing"),
+        ("Custom", "configure each setting individually"),
+    ];
+    let items: Vec<ListItem> = presets
         .iter()
         .enumerate()
         .map(|(i, (label, desc))| {
-            let (marker, label_style) = if i == q.selected {
+            let (marker, style) = if i == app.preset_selected {
                 (
-                    "❯ ",
+                    "\u{276f} ",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
@@ -902,71 +1068,230 @@ fn draw_walkthrough(frame: &mut Frame, app: &WalkthroughApp) {
                 ("  ", Style::default().fg(Color::Gray))
             };
             ListItem::new(Line::from(vec![
-                Span::styled(marker, label_style),
-                Span::styled(*label, label_style),
+                Span::styled(marker, style),
+                Span::styled(*label, style),
                 Span::raw("  "),
                 Span::styled(*desc, Style::default().fg(Color::DarkGray)),
             ]))
         })
         .collect();
-
     let list = List::new(items);
-    let mut state = ListState::default().with_selected(Some(q.selected));
-    frame.render_stateful_widget(list, chunks[6], &mut state);
+    let mut state = ListState::default().with_selected(Some(app.preset_selected));
+    frame.render_stateful_widget(list, chunks[5], &mut state);
 
-    // Help bar
-    let help_text = if app.current > 0 {
-        "↑↓ select  Enter confirm  Backspace back  Esc cancel"
-    } else {
-        "↑↓ select  Enter confirm  Esc cancel"
-    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            help_text,
+            "\u{2191}\u{2193} select  Enter confirm  Esc cancel",
             Style::default().fg(Color::DarkGray),
         ))),
-        chunks[7],
+        chunks[6],
     );
 }
 
-fn draw_confirmation(frame: &mut Frame, app: &WalkthroughApp, area: Rect) {
-    let outer = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                "crosslink",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" setup ", Style::default().fg(Color::DarkGray)),
-        ]))
-        .padding(Padding::new(2, 2, 1, 1));
-
-    let inner = outer.inner(area);
-    frame.render_widget(outer, area);
-
-    let num_questions = app.questions.len() as u16;
+fn draw_init_group(
+    frame: &mut Frame,
+    app: &InitWalkthroughApp,
+    group_idx: usize,
+    area: Rect,
+    progress_spans: Vec<Span>,
+) {
+    let keys = &app.group_keys[group_idx];
     let chunks = Layout::vertical([
-        Constraint::Length(1),             // progress dots (all green)
-        Constraint::Length(1),             // spacer
-        Constraint::Length(1),             // "Review your choices" title
-        Constraint::Length(1),             // spacer
-        Constraint::Length(num_questions), // choices summary
-        Constraint::Min(1),                // spacer / fill
-        Constraint::Length(1),             // help bar
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(keys.len() as u16 + 1),
+        Constraint::Length(2),
+        Constraint::Length(1),
     ])
-    .split(inner);
+    .split(area);
 
-    // All progress dots green
-    let progress_spans: Vec<Span> = (0..app.questions.len())
-        .map(|_| Span::styled(" ● ", Style::default().fg(Color::Green)))
-        .collect();
     frame.render_widget(Paragraph::new(Line::from(progress_spans)), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            app.group_names[group_idx],
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        chunks[2],
+    );
 
-    // Title
+    let items: Vec<ListItem> = keys
+        .iter()
+        .enumerate()
+        .map(|(ki, &reg_idx)| {
+            let entry = &REGISTRY[reg_idx];
+            let options = InitWalkthroughApp::options_for_key(reg_idx);
+            let selected = app.group_selections[group_idx][ki];
+            let val_str = if selected < options.len() {
+                options[selected]
+            } else {
+                "?"
+            };
+            let (marker, style) = if ki == app.group_cursor {
+                (
+                    "\u{276f} ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                ("  ", Style::default().fg(Color::Gray))
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(marker, style),
+                Span::styled(format!("{:<30}", entry.key), style),
+                Span::styled(
+                    format!("[{}]", val_str),
+                    if ki == app.group_cursor {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
+            ]))
+        })
+        .collect();
+    let list = List::new(items);
+    let mut state = ListState::default().with_selected(Some(app.group_cursor));
+    frame.render_stateful_widget(list, chunks[4], &mut state);
+
+    // Description pane
+    if app.group_cursor < keys.len() {
+        let reg_idx = keys[app.group_cursor];
+        let entry = &REGISTRY[reg_idx];
+        let options = InitWalkthroughApp::options_for_key(reg_idx);
+        let valid = if options.len() > 1 {
+            format!("  Valid: {}", options.join(", "))
+        } else {
+            String::new()
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    format!("  {}", entry.description),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled(valid, Style::default().fg(Color::DarkGray))),
+            ]),
+            chunks[5],
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "\u{2191}\u{2193} navigate  \u{2192}/\u{2190} cycle  Enter next  Backspace back  Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[6],
+    );
+}
+
+fn draw_init_alias(
+    frame: &mut Frame,
+    app: &InitWalkthroughApp,
+    area: Rect,
+    progress_spans: Vec<Span>,
+) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(area);
+
+    frame.render_widget(Paragraph::new(Line::from(progress_spans)), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Shell Alias",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        chunks[2],
+    );
+
+    let desc = if app.shell_config_file.is_empty() {
+        "Could not detect shell config file".to_string()
+    } else {
+        format!(
+            "Install `xl` alias for `crosslink` in {}?",
+            app.shell_config_file
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            desc,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[3],
+    );
+
+    let options = [
+        ("Yes", "Add alias to shell config"),
+        ("No", "Skip alias setup"),
+    ];
+    let items: Vec<ListItem> = options
+        .iter()
+        .enumerate()
+        .map(|(i, (label, desc))| {
+            let (marker, style) = if i == app.alias_selected {
+                (
+                    "\u{276f} ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                ("  ", Style::default().fg(Color::Gray))
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(marker, style),
+                Span::styled(*label, style),
+                Span::raw("  "),
+                Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+            ]))
+        })
+        .collect();
+    let list = List::new(items);
+    let mut state = ListState::default().with_selected(Some(app.alias_selected));
+    frame.render_stateful_widget(list, chunks[5], &mut state);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "\u{2191}\u{2193} select  Enter confirm  Backspace back  Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[6],
+    );
+}
+
+fn draw_init_confirm(
+    frame: &mut Frame,
+    app: &InitWalkthroughApp,
+    area: Rect,
+    progress_spans: Vec<Span>,
+) {
+    let total_keys: usize = app.group_keys.iter().map(|k| k.len()).sum();
+    let summary_height = total_keys as u16 + app.group_names.len() as u16 + 3;
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(summary_height),
+        Constraint::Length(1),
+    ])
+    .split(area);
+
+    frame.render_widget(Paragraph::new(Line::from(progress_spans)), chunks[0]);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             "Review your choices",
@@ -977,34 +1302,60 @@ fn draw_confirmation(frame: &mut Frame, app: &WalkthroughApp, area: Rect) {
         chunks[2],
     );
 
-    // All choices
-    let summary_lines: Vec<Line> = app
-        .questions
-        .iter()
-        .map(|q| {
-            let chosen = q.options[q.selected].0;
-            Line::from(vec![
-                Span::styled("  ✓ ", Style::default().fg(Color::Green)),
-                Span::styled(q.title, Style::default().fg(Color::Gray)),
-                Span::styled(": ", Style::default().fg(Color::DarkGray)),
+    let mut lines: Vec<Line> = Vec::new();
+    for (gi, keys) in app.group_keys.iter().enumerate() {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", app.group_names[gi]),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (ki, &reg_idx) in keys.iter().enumerate() {
+            let entry = &REGISTRY[reg_idx];
+            let options = InitWalkthroughApp::options_for_key(reg_idx);
+            let selected = app.group_selections[gi][ki];
+            let val_str = if selected < options.len() {
+                options[selected]
+            } else {
+                "?"
+            };
+            lines.push(Line::from(vec![
+                Span::styled("    \u{2713} ", Style::default().fg(Color::Green)),
                 Span::styled(
-                    chosen,
+                    format!("{}: ", entry.key),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    val_str,
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
-            ])
-        })
-        .collect();
-    frame.render_widget(Paragraph::new(summary_lines), chunks[4]);
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+    let alias_text = if app.alias_selected == 0 {
+        format!(
+            "    \u{2713} xl alias: will install ({})",
+            app.shell_config_file
+        )
+    } else {
+        "    \u{2713} xl alias: skip".to_string()
+    };
+    lines.push(Line::from(Span::styled(
+        alias_text,
+        Style::default().fg(Color::DarkGray),
+    )));
 
-    // Help bar
+    frame.render_widget(Paragraph::new(lines), chunks[4]);
+
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             "Enter apply  Backspace go back  Esc cancel",
             Style::default().fg(Color::DarkGray),
         ))),
-        chunks[6],
+        chunks[5],
     );
 }
 
@@ -1016,50 +1367,13 @@ fn run_tui_walkthrough(existing: Option<&serde_json::Value>) -> Result<TuiChoice
         return Ok(TuiChoices::default());
     }
 
-    // Resolve current/default selections from existing config
-    let current_tracking = existing
-        .and_then(|v| v.get("tracking_mode"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("strict");
-    let current_intervention = existing
-        .and_then(|v| v.get("intervention_tracking"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let current_comment = existing
-        .and_then(|v| v.get("comment_discipline"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("encouraged");
-    let current_kickoff = existing
-        .and_then(|v| v.get("kickoff_verification"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("local");
+    let base = existing
+        .cloned()
+        .unwrap_or_else(|| serde_json::from_str(HOOK_CONFIG_JSON).unwrap_or_default());
 
-    let tracking_default = match current_tracking {
-        "normal" => 1,
-        "relaxed" => 2,
-        _ => 0,
-    };
-    let intervention_default = if current_intervention { 0 } else { 1 };
-    let comment_default = match current_comment {
-        "required" => 1,
-        "off" => 2,
-        _ => 0,
-    };
-    let kickoff_default = match current_kickoff {
-        "ci" => 1,
-        "thorough" => 2,
-        _ => 0,
-    };
+    let mut app = InitWalkthroughApp::new(&base);
 
-    let mut app = WalkthroughApp::new(
-        tracking_default,
-        intervention_default,
-        comment_default,
-        kickoff_default,
-    );
-
-    // Inline viewport — renders below the current cursor, not full-screen
-    const WALKTHROUGH_HEIGHT: u16 = 20;
+    const WALKTHROUGH_HEIGHT: u16 = 24;
     enable_raw_mode().context("Failed to enable raw mode")?;
     let stdout = io::stdout();
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
@@ -1071,25 +1385,77 @@ fn run_tui_walkthrough(existing: Option<&serde_json::Value>) -> Result<TuiChoice
     )
     .context("Failed to create terminal")?;
 
-    // Run event loop — closure so we can always restore terminal on exit
     let result = (|| -> Result<()> {
         loop {
-            terminal.draw(|f| draw_walkthrough(f, &app))?;
+            terminal.draw(|f| draw_init_walkthrough(f, &app))?;
 
             if let Event::Key(key) = event::read().context("Failed to read terminal event")? {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
                 match key.code {
-                    KeyCode::Up | KeyCode::Char('k') if !app.confirming => app.move_up(),
-                    KeyCode::Down | KeyCode::Char('j') if !app.confirming => app.move_down(),
+                    KeyCode::Up | KeyCode::Char('k') if !app.is_confirm_screen() => app.move_up(),
+                    KeyCode::Down | KeyCode::Char('j') if !app.is_confirm_screen() => {
+                        app.move_down()
+                    }
+                    KeyCode::Right
+                        if !app.is_preset_screen()
+                            && !app.is_confirm_screen()
+                            && !app.is_alias_screen() =>
+                    {
+                        app.cycle_value()
+                    }
+                    KeyCode::Left
+                        if !app.is_preset_screen()
+                            && !app.is_confirm_screen()
+                            && !app.is_alias_screen() =>
+                    {
+                        // Cycle backwards
+                        if let Some(gi) = app.current_group_idx() {
+                            if app.group_cursor < app.group_keys[gi].len() {
+                                let reg_idx = app.group_keys[gi][app.group_cursor];
+                                let options = InitWalkthroughApp::options_for_key(reg_idx);
+                                if !options.is_empty() {
+                                    let current = app.group_selections[gi][app.group_cursor];
+                                    app.group_selections[gi][app.group_cursor] = if current == 0 {
+                                        options.len() - 1
+                                    } else {
+                                        current - 1
+                                    };
+                                }
+                            }
+                        }
+                    }
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        app.confirm();
+                        if !app.is_preset_screen()
+                            && !app.is_confirm_screen()
+                            && !app.is_alias_screen()
+                        {
+                            // On group screens, Enter advances to next key or next screen
+                            if let Some(gi) = app.current_group_idx() {
+                                if app.group_cursor + 1 < app.group_keys[gi].len() {
+                                    app.group_cursor += 1;
+                                } else {
+                                    app.screen += 1;
+                                    app.group_cursor = 0;
+                                }
+                            }
+                        } else {
+                            app.confirm_action();
+                        }
                         if app.finished {
                             break;
                         }
                     }
-                    KeyCode::Backspace | KeyCode::Left => app.go_back(),
+                    KeyCode::Tab if !app.is_confirm_screen() => {
+                        if app.is_preset_screen() {
+                            app.confirm_action();
+                        } else {
+                            app.screen += 1;
+                            app.group_cursor = 0;
+                        }
+                    }
+                    KeyCode::Backspace => app.go_back(),
                     KeyCode::Esc | KeyCode::Char('q') => {
                         app.cancelled = true;
                         break;
@@ -1101,7 +1467,7 @@ fn run_tui_walkthrough(existing: Option<&serde_json::Value>) -> Result<TuiChoice
         Ok(())
     })();
 
-    // Clear the inline viewport area so progress output fills it cleanly
+    // Clear inline viewport
     {
         let area = terminal.get_frame().area();
         let backend = terminal.backend_mut();
@@ -1116,7 +1482,6 @@ fn run_tui_walkthrough(existing: Option<&serde_json::Value>) -> Result<TuiChoice
         execute!(backend, cursor::MoveTo(0, area.y)).ok();
     }
 
-    // Restore terminal state
     disable_raw_mode().ok();
     terminal.show_cursor().ok();
 
@@ -1126,35 +1491,7 @@ fn run_tui_walkthrough(existing: Option<&serde_json::Value>) -> Result<TuiChoice
         anyhow::bail!("Setup cancelled");
     }
 
-    let tracking_mode = match app.questions[0].selected {
-        1 => "normal",
-        2 => "relaxed",
-        _ => "strict",
-    }
-    .to_string();
-
-    let intervention_tracking = app.questions[1].selected == 0;
-
-    let comment_discipline = match app.questions[2].selected {
-        1 => "required",
-        2 => "off",
-        _ => "encouraged",
-    }
-    .to_string();
-
-    let kickoff_verification = match app.questions[3].selected {
-        1 => "ci",
-        2 => "thorough",
-        _ => "local",
-    }
-    .to_string();
-
-    Ok(TuiChoices {
-        tracking_mode,
-        intervention_tracking,
-        comment_discipline,
-        kickoff_verification,
-    })
+    Ok(app.build_choices())
 }
 
 /// Apply TUI choices onto a config JSON value, preserving fields not covered by the TUI.
@@ -1162,23 +1499,65 @@ fn apply_tui_choices(config: &mut serde_json::Value, choices: &TuiChoices) -> Re
     let obj = config
         .as_object_mut()
         .context("hook-config.json is not a JSON object")?;
-    obj.insert(
-        "tracking_mode".into(),
-        serde_json::Value::String(choices.tracking_mode.clone()),
-    );
-    obj.insert(
-        "intervention_tracking".into(),
-        serde_json::Value::Bool(choices.intervention_tracking),
-    );
-    obj.insert(
-        "comment_discipline".into(),
-        serde_json::Value::String(choices.comment_discipline.clone()),
-    );
-    obj.insert(
-        "kickoff_verification".into(),
-        serde_json::Value::String(choices.kickoff_verification.clone()),
-    );
+    for (k, v) in &choices.values {
+        obj.insert(k.clone(), v.clone());
+    }
     Ok(())
+}
+
+/// Install the `xl` shell alias if requested by the user during init.
+fn setup_shell_alias(ui: &InitUI, choices: &TuiChoices) {
+    if !choices.install_alias {
+        return;
+    }
+
+    let shell_env = std::env::var("SHELL").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    let (config_file, alias_line) = if shell_env.ends_with("fish") {
+        (
+            format!("{home}/.config/fish/config.fish"),
+            "abbr -a xl crosslink",
+        )
+    } else if shell_env.ends_with("zsh") {
+        (format!("{home}/.zshrc"), "alias xl='crosslink'")
+    } else if shell_env.ends_with("bash") {
+        (format!("{home}/.bashrc"), "alias xl='crosslink'")
+    } else {
+        ui.warn("Could not detect shell for alias installation");
+        return;
+    };
+
+    let path = std::path::Path::new(&config_file);
+
+    // Idempotent: check if already present
+    if let Ok(content) = fs::read_to_string(path) {
+        if content.lines().any(|line| line.trim() == alias_line) {
+            ui.step_skip("xl alias already installed");
+            return;
+        }
+    }
+
+    // Append the alias
+    ui.step_start("Installing xl alias");
+    let line_to_append = format!("\n# crosslink shortcut\n{}\n", alias_line);
+    match fs::OpenOptions::new().append(true).open(path) {
+        Ok(mut file) => {
+            use std::io::Write;
+            if let Err(e) = file.write_all(line_to_append.as_bytes()) {
+                ui.warn(&format!("Failed to write alias: {e}"));
+            } else {
+                ui.step_ok(Some(&config_file));
+                ui.detail(&format!(
+                    "Run `source {}` or open a new terminal to activate",
+                    config_file
+                ));
+            }
+        }
+        Err(e) => {
+            ui.warn(&format!("Could not open {}: {e}", config_file));
+        }
+    }
 }
 
 /// Options for `crosslink init`.
@@ -1190,6 +1569,99 @@ pub struct InitOpts<'a> {
     pub signing_key: Option<&'a str>,
     pub reconfigure: bool,
     pub defaults: bool,
+}
+
+/// Ensure `repo_compact_id` exists in `.crosslink/repo-id`.
+///
+/// Generates a 4-char base62 identifier on first init and preserves it
+/// on subsequent inits. Stored in a separate file (not hook-config.json)
+/// to avoid triggering policy drift detection.
+fn ensure_repo_compact_id(crosslink_dir: &Path) -> Result<()> {
+    let id_path = crosslink_dir.join("repo-id");
+    if id_path.exists() {
+        return Ok(());
+    }
+    let id = crate::utils::generate_compact_id();
+    fs::write(&id_path, &id).context("Failed to write repo-id")?;
+    Ok(())
+}
+
+/// Read `repo_compact_id` from `.crosslink/repo-id`, or return a fallback.
+pub fn read_repo_compact_id(crosslink_dir: &Path) -> String {
+    let id_path = crosslink_dir.join("repo-id");
+    if let Ok(id) = fs::read_to_string(&id_path) {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    // Fallback: generate from directory hash for consistent identity
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    crosslink_dir.hash(&mut hasher);
+    crate::utils::base62_encode_4(hasher.finish())
+}
+
+/// Detect project lint/test commands and populate `agent_overrides` in
+/// hook-config.json so kickoff agents can self-validate their work (#495).
+///
+/// Only populates empty arrays — preserves any manually configured commands.
+fn populate_agent_tool_commands(config_path: &Path, project_root: &Path) -> Result<()> {
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(config_path)?;
+    let mut config: serde_json::Value = serde_json::from_str(&raw)?;
+
+    let overrides = match config.get_mut("agent_overrides") {
+        Some(serde_json::Value::Object(m)) => m,
+        _ => return Ok(()),
+    };
+
+    // Only populate if arrays are empty (don't overwrite manual config)
+    let lint_empty = overrides
+        .get("agent_lint_commands")
+        .and_then(|v| v.as_array())
+        .is_none_or(|a| a.is_empty());
+    let test_empty = overrides
+        .get("agent_test_commands")
+        .and_then(|v| v.as_array())
+        .is_none_or(|a| a.is_empty());
+
+    if !lint_empty && !test_empty {
+        return Ok(()); // Both already configured
+    }
+
+    let conv = super::kickoff::detect_conventions(project_root);
+
+    let mut changed = false;
+
+    if lint_empty && !conv.lint_commands.is_empty() {
+        overrides.insert(
+            "agent_lint_commands".to_string(),
+            serde_json::json!(conv.lint_commands),
+        );
+        changed = true;
+    }
+
+    if test_empty {
+        if let Some(ref test_cmd) = conv.test_command {
+            overrides.insert(
+                "agent_test_commands".to_string(),
+                serde_json::json!([test_cmd]),
+            );
+            changed = true;
+        }
+    }
+
+    if changed {
+        let output = serde_json::to_string_pretty(&config)?;
+        fs::write(config_path, format!("{output}\n"))?;
+    }
+
+    Ok(())
 }
 
 pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
@@ -1205,6 +1677,31 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
     let hooks_dir = claude_dir.join("hooks");
 
     let ui = InitUI::new();
+
+    // Pre-flight: verify git repo exists and has at least one commit (#401).
+    // Crosslink uses git worktrees for hub/knowledge branches, which require
+    // a functioning repo with commit history.
+    let git_dir = path.join(".git");
+    if !git_dir.exists() {
+        anyhow::bail!(
+            "No git repository found at {}.\n\
+             Run `git init` and create an initial commit before running `crosslink init`.",
+            path.display()
+        );
+    }
+    let has_commits = std::process::Command::new("git")
+        .current_dir(path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !has_commits {
+        anyhow::bail!(
+            "Git repository has no commits.\n\
+             Create an initial commit before running `crosslink init`:\n\
+             \n  git add .\n  git commit -m \"Initial commit\""
+        );
+    }
 
     // Check if already initialized
     let crosslink_exists = crosslink_dir.exists();
@@ -1260,7 +1757,7 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
     }
 
     // Write hook config
-    match tui_result {
+    let tui_choices = match tui_result {
         Some((mut config, choices)) => {
             apply_tui_choices(&mut config, &choices)?;
             let output = serde_json::to_string_pretty(&config)
@@ -1268,14 +1765,22 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
             fs::write(&config_path, format!("{}\n", output))
                 .context("Failed to write hook-config.json")?;
             ui.step_created("hook-config.json");
+            Some(choices)
         }
         None if !config_exists || force => {
             fs::write(&config_path, HOOK_CONFIG_JSON)
                 .context("Failed to write hook-config.json")?;
             ui.step_created("hook-config.json");
+            None
         }
-        None => {}
-    }
+        None => None,
+    };
+
+    // Ensure repo_compact_id exists in hook-config.json (idempotent)
+    ensure_repo_compact_id(&crosslink_dir)?;
+
+    // Auto-detect lint/test commands for agent overrides (#495)
+    populate_agent_tool_commands(&config_path, path)?;
 
     // Write .crosslink/.gitignore for multi-agent files
     let crosslink_gitignore = crosslink_dir.join(".gitignore");
@@ -1284,6 +1789,7 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
             &crosslink_gitignore,
             "# Multi-agent collaboration (machine-local)\n\
              agent.json\n\
+             repo-id\n\
              .hub-cache/\n\
              .knowledge-cache/\n\
              keys/\n\
@@ -1402,6 +1908,11 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
         setup_driver_signing(path, signing_key, &ui)?;
     }
 
+    // Shell alias setup (REQ-10)
+    if let Some(ref choices) = tui_choices {
+        setup_shell_alias(&ui, choices);
+    }
+
     ui.success();
 
     Ok(())
@@ -1411,6 +1922,35 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Create a temp directory with a git repo and initial commit.
+    /// Required because init now checks for .git and HEAD (#401).
+    fn test_dir() -> tempfile::TempDir {
+        let dir = tempdir().unwrap();
+        let init = std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["init"])
+            .output()
+            .expect("git init failed");
+        assert!(init.status.success(), "git init failed");
+        // Use -c flags so identity works even when env vars or global config are absent
+        let commit = std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args([
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ])
+            .output()
+            .expect("git commit failed");
+        assert!(commit.status.success(), "git commit --allow-empty failed");
+        dir
+    }
 
     /// Build default test opts (skips cpitd/signing, uses --defaults to skip TUI).
     fn test_opts(force: bool) -> InitOpts<'static> {
@@ -1427,7 +1967,7 @@ mod tests {
 
     #[test]
     fn test_run_fresh_init() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         let result = run(dir.path(), &test_opts(false));
         assert!(result.is_ok());
 
@@ -1443,7 +1983,7 @@ mod tests {
 
     #[test]
     fn test_run_creates_hook_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Verify hook files
@@ -1464,7 +2004,7 @@ mod tests {
 
     #[test]
     fn test_run_creates_rule_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let rules_dir = dir.path().join(".crosslink/rules");
@@ -1481,7 +2021,7 @@ mod tests {
 
     #[test]
     fn test_run_already_initialized_no_force() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // First init
         run(dir.path(), &test_opts(false)).unwrap();
@@ -1493,7 +2033,7 @@ mod tests {
 
     #[test]
     fn test_run_force_update() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // First init
         run(dir.path(), &test_opts(false)).unwrap();
@@ -1524,7 +2064,7 @@ mod tests {
 
     #[test]
     fn test_force_init_preserves_existing_mcp_servers() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Add a custom MCP server entry alongside the embedded ones
@@ -1564,7 +2104,7 @@ mod tests {
 
     #[test]
     fn test_force_init_returns_warnings_for_overwritten_keys() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // The first init created .mcp.json with the embedded keys.
@@ -1589,7 +2129,7 @@ mod tests {
 
     #[test]
     fn test_write_mcp_json_merged_creates_fresh_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         let mcp_path = dir.path().join(".mcp.json");
 
         // No pre-existing file
@@ -1619,7 +2159,7 @@ mod tests {
 
     #[test]
     fn test_force_init_fails_on_malformed_mcp_json() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write invalid JSON to .mcp.json
@@ -1643,7 +2183,7 @@ mod tests {
 
     #[test]
     fn test_force_init_fails_on_non_object_mcp_json() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write a JSON array to .mcp.json
@@ -1667,7 +2207,7 @@ mod tests {
 
     #[test]
     fn test_force_init_handles_empty_mcp_json_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write empty file
@@ -1687,7 +2227,7 @@ mod tests {
 
     #[test]
     fn test_force_init_fails_on_non_object_mcp_servers_value() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write valid JSON where mcpServers is a string instead of object
@@ -1711,7 +2251,7 @@ mod tests {
 
     #[test]
     fn test_init_merges_into_mcp_json_without_mcp_servers_key() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write a valid object with no mcpServers key
@@ -1730,7 +2270,7 @@ mod tests {
 
     #[test]
     fn test_run_partial_init_crosslink_only() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // Create only .crosslink directory
         fs::create_dir_all(dir.path().join(".crosslink")).unwrap();
@@ -1744,7 +2284,7 @@ mod tests {
 
     #[test]
     fn test_run_partial_init_claude_only() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // Create only .claude directory
         fs::create_dir_all(dir.path().join(".claude")).unwrap();
@@ -1758,7 +2298,7 @@ mod tests {
 
     #[test]
     fn test_run_database_usable() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Open the created database and verify it works
@@ -1772,7 +2312,7 @@ mod tests {
 
     #[test]
     fn test_run_rule_files_not_empty() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let rules_dir = dir.path().join(".crosslink/rules");
@@ -1787,7 +2327,7 @@ mod tests {
 
     #[test]
     fn test_run_force_updates_rules() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Modify a rule file
@@ -1804,7 +2344,7 @@ mod tests {
 
     #[test]
     fn test_run_idempotent_with_force() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // Multiple force runs should all succeed
         for _ in 0..3 {
@@ -1866,7 +2406,7 @@ mod tests {
 
     #[test]
     fn test_gitignore_includes_local_config() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".crosslink/.gitignore")).unwrap();
@@ -1879,20 +2419,20 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_default() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         assert_eq!(detect_python_prefix(dir.path()), "python3");
     }
 
     #[test]
     fn test_detect_python_prefix_uv_lock() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("uv.lock"), "").unwrap();
         assert_eq!(detect_python_prefix(dir.path()), "uv run python3");
     }
 
     #[test]
     fn test_detect_python_prefix_uv_pyproject() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(
             dir.path().join("pyproject.toml"),
             "[project]\nname = \"foo\"\n\n[tool.uv]\ndev-dependencies = []\n",
@@ -1903,14 +2443,14 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_poetry_lock() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("poetry.lock"), "").unwrap();
         assert_eq!(detect_python_prefix(dir.path()), "poetry run python3");
     }
 
     #[test]
     fn test_detect_python_prefix_poetry_pyproject() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(
             dir.path().join("pyproject.toml"),
             "[project]\nname = \"foo\"\n\n[tool.poetry]\nname = \"foo\"\n",
@@ -1921,28 +2461,28 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_venv() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::create_dir(dir.path().join(".venv")).unwrap();
         assert_eq!(detect_python_prefix(dir.path()), ".venv/bin/python3");
     }
 
     #[test]
     fn test_detect_python_prefix_pipenv() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("Pipfile"), "").unwrap();
         assert_eq!(detect_python_prefix(dir.path()), "pipenv run python3");
     }
 
     #[test]
     fn test_detect_python_prefix_pipenv_lock() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("Pipfile.lock"), "{}").unwrap();
         assert_eq!(detect_python_prefix(dir.path()), "pipenv run python3");
     }
 
     #[test]
     fn test_detect_python_prefix_uv_beats_poetry() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         // Both uv.lock and poetry.lock present — uv wins
         fs::write(dir.path().join("uv.lock"), "").unwrap();
         fs::write(dir.path().join("poetry.lock"), "").unwrap();
@@ -1951,7 +2491,7 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_poetry_beats_venv() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("poetry.lock"), "").unwrap();
         fs::create_dir(dir.path().join(".venv")).unwrap();
         assert_eq!(detect_python_prefix(dir.path()), "poetry run python3");
@@ -1959,7 +2499,7 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_venv_beats_pipenv() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::create_dir(dir.path().join(".venv")).unwrap();
         fs::write(dir.path().join("Pipfile"), "").unwrap();
         assert_eq!(detect_python_prefix(dir.path()), ".venv/bin/python3");
@@ -1967,7 +2507,7 @@ mod tests {
 
     #[test]
     fn test_detect_python_prefix_pyproject_without_tools_is_default() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         // Plain pyproject.toml with no tool sections
         fs::write(
             dir.path().join("pyproject.toml"),
@@ -1981,7 +2521,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_default_uses_python3() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
@@ -1997,7 +2537,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_uv_project() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("uv.lock"), "").unwrap();
         run(dir.path(), &test_opts(false)).unwrap();
 
@@ -2010,7 +2550,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_cli_override() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("uv.lock"), "").unwrap();
         // CLI override should beat auto-detection
         run(
@@ -2035,7 +2575,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_produces_valid_json() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         fs::write(dir.path().join("uv.lock"), "").unwrap();
         run(dir.path(), &test_opts(false)).unwrap();
 
@@ -2049,7 +2589,7 @@ mod tests {
 
     #[test]
     fn test_force_re_detects_toolchain() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         // First init: no markers → python3
         run(dir.path(), &test_opts(false)).unwrap();
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
@@ -2083,7 +2623,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_includes_allowed_tools() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
@@ -2103,7 +2643,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_includes_tmux_and_worktree_permissions() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".claude/settings.json")).unwrap();
@@ -2127,7 +2667,7 @@ mod tests {
 
     #[test]
     fn test_force_init_preserves_user_allowed_tools() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Add a custom allowedTools entry
@@ -2172,7 +2712,7 @@ mod tests {
 
     #[test]
     fn test_force_init_no_duplicate_allowed_tools() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Force re-init multiple times
@@ -2202,7 +2742,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_merge_fails_on_malformed_json() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write invalid JSON to settings.json
@@ -2226,7 +2766,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_merge_fails_on_non_object() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // Write a JSON array to settings.json
@@ -2246,7 +2786,7 @@ mod tests {
 
     #[test]
     fn test_settings_json_merge_creates_fresh_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         let settings_path = dir.path().join(".claude/settings.json");
         fs::create_dir_all(dir.path().join(".claude")).unwrap();
 
@@ -2277,7 +2817,7 @@ mod tests {
 
     #[test]
     fn test_init_creates_root_gitignore() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
@@ -2297,7 +2837,7 @@ mod tests {
 
     #[test]
     fn test_root_gitignore_idempotent() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let first = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
@@ -2314,7 +2854,7 @@ mod tests {
 
     #[test]
     fn test_root_gitignore_preserves_user_entries() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // Write a pre-existing .gitignore with user content
         fs::write(dir.path().join(".gitignore"), "/target/\n*.log\n").unwrap();
@@ -2336,7 +2876,7 @@ mod tests {
 
     #[test]
     fn test_root_gitignore_preserves_entries_around_managed_section() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // First init
         run(dir.path(), &test_opts(false)).unwrap();
@@ -2381,7 +2921,7 @@ mod tests {
 
     #[test]
     fn test_root_gitignore_has_do_track_comments() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
@@ -2397,7 +2937,7 @@ mod tests {
 
     #[test]
     fn test_write_root_gitignore_fresh() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         write_root_gitignore(dir.path()).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
@@ -2408,7 +2948,7 @@ mod tests {
 
     #[test]
     fn test_write_root_gitignore_replaces_section() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
 
         // Write twice
         write_root_gitignore(dir.path()).unwrap();
@@ -2424,7 +2964,7 @@ mod tests {
 
     #[test]
     fn test_crosslink_inner_gitignore_includes_integrations() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let content = fs::read_to_string(dir.path().join(".crosslink/.gitignore")).unwrap();
@@ -2435,7 +2975,7 @@ mod tests {
 
     #[test]
     fn test_init_deploys_skill_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         let commands_dir = dir.path().join(".claude/commands");
@@ -2457,7 +2997,7 @@ mod tests {
 
     #[test]
     fn test_init_deploys_mcp_knowledge_server() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         run(dir.path(), &test_opts(false)).unwrap();
 
         // knowledge-server.py must exist
@@ -2482,7 +3022,7 @@ mod tests {
 
     #[test]
     fn test_force_init_deploys_skill_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_dir();
         // First init
         run(dir.path(), &test_opts(false)).unwrap();
 

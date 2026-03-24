@@ -64,6 +64,21 @@ impl SyncManager {
         &self.cache_dir
     }
 
+    /// Check whether the configured git remote actually exists in the repo.
+    ///
+    /// Returns `false` when the remote (e.g. "origin") is not configured,
+    /// which means hub sync operations cannot work.
+    pub fn remote_exists(&self) -> bool {
+        Command::new("git")
+            .current_dir(&self.repo_root)
+            .args(["remote", "get-url", &self.remote])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Check if the hub uses V2 layout (per-entity lock files in `locks/`).
     pub fn is_v2_layout(&self) -> bool {
         let meta_dir = self.cache_dir.join("meta");
@@ -151,15 +166,29 @@ impl SyncManager {
             } else {
                 "--local"
             };
-            // INTENTIONAL: git config writes are best-effort — commits will use global config as fallback
-            let _ = Command::new("git")
+            let email_result = Command::new("git")
                 .current_dir(&self.cache_dir)
                 .args(["config", scope_flag, "user.email", "crosslink@localhost"])
                 .output();
-            let _ = Command::new("git")
+            let name_result = Command::new("git")
                 .current_dir(&self.cache_dir)
                 .args(["config", scope_flag, "user.name", "crosslink"])
                 .output();
+            // Verify identity is actually set — don't let commits fail later
+            // with "Author identity unknown" (#469)
+            let verified = Command::new("git")
+                .current_dir(&self.cache_dir)
+                .args(["config", "user.email"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !verified {
+                bail!(
+                    "Failed to set git identity in hub cache (email: {:?}, name: {:?})",
+                    email_result.map(|o| o.status.success()),
+                    name_result.map(|o| o.status.success()),
+                );
+            }
         }
         Ok(())
     }

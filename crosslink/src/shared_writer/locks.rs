@@ -62,11 +62,14 @@ impl SharedWriter {
             Some(lock) => {
                 // We lost -- clean up by emitting LockReleased
                 let release = crate::events::Event::LockReleased { issue_display_id };
-                // INTENTIONAL: cleanup release is best-effort — the lock is already held by the winner
-                let _ = self.emit_compact_push(
+                // We lost contention — emit release for our stale claim.
+                // If push fails, compaction will resolve it (winner's claim wins).
+                if let Err(e) = self.emit_compact_push(
                     release,
                     &format!("release lock on #{} (contention cleanup)", issue_display_id),
-                );
+                ) {
+                    tracing::info!("contention cleanup push deferred: {}", e);
+                }
                 Ok(LockClaimResult::Contended {
                     winner_agent_id: lock.agent_id,
                 })
@@ -130,6 +133,42 @@ impl SharedWriter {
 
         // Now claim normally
         self.claim_lock_v2(issue_display_id, branch)
+    }
+
+    /// Force-release a stale lock without re-claiming it.
+    ///
+    /// Used by `integrity locks --repair` to actually free stale locks.
+    /// Unlike `steal_lock_v2`, this does NOT call `claim_lock_v2` afterwards.
+    pub fn force_release_lock_v2(
+        &self,
+        issue_display_id: i64,
+        stale_agent_id: &str,
+    ) -> Result<bool> {
+        // Prune stale agent's compacted events so they don't replay
+        crate::compaction::prune_events(&self.cache_dir, stale_agent_id)?;
+
+        // Clear lock from checkpoint state
+        let mut state = crate::checkpoint::read_checkpoint(&self.cache_dir)?;
+        state.locks.remove(&issue_display_id);
+        crate::checkpoint::write_checkpoint(&self.cache_dir, &state)?;
+
+        // Remove materialized lock file
+        let lock_path = self
+            .cache_dir
+            .join("locks")
+            .join(format!("{}.json", issue_display_id));
+        if lock_path.exists() {
+            std::fs::remove_file(&lock_path)?;
+        }
+
+        // Emit a release event and push
+        let event = crate::events::Event::LockReleased { issue_display_id };
+        self.emit_compact_push(
+            event,
+            &format!("force-release stale lock on #{}", issue_display_id),
+        )?;
+
+        Ok(true)
     }
 
     /// Read a V2 lock file for a specific issue.

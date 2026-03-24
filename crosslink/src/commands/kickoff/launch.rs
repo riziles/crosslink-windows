@@ -327,6 +327,74 @@ pub(super) fn create_worktree(
     // Determine base ref
     let base = base_branch.unwrap_or("HEAD");
 
+    // Handle existing branch refs from prior phases (#481).
+    // A branch may exist from a previous kickoff/swarm phase that was
+    // already merged. Rather than failing, clean it up automatically.
+    let branch_exists = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--verify", &branch_name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if branch_exists {
+        // Check if the branch has an active worktree
+        let wt_output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .context("Failed to list worktrees")?;
+        let wt_list = String::from_utf8_lossy(&wt_output.stdout);
+        let has_active_worktree = wt_list
+            .lines()
+            .any(|line| line.starts_with("branch ") && line.ends_with(&branch_name));
+
+        if has_active_worktree {
+            bail!(
+                "Branch '{}' already exists and has an active worktree. \
+                 Clean up the worktree first with: git worktree remove <path>",
+                branch_name
+            );
+        }
+
+        // Check if the branch is fully merged into the base
+        let is_merged = Command::new("git")
+            .current_dir(repo_root)
+            .args(["merge-base", "--is-ancestor", &branch_name, base])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if is_merged {
+            // Branch is fully merged — safe to delete and recreate
+            tracing::info!(
+                "branch '{}' exists from a prior phase and is fully merged, recreating",
+                branch_name
+            );
+            let delete_output = Command::new("git")
+                .current_dir(repo_root)
+                .args(["branch", "-d", &branch_name])
+                .output()
+                .context("Failed to delete merged branch")?;
+            if !delete_output.status.success() {
+                let stderr = String::from_utf8_lossy(&delete_output.stderr);
+                bail!(
+                    "Branch '{}' is merged but could not be deleted: {}",
+                    branch_name,
+                    stderr.trim()
+                );
+            }
+        } else {
+            bail!(
+                "Branch '{}' already exists and has unmerged changes. \
+                 Either merge it first, delete it manually with \
+                 `git branch -D {}`, or use a different slug.",
+                branch_name,
+                branch_name
+            );
+        }
+    }
+
     // Create the worktree with a new branch
     let output = Command::new("git")
         .current_dir(repo_root)
@@ -348,7 +416,7 @@ pub(super) fn create_worktree(
 pub(super) fn init_worktree_agent(
     worktree_dir: &Path,
     crosslink_dir: &Path,
-    slug: &str,
+    compact_name: &str,
 ) -> Result<String> {
     // Run crosslink init --force in the worktree
     let output = Command::new("crosslink")
@@ -362,14 +430,14 @@ pub(super) fn init_worktree_agent(
         tracing::warn!("crosslink init in worktree: {}", stderr.trim());
     }
 
-    // Derive agent ID from parent agent or hostname
-    let parent_id = AgentConfig::load(crosslink_dir)?
-        .map(|c| c.agent_id)
-        .unwrap_or_else(|| "driver".to_string());
+    // Use the compact name as the agent ID directly
+    let agent_id = compact_name.to_string();
 
-    let agent_id = format!("{}--{}", parent_id, slug);
-
-    // Initialize agent identity in worktree (skip key gen — inherits from parent)
+    // Initialize agent identity with its own signing key (#505).
+    // Previous approach inherited the parent's key with no_key=true, but
+    // that failed when no parent agent config existed (e.g. driver-invoked
+    // kickoff). Now each subagent gets a dedicated keypair, and is
+    // auto-approved since the driver explicitly launched it.
     let wt_crosslink = worktree_dir.join(".crosslink");
     if wt_crosslink.exists() {
         // Only init if not already configured
@@ -377,42 +445,21 @@ pub(super) fn init_worktree_agent(
             if let Err(e) = super::super::agent::init(
                 &wt_crosslink,
                 &agent_id,
-                Some(&format!("Kickoff agent for: {}", slug)),
-                true, // no-key: inherit parent's key
+                Some(&format!("Kickoff agent for: {}", compact_name)),
+                false, // generate dedicated signing key
                 false,
             ) {
                 tracing::warn!("could not initialize agent identity in worktree: {e} — agent will work without its own identity");
             }
 
-            // Copy parent's SSH key info into the new agent config and publish
-            // the key under the new agent ID so `crosslink trust approve` can find it.
-            if let Some(parent_config) = AgentConfig::load(crosslink_dir)? {
-                if let Some(ref public_key) = parent_config.ssh_public_key {
-                    if let Ok(Some(mut child_config)) = AgentConfig::load(&wt_crosslink) {
-                        child_config.ssh_key_path = parent_config.ssh_key_path.clone();
-                        child_config.ssh_fingerprint = parent_config.ssh_fingerprint.clone();
-                        child_config.ssh_public_key = Some(public_key.clone());
-
-                        let agent_json = wt_crosslink.join("agent.json");
-                        if let Ok(json) = serde_json::to_string_pretty(&child_config) {
-                            if let Err(e) = std::fs::write(&agent_json, json) {
-                                tracing::warn!("could not write agent config to {}: {e} — agent will use inherited config", agent_json.display());
-                            }
-                        }
-
-                        // Publish the parent's public key under the new agent ID
-                        if let Err(e) = super::super::trust::publish_agent_key(
-                            &wt_crosslink,
-                            &agent_id,
-                            public_key,
-                        ) {
-                            tracing::warn!(
-                                "Could not publish key for agent '{}': {} — key will be auto-published on next `crosslink sync`.",
-                                agent_id, e
-                            );
-                        }
-                    }
-                }
+            // Auto-approve: the driver explicitly invoked kickoff, so trust
+            // is implicit. This eliminates the manual sync → pending → approve
+            // workflow that blocked autonomous agent operation.
+            if let Err(e) = super::super::trust::approve(crosslink_dir, &agent_id) {
+                tracing::warn!(
+                    "could not auto-approve agent '{}': {e} — run `crosslink trust approve {}` manually",
+                    agent_id, agent_id
+                );
             }
         }
     }

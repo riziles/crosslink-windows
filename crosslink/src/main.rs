@@ -182,7 +182,11 @@ enum Commands {
     /// View and modify repo-level configuration
     Config {
         #[command(subcommand)]
-        command: ConfigCommands,
+        command: Option<ConfigCommands>,
+
+        /// Apply a preset configuration (team, solo)
+        #[arg(long)]
+        preset: Option<String>,
     },
 
     /// Measure and check context injection overhead
@@ -244,7 +248,21 @@ enum Commands {
     /// Launch an agent to implement a feature (local process or container)
     Kickoff {
         #[command(subcommand)]
-        action: KickoffCommands,
+        action: Option<KickoffCommands>,
+    },
+    /// Launch a foreground Claude session for design document authoring
+    Design {
+        /// Feature description (e.g. "add batch retry logic")
+        description: Option<String>,
+        /// Pull context from a crosslink issue
+        #[arg(long)]
+        issue: Option<i64>,
+        /// Pull context from a GitHub issue
+        #[arg(long = "gh-issue")]
+        gh_issue: Option<i64>,
+        /// Resume iteration on an existing draft (.design/<slug>.md)
+        #[arg(long = "continue", value_name = "SLUG")]
+        continue_slug: Option<String>,
     },
     /// Multi-agent swarm coordination (plan, status, resume)
     Swarm {
@@ -973,6 +991,16 @@ enum AgentCommands {
     },
     /// Show current agent identity
     Status,
+    /// Send a prompt to a running tmux-based agent session
+    Prompt {
+        /// Agent slug or tmux session name
+        session: String,
+        /// Prompt text to send (supports multiline)
+        message: String,
+        /// Don't press Enter after pasting (just type, don't submit)
+        #[arg(long)]
+        no_submit: bool,
+    },
     /// Bootstrap agent identity in a new or existing repo clone
     Bootstrap {
         /// Git repository URL to clone
@@ -1317,10 +1345,10 @@ enum KickoffCommands {
         #[arg(long)]
         skip_permissions: bool,
     },
-    /// Check status of a running kickoff agent
+    /// Check status of a running kickoff agent (no args = pipeline overview)
     Status {
-        /// Agent ID or branch name
-        agent: String,
+        /// Agent ID or branch name (omit for pipeline overview)
+        agent: Option<String>,
     },
     /// Tail an agent's event log
     Logs {
@@ -1395,6 +1423,48 @@ enum KickoffCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Show branch topology of kickoff feature branches
+    Graph {
+        /// Include completed, stopped, and orphaned branches
+        #[arg(long)]
+        all: bool,
+        /// Reserved for future pager support (no-op in V1)
+        #[arg(long)]
+        no_pager: bool,
+    },
+    /// Interactive pipeline wizard or direct launch from a design doc
+    #[command(alias = "go")]
+    Launch {
+        /// Path to design document (skips source selection in wizard)
+        doc: Option<PathBuf>,
+        /// Run gap analysis (plan mode) — non-interactive
+        #[arg(long)]
+        plan: bool,
+        /// Run implementation — non-interactive
+        #[arg(long)]
+        run: bool,
+        /// Verification level: local, ci, thorough
+        #[arg(long, default_value = "local")]
+        verify: String,
+        /// LLM model to use
+        #[arg(long, default_value = "opus")]
+        model: String,
+        /// Max runtime (e.g. "1h", "30m")
+        #[arg(long, default_value = "1h")]
+        timeout: String,
+        /// Container runtime: none, docker, podman
+        #[arg(long, default_value = "none")]
+        container: String,
+        /// Existing issue to work on
+        #[arg(long)]
+        issue: Option<i64>,
+        /// Print the prompt without launching
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Pass --dangerously-skip-permissions to the claude CLI
+        #[arg(long)]
+        skip_permissions: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1418,6 +1488,9 @@ enum ConfigCommands {
         /// Remove a value from an array field
         #[arg(long)]
         remove: Option<String>,
+        /// Write to hook-config.local.json instead of hook-config.json
+        #[arg(long)]
+        local: bool,
     },
     /// List all available config keys with descriptions
     List,
@@ -1691,7 +1764,16 @@ fn find_crosslink_dir() -> Result<PathBuf> {
 fn get_db() -> Result<Database> {
     let crosslink_dir = find_crosslink_dir()?;
     let db_path = crosslink_dir.join("issues.db");
-    Database::open(&db_path).context("Failed to open database")
+    let db = Database::open(&db_path).context("Failed to open database")?;
+
+    // Auto-hydrate if the hub branch has moved since last hydration (#500).
+    // This is a sub-millisecond check (git rev-parse HEAD in the cache
+    // worktree) that only triggers re-hydration when the ref actually changed.
+    if let Err(e) = hydration::maybe_auto_hydrate(&crosslink_dir, &db) {
+        tracing::debug!("auto-hydration skipped: {}", e);
+    }
+
+    Ok(db)
 }
 
 /// Try to create a SharedWriter for multi-agent mode.
@@ -2513,9 +2595,12 @@ fn main() -> Result<()> {
             commands::knowledge::dispatch(command, &crosslink_dir, cli.json)
         }
 
-        Commands::Config { command } => {
+        Commands::Config { command, preset } => {
             let crosslink_dir = find_crosslink_dir()?;
-            commands::config::run(command, &crosslink_dir)
+            match command {
+                Some(cmd) => commands::config::run(cmd, &crosslink_dir),
+                None => commands::config::run_bare(&crosslink_dir, preset.as_deref()),
+            }
         }
         Commands::Context { command } => {
             let crosslink_dir = find_crosslink_dir()?;
@@ -2530,6 +2615,19 @@ fn main() -> Result<()> {
             let crosslink_dir = find_crosslink_dir()?;
             let db = get_db()?;
             let writer = get_writer(&crosslink_dir);
+            // Bare `crosslink kickoff` → launch the interactive wizard
+            let action = action.unwrap_or(KickoffCommands::Launch {
+                doc: None,
+                plan: false,
+                run: false,
+                verify: "local".to_string(),
+                model: "opus".to_string(),
+                timeout: "1h".to_string(),
+                container: "none".to_string(),
+                issue: None,
+                dry_run: false,
+                skip_permissions: false,
+            });
             commands::kickoff::dispatch(
                 action,
                 &crosslink_dir,
@@ -2539,6 +2637,17 @@ fn main() -> Result<()> {
                 cli.json,
             )
         }
+        Commands::Design {
+            description,
+            issue,
+            gh_issue,
+            continue_slug,
+        } => commands::design_cmd::run(
+            description.as_deref(),
+            issue,
+            gh_issue,
+            continue_slug.as_deref(),
+        ),
         Commands::Swarm { action } => {
             let crosslink_dir = find_crosslink_dir()?;
             match action {

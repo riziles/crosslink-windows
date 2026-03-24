@@ -23,6 +23,11 @@ pub fn run(command: AgentCommands, crosslink_dir: &Path) -> Result<()> {
             force,
         ),
         AgentCommands::Status => status(crosslink_dir),
+        AgentCommands::Prompt {
+            session,
+            message,
+            no_submit,
+        } => prompt(&session, &message, !no_submit),
         AgentCommands::Bootstrap {
             repo,
             identity,
@@ -95,7 +100,7 @@ pub fn init(
                 let json = serde_json::to_string_pretty(&config)?;
                 std::fs::write(&path, json)?;
 
-                println!("  SSH key: {}", keypair.fingerprint);
+                println!("  SSH key: configured (commit signing enabled)");
 
                 // Publish public key to hub for driver approval
                 if let Err(e) =
@@ -127,14 +132,88 @@ pub fn init(
     if let Some(desc) = &config.description {
         println!("  Description: {}", desc);
     }
-    if let Some(fp) = &config.ssh_fingerprint {
-        println!("  Key:     {}", fp);
+    if config.ssh_fingerprint.is_some() {
+        println!("  Signing: enabled");
     }
     println!();
     println!(
         "Ask your driver to approve this agent with `crosslink trust approve {}`",
         agent_id
     );
+    Ok(())
+}
+
+/// Send a prompt to a running tmux-based agent session.
+///
+/// Uses `tmux load-buffer` + `paste-buffer` instead of raw `send-keys` to
+/// avoid newline interpretation, length limits, and shell escaping issues (#503).
+fn prompt(session: &str, message: &str, submit: bool) -> Result<()> {
+    // Verify the tmux session exists
+    let check = Command::new("tmux")
+        .args(["has-session", "-t", session])
+        .output()
+        .context("tmux not found — is it installed?")?;
+
+    if !check.status.success() {
+        bail!(
+            "tmux session '{}' not found. Check `tmux list-sessions`.",
+            session
+        );
+    }
+
+    // Write prompt to a temp file to avoid shell escaping issues
+    let tmp = std::env::temp_dir().join(format!("crosslink-prompt-{}", std::process::id()));
+    std::fs::write(&tmp, message).context("Failed to write prompt to temp file")?;
+
+    // Load the file into a tmux buffer
+    let load = Command::new("tmux")
+        .args([
+            "load-buffer",
+            "-b",
+            "crosslink-prompt",
+            &tmp.to_string_lossy(),
+        ])
+        .output()
+        .context("Failed to load tmux buffer")?;
+
+    // Clean up temp file regardless of outcome
+    let _ = std::fs::remove_file(&tmp);
+
+    if !load.status.success() {
+        let stderr = String::from_utf8_lossy(&load.stderr);
+        bail!("tmux load-buffer failed: {}", stderr.trim());
+    }
+
+    // Paste the buffer into the target session
+    let paste = Command::new("tmux")
+        .args(["paste-buffer", "-b", "crosslink-prompt", "-t", session])
+        .output()
+        .context("Failed to paste tmux buffer")?;
+
+    if !paste.status.success() {
+        let stderr = String::from_utf8_lossy(&paste.stderr);
+        bail!("tmux paste-buffer failed: {}", stderr.trim());
+    }
+
+    // Delete the named buffer
+    let _ = Command::new("tmux")
+        .args(["delete-buffer", "-b", "crosslink-prompt"])
+        .output();
+
+    // Optionally press Enter to submit
+    if submit {
+        let enter = Command::new("tmux")
+            .args(["send-keys", "-t", session, "Enter"])
+            .output()
+            .context("Failed to send Enter key")?;
+
+        if !enter.status.success() {
+            let stderr = String::from_utf8_lossy(&enter.stderr);
+            bail!("tmux send-keys Enter failed: {}", stderr.trim());
+        }
+    }
+
+    println!("Prompt sent to session '{}'", session);
     Ok(())
 }
 
@@ -312,8 +391,8 @@ pub fn bootstrap(
     println!("Bootstrap complete:");
     println!("  Agent ID:  {}", config.agent_id);
     println!("  Machine:   {}", config.machine_id);
-    if let Some(fp) = &config.ssh_fingerprint {
-        println!("  SSH key:   {}", fp);
+    if config.ssh_fingerprint.is_some() {
+        println!("  Signing: enabled");
     }
     println!("  Repo path: {}", target_dir.display());
     println!();
@@ -334,13 +413,14 @@ pub fn status(crosslink_dir: &Path) -> Result<()> {
             if let Some(desc) = &config.description {
                 println!("Description: {}", desc);
             }
-            if let Some(fp) = &config.ssh_fingerprint {
-                println!("SSH key: {}", fp);
+            if config.ssh_fingerprint.is_some() {
+                println!("Signing: enabled");
             } else {
-                println!("SSH key: none (signing disabled)");
+                println!("Signing: disabled");
             }
 
             // Show locked issues (best-effort)
+            // Locks prevent other agents from working on the same issue simultaneously.
             if let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) {
                 // INTENTIONAL: init and fetch are best-effort — status display works with stale data
                 let _ = sync.init_cache();
@@ -351,7 +431,7 @@ pub fn status(crosslink_dir: &Path) -> Result<()> {
                         println!("Locks: none");
                     } else {
                         println!(
-                            "Locks: {}",
+                            "Locks: {} (exclusively assigned to this agent)",
                             my_locks
                                 .iter()
                                 .map(|id| format_issue_id(*id))
