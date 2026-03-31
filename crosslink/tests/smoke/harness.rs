@@ -254,7 +254,10 @@ impl SmokeHarness {
 
         // Read stdout in a background thread to capture the auth token.
         // The server prints "Auth:      Bearer <token>" on startup.
-        let stdout = child.stdout.take().expect("failed to capture server stdout");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("failed to capture server stdout");
         let (token_tx, token_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};

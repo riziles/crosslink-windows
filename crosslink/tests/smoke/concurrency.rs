@@ -25,7 +25,13 @@ use std::time::Duration;
 // ============================================================================
 
 /// Send a raw HTTP/1.1 request and return `(status_code, body_string)`.
-fn http_request(port: u16, method: &str, path: &str, body: Option<&str>, auth_token: Option<&str>) -> (u16, String) {
+fn http_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    auth_token: Option<&str>,
+) -> (u16, String) {
     let mut stream =
         TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Failed to connect to server");
     stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
@@ -145,7 +151,13 @@ fn test_concurrent_api_creates_10() {
                     r#"{{"title": "Concurrent issue {}", "priority": "medium"}}"#,
                     i
                 );
-                http_request(port, "POST", "/api/v1/issues", Some(&payload), token.as_deref())
+                http_request(
+                    port,
+                    "POST",
+                    "/api/v1/issues",
+                    Some(&payload),
+                    token.as_deref(),
+                )
             })
         })
         .collect();
