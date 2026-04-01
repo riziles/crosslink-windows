@@ -245,7 +245,6 @@ impl SyncManager {
             // a global gitconfig.
             self.ensure_cache_git_identity()?;
             self.git_commit_in_cache(&["-m", "Initialize crosslink/hub branch"])?;
-
         }
 
         // Also ensure identity for the has_remote path so callers that commit

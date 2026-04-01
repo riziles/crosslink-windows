@@ -483,7 +483,13 @@ fn test_api_milestones() {
     assert_eq!(json["total"], 1);
 
     // Get by ID.
-    let (status, body) = authed_request(port, &token, "GET", &format!("/api/v1/milestones/{}", ms_id), None);
+    let (status, body) = authed_request(
+        port,
+        &token,
+        "GET",
+        &format!("/api/v1/milestones/{}", ms_id),
+        None,
+    );
     assert_eq!(status, 200);
     let json = parse_json(&body);
     assert_eq!(json["name"], "v1.0");
@@ -507,7 +513,8 @@ fn test_api_search() {
     let (port, token) = start_authed(&mut h);
 
     // Search for "authentication" — should find 2 issues.
-    let (status, body) = authed_request(port, &token, "GET", "/api/v1/search?q=authentication", None);
+    let (status, body) =
+        authed_request(port, &token, "GET", "/api/v1/search?q=authentication", None);
     assert_eq!(status, 200);
     let json = parse_json(&body);
     let total = json["total"].as_u64().unwrap_or(0);
@@ -785,7 +792,8 @@ fn test_api_search_no_results() {
     let mut h = SmokeHarness::new();
     let (port, token) = start_authed(&mut h);
 
-    let (status, body) = authed_request(port, &token, "GET", "/api/v1/search?q=xyznonexistent", None);
+    let (status, body) =
+        authed_request(port, &token, "GET", "/api/v1/search?q=xyznonexistent", None);
     assert_eq!(status, 200);
     let json = parse_json(&body);
     assert_eq!(json["total"], 0);

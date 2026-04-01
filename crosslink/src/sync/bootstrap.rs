@@ -60,7 +60,8 @@ pub fn write_bootstrap_state(cache_dir: &Path, state: &BootstrapState) -> Result
     std::fs::create_dir_all(&meta_dir)
         .with_context(|| format!("Failed to create {}", meta_dir.display()))?;
     let path = meta_dir.join("bootstrap.json");
-    let json = serde_json::to_string_pretty(state).context("Failed to serialize bootstrap state")?;
+    let json =
+        serde_json::to_string_pretty(state).context("Failed to serialize bootstrap state")?;
     std::fs::write(&path, json).with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
 }

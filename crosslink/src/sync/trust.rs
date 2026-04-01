@@ -64,11 +64,7 @@ impl SyncManager {
             signing::AllowedSigners::default().save(&allowed_signers)?;
         }
 
-        signing::configure_git_ssh_signing(
-            &self.cache_dir,
-            &private_key,
-            Some(&allowed_signers),
-        )?;
+        signing::configure_git_ssh_signing(&self.cache_dir, &private_key, Some(&allowed_signers))?;
 
         Ok(())
     }
