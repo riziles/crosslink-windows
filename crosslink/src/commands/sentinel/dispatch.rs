@@ -178,7 +178,7 @@ Your task:
 6. Record your findings as a crosslink comment (--kind resolution)
 7. Push your branch and open a draft PR linking GH#{gh_issue_number}
 
-Draft PR title: fix: {title} (sentinel)
+Draft PR title: fix: {title} (sentinel GH#{gh_issue_number})
 
 Constraints:
 - You may modify files in src/ and tests/

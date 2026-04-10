@@ -3742,3 +3742,132 @@ fn test_dry_run_flag_accepted() {
         stderr
     );
 }
+
+// ===== Sentinel tests =====
+
+#[test]
+fn test_sentinel_run_disabled() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    // Write sentinel config with enabled: false
+    let config_path = dir.path().join(".crosslink").join("hook-config.json");
+    let config = serde_json::json!({
+        "sentinel": { "enabled": false }
+    });
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "run"]);
+    assert!(success);
+    assert!(
+        stdout.contains("sentinel is disabled"),
+        "Expected 'sentinel is disabled', got: {stdout}"
+    );
+}
+
+#[test]
+fn test_sentinel_run_dry_run() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    // Enable sentinel (default template has it disabled)
+    let config_path = dir.path().join(".crosslink").join("hook-config.json");
+    let config = serde_json::json!({
+        "sentinel": { "enabled": true }
+    });
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).unwrap();
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "run", "--dry-run"]);
+    assert!(success);
+    assert!(
+        stdout.contains("sentinel dry-run"),
+        "Expected dry-run output, got: {stdout}"
+    );
+    assert!(stdout.contains("github-labels"));
+    assert!(stdout.contains("max concurrent agents"));
+    assert!(stdout.contains("default model"));
+}
+
+#[test]
+fn test_sentinel_history_empty() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "history"]);
+    assert!(success);
+    assert!(
+        stdout.contains("No sentinel runs recorded"),
+        "Expected empty history message, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_sentinel_history_json_empty() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "history", "--json"]);
+    assert!(success);
+    assert_eq!(stdout.trim(), "[]");
+}
+
+#[test]
+fn test_sentinel_status_not_running() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "status"]);
+    assert!(success);
+    assert!(
+        stdout.contains("Sentinel not running"),
+        "Expected not running status, got: {stdout}"
+    );
+    assert!(stdout.contains("In-flight: 0"));
+}
+
+#[test]
+fn test_sentinel_stop_not_running() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    let (success, stdout, _) = run_crosslink(dir.path(), &["sentinel", "stop"]);
+    assert!(success);
+    assert!(
+        stdout.contains("not running"),
+        "Expected not running, got: {stdout}"
+    );
+}
+
+#[test]
+fn test_sentinel_schema_migration() {
+    let dir = test_dir();
+    init_crosslink(dir.path());
+
+    // Verify sentinel tables exist after init (triggers migration)
+    let db_path = dir.path().join(".crosslink").join("issues.db");
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+
+    let has_runs: bool = db
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sentinel_runs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    assert!(has_runs, "sentinel_runs table should exist");
+
+    let has_dispatches: bool = db
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sentinel_dispatches'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    assert!(has_dispatches, "sentinel_dispatches table should exist");
+
+    // Verify schema version is 16
+    let version: i32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 16, "Schema version should be 16");
+}

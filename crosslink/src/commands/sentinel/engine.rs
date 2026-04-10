@@ -287,6 +287,9 @@ fn create_sentinel_issue(
 }
 
 /// Spawn a kickoff agent for a sentinel dispatch.
+///
+/// For fix dispatches (VerifyLevel::Ci), propagates GH_TOKEN so the agent
+/// can push branches and create draft PRs.
 fn spawn_agent(
     crosslink_dir: &Path,
     db: &Database,
@@ -295,7 +298,23 @@ fn spawn_agent(
     issue_id: i64,
     scope: &super::dispatch::AgentScope,
 ) -> Result<String> {
-    use crate::commands::kickoff::{run, ContainerMode, KickoffOpts};
+    use crate::commands::kickoff::{run, ContainerMode, KickoffOpts, VerifyLevel};
+
+    // For Ci verify level, ensure GH_TOKEN is available so the agent can push + create PRs.
+    // Read it from `gh auth token` and inject into the process environment.
+    if scope.verify == VerifyLevel::Ci && std::env::var("GH_TOKEN").is_err() {
+        if let Ok(output) = std::process::Command::new("gh")
+            .args(["auth", "token"])
+            .output()
+        {
+            if output.status.success() {
+                let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !token.is_empty() {
+                    std::env::set_var("GH_TOKEN", &token);
+                }
+            }
+        }
+    }
 
     let opts = KickoffOpts {
         description,

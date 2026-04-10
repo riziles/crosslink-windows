@@ -14,6 +14,14 @@ pub struct CollectStats {
     pub still_running: u32,
 }
 
+/// Worktree artifacts extracted for template rendering.
+struct WorktreeArtifacts {
+    test_file: Option<String>,
+    test_output: Option<String>,
+    pr_number: Option<String>,
+    files_changed: Option<String>,
+}
+
 /// Poll completed agents, read findings, post results to GitHub, update records.
 ///
 /// Runs every sentinel cycle (after dispatch phase in oneshot, every cycle in watch).
@@ -46,7 +54,6 @@ pub fn collect_completed(db: &Database, crosslink_dir: &Path) -> Result<CollectS
         let outcome = if status_content.trim().starts_with("DONE") {
             "success"
         } else if dispatch.attempt_number >= 2 {
-            // Both Sonnet and Opus failed — mark as exhausted so we don't retry
             "exhausted"
         } else {
             "failure"
@@ -59,8 +66,10 @@ pub fn collect_completed(db: &Database, crosslink_dir: &Path) -> Result<CollectS
             String::new()
         };
 
-        // Compute duration
         let duration = format_elapsed(&dispatch.created_at);
+
+        // Extract worktree artifacts for template rendering
+        let artifacts = extract_worktree_artifacts(&wt_path, dispatch.label.contains("fix"));
 
         // Build structured comment (template varies by dispatch type)
         let comment_body = if dispatch.label.contains("fix") {
@@ -71,6 +80,7 @@ pub fn collect_completed(db: &Database, crosslink_dir: &Path) -> Result<CollectS
                 dispatch.attempt_number,
                 &duration,
                 &findings,
+                &artifacts,
                 dispatch.id,
             )
         } else {
@@ -81,6 +91,7 @@ pub fn collect_completed(db: &Database, crosslink_dir: &Path) -> Result<CollectS
                 dispatch.attempt_number,
                 &duration,
                 &findings,
+                &artifacts,
                 dispatch.id,
             )
         };
@@ -106,11 +117,126 @@ pub fn collect_completed(db: &Database, crosslink_dir: &Path) -> Result<CollectS
     Ok(stats)
 }
 
+/// Extract test file, test output, PR number, and diff stats from a worktree.
+fn extract_worktree_artifacts(wt_path: &Path, is_fix: bool) -> WorktreeArtifacts {
+    let test_file = find_test_file(wt_path);
+    let test_output = read_test_output(wt_path);
+    let pr_number = if is_fix {
+        find_pr_number(wt_path)
+    } else {
+        None
+    };
+    let files_changed = if is_fix { git_diff_stat(wt_path) } else { None };
+
+    WorktreeArtifacts {
+        test_file,
+        test_output,
+        pr_number,
+        files_changed,
+    }
+}
+
+/// Find new/modified test files in the worktree via `git diff --name-only`.
+fn find_test_file(wt_path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "HEAD~1..HEAD", "--", "tests/"])
+        .current_dir(wt_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let first_test = stdout.lines().find(|l| l.contains("test"))?;
+    Some(first_test.to_string())
+}
+
+/// Read test output from `.kickoff-report.json` if it exists.
+fn read_test_output(wt_path: &Path) -> Option<String> {
+    let report_path = wt_path.join(".kickoff-report.json");
+    let content = std::fs::read_to_string(&report_path).ok()?;
+    let report: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    // Try to extract test output from the report's criteria or phases
+    if let Some(phases) = report.get("phases") {
+        if let Some(testing) = phases.get("testing") {
+            let tests_run = testing.get("tests_run").and_then(|v| v.as_u64());
+            let tests_passed = testing.get("tests_passed").and_then(|v| v.as_u64());
+            let tests_failed = testing.get("tests_failed").and_then(|v| v.as_u64());
+            if let (Some(run), Some(passed), Some(failed)) = (tests_run, tests_passed, tests_failed)
+            {
+                return Some(format!(
+                    "test result: {run} run, {passed} passed, {failed} failed"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Find the PR number for a fix dispatch by looking up the branch.
+fn find_pr_number(wt_path: &Path) -> Option<String> {
+    // Get the branch name
+    let branch_output = Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(wt_path)
+        .output()
+        .ok()?;
+    if !branch_output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .to_string();
+    if branch.is_empty() {
+        return None;
+    }
+
+    // Look up PR by head branch
+    let pr_output = Command::new("gh")
+        .args([
+            "pr",
+            "list",
+            "--head",
+            &branch,
+            "--json",
+            "number",
+            "--jq",
+            ".[0].number",
+        ])
+        .current_dir(wt_path)
+        .output()
+        .ok()?;
+    if !pr_output.status.success() {
+        return None;
+    }
+    let num = String::from_utf8_lossy(&pr_output.stdout)
+        .trim()
+        .to_string();
+    if num.is_empty() || num == "null" {
+        None
+    } else {
+        Some(num)
+    }
+}
+
+/// Get `git diff --stat` summary for fix dispatches.
+fn git_diff_stat(wt_path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["diff", "--stat", "HEAD~1..HEAD"])
+        .current_dir(wt_path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Return only the summary line (last line)
+    stdout.lines().last().map(String::from)
+}
+
 /// Resolve the main repo root from a crosslink directory.
 fn repo_root(crosslink_dir: &Path) -> Result<std::path::PathBuf> {
-    // .crosslink lives at <repo>/.crosslink, so parent is repo root.
-    // But in a worktree, crosslink_dir may be <repo>/.worktrees/<slug>/.crosslink.
-    // Use git to resolve reliably.
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(crosslink_dir)
@@ -162,6 +288,7 @@ fn build_replicate_template(
     attempt: i32,
     duration: &str,
     findings: &str,
+    artifacts: &WorktreeArtifacts,
     dispatch_id: i64,
 ) -> String {
     let status_display = match status {
@@ -171,11 +298,27 @@ fn build_replicate_template(
         _ => status,
     };
 
+    let test_file_row = artifacts
+        .test_file
+        .as_ref()
+        .map(|f| format!("| Test file | `{f}` |\n"))
+        .unwrap_or_default();
+
     let findings_section = if findings.is_empty() {
         "No findings recorded.".to_string()
     } else {
         findings.to_string()
     };
+
+    let test_output_section = artifacts
+        .test_output
+        .as_ref()
+        .map(|output| {
+            // Truncate to 50 lines
+            let truncated: String = output.lines().take(50).collect::<Vec<_>>().join("\n");
+            format!("### Test output\n\n```\n{truncated}\n```\n")
+        })
+        .unwrap_or_default();
 
     format!(
         r#"## Sentinel: Reproduction Report
@@ -187,11 +330,12 @@ fn build_replicate_template(
 | Model | {model} |
 | Attempt | {attempt} of 2 |
 | Duration | {duration} |
-
+{test_file_row}
 ### Findings
 
 {findings_section}
 
+{test_output_section}
 ### Next steps
 
 - [ ] Review the agent's findings
@@ -210,6 +354,7 @@ fn build_fix_template(
     attempt: i32,
     duration: &str,
     findings: &str,
+    artifacts: &WorktreeArtifacts,
     dispatch_id: i64,
 ) -> String {
     let status_display = match status {
@@ -219,11 +364,32 @@ fn build_fix_template(
         _ => status,
     };
 
+    let pr_row = artifacts
+        .pr_number
+        .as_ref()
+        .map(|n| format!("| PR | #{n} (draft) |\n"))
+        .unwrap_or_default();
+
+    let diff_row = artifacts
+        .files_changed
+        .as_ref()
+        .map(|s| format!("| Changes | {s} |\n"))
+        .unwrap_or_default();
+
     let findings_section = if findings.is_empty() {
         "No findings recorded.".to_string()
     } else {
         findings.to_string()
     };
+
+    let test_output_section = artifacts
+        .test_output
+        .as_ref()
+        .map(|output| {
+            let truncated: String = output.lines().take(50).collect::<Vec<_>>().join("\n");
+            format!("### Test results\n\n```\n{truncated}\n```\n")
+        })
+        .unwrap_or_default();
 
     format!(
         r#"## Sentinel: Fix Report
@@ -235,11 +401,12 @@ fn build_fix_template(
 | Model | {model} |
 | Attempt | {attempt} of 2 |
 | Duration | {duration} |
-
+{pr_row}{diff_row}
 ### Findings
 
 {findings_section}
 
+{test_output_section}
 ### Next steps
 
 - [ ] Review the draft PR
