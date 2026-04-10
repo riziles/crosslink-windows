@@ -1817,6 +1817,12 @@ pub enum SentinelCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Analyze dispatch history for recurring patterns and hotspots
+    Patterns {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal: run the sentinel watch loop (used by watch)
     #[command(hide = true)]
     RunDaemon {

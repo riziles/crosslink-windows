@@ -5,6 +5,7 @@ pub mod engine;
 pub mod history;
 pub mod metrics;
 pub mod notify;
+pub mod patterns;
 #[allow(dead_code)]
 pub mod seen_set;
 pub mod sources;
@@ -56,6 +57,10 @@ pub fn dispatch_cmd(
         SentinelCommands::Metrics { json: json_flag } => {
             let use_json = json || json_flag;
             metrics::show_metrics(db, use_json)
+        }
+        SentinelCommands::Patterns { json: json_flag } => {
+            let use_json = json || json_flag;
+            patterns::detect_patterns(db, use_json)
         }
         SentinelCommands::RunDaemon { dir, interval } => watch::run_watch_loop(&dir, interval),
     }
