@@ -890,8 +890,11 @@ pub fn run(path: &Path, opts: &InitOpts<'_>) -> Result<()> {
             .context("Failed to write safe-fetch-server.py")?;
         fs::write(mcp_dir.join("knowledge-server.py"), KNOWLEDGE_SERVER_PY)
             .context("Failed to write knowledge-server.py")?;
-        fs::write(mcp_dir.join("agent-prompt-server.py"), AGENT_PROMPT_SERVER_PY)
-            .context("Failed to write agent-prompt-server.py")?;
+        fs::write(
+            mcp_dir.join("agent-prompt-server.py"),
+            AGENT_PROMPT_SERVER_PY,
+        )
+        .context("Failed to write agent-prompt-server.py")?;
 
         let commands_dir = claude_dir.join("commands");
         fs::create_dir_all(&commands_dir).context("Failed to create .claude/commands directory")?;
@@ -1055,7 +1058,10 @@ mod tests {
             .exists());
         assert!(dir.path().join(".claude/mcp/safe-fetch-server.py").exists());
         assert!(dir.path().join(".claude/mcp/knowledge-server.py").exists());
-        assert!(dir.path().join(".claude/mcp/agent-prompt-server.py").exists());
+        assert!(dir
+            .path()
+            .join(".claude/mcp/agent-prompt-server.py")
+            .exists());
         assert!(dir.path().join(".mcp.json").exists());
     }
 
