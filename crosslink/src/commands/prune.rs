@@ -87,9 +87,8 @@ fn remove_stale_hub_data(cache_dir: &Path) -> Result<Vec<String>> {
             }
             let agent_dir = entry.path();
             let events_log = agent_dir.join("events.log");
-            let has_events = events_log.exists()
-                && std::fs::metadata(&events_log)
-                    .is_ok_and(|m| m.len() > 0);
+            let has_events =
+                events_log.exists() && std::fs::metadata(&events_log).is_ok_and(|m| m.len() > 0);
 
             if !has_events {
                 let agent_name = entry.file_name().to_string_lossy().to_string();
@@ -129,8 +128,7 @@ fn count_stale_hub_data(cache_dir: &Path) -> Vec<String> {
                 }
                 let events_log = entry.path().join("events.log");
                 let has_events = events_log.exists()
-                    && std::fs::metadata(&events_log)
-                        .is_ok_and(|m| m.len() > 0);
+                    && std::fs::metadata(&events_log).is_ok_and(|m| m.len() > 0);
                 if !has_events {
                     stale.push(format!("agents/{}/", entry.file_name().to_string_lossy()));
                 }

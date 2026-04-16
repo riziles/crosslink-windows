@@ -62,8 +62,7 @@ struct BranchJsonEntry {
 
 /// Entry point for `crosslink kickoff graph`.
 pub fn graph(crosslink_dir: &Path, all: bool, json: bool, quiet: bool) -> Result<()> {
-    let term_width = crossterm::terminal::size()
-        .map_or(80, |(w, _)| w as usize);
+    let term_width = crossterm::terminal::size().map_or(80, |(w, _)| w as usize);
 
     // Phase 1: Collect refs
     let agents = discover_agents(crosslink_dir).unwrap_or_default();
