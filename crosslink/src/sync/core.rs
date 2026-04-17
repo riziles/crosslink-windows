@@ -84,8 +84,7 @@ impl SyncManager {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     }
 
     /// Check if the hub uses V2 layout (per-entity lock files in `locks/`).
@@ -168,6 +167,12 @@ impl SyncManager {
         Ok(output)
     }
 
+    /// Get the subject line of a commit in the cache worktree.
+    pub fn commit_message(&self, commit: &str) -> Result<String> {
+        let output = self.git_in_cache(&["log", "-1", "--format=%s", commit])?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     pub(super) fn git_in_cache(&self, args: &[&str]) -> Result<std::process::Output> {
         let output = Command::new("git")
             .current_dir(&self.cache_dir)
@@ -224,8 +229,7 @@ impl SyncManager {
             .current_dir(&self.cache_dir)
             .args(["config", "user.email"])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            .is_ok_and(|o| o.status.success());
         if !has_email {
             let use_worktree = signing::is_linked_worktree(&self.cache_dir);
             if use_worktree {
@@ -268,8 +272,7 @@ impl SyncManager {
                 .current_dir(&self.cache_dir)
                 .args(["config", "user.email"])
                 .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+                .is_ok_and(|o| o.status.success());
             if !verified {
                 bail!(
                     "Failed to verify git identity in hub cache: \

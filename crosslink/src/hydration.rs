@@ -37,7 +37,7 @@ fn dedup_issue_files(issues: &[IssueFile]) -> (Vec<&IssueFile>, Vec<&IssueFile>)
 
     for (_id, mut group) in by_display_id {
         // Sort by updated_at descending — most recent first
-        group.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        group.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         keep.push(group[0]);
         dupes.extend(group.into_iter().skip(1));
     }
@@ -184,6 +184,16 @@ pub fn hydrate_to_sqlite(cache_dir: &Path, db: &Database) -> Result<HydrationSta
     let preserved_ids: Vec<i64> = sqlite_only_rows.iter().map(|r| r.id).collect();
     let saved_children = snapshot_children(db, &preserved_ids)?;
 
+    // Preserved SQLite-only comments may carry negative IDs assigned by a
+    // previous hydration. To avoid colliding with V2 comment IDs assigned in
+    // this pass, start V2 numbering below the lowest preserved ID (#681).
+    let v2_comment_id_start = saved_children
+        .comments
+        .iter()
+        .map(|c| c.0)
+        .min()
+        .map_or(-1, |min| min - 1);
+
     let (deduped, milestone_entries) = dedup_and_load_milestones(&issue_files, cache_dir)?;
 
     // Build uuid -> display_id lookup for resolving cross-references
@@ -236,6 +246,7 @@ pub fn hydrate_to_sqlite(cache_dir: &Path, db: &Database) -> Result<HydrationSta
             &milestone_uuid_to_id,
             &issues_dir,
             layout_version,
+            v2_comment_id_start,
             &mut stats,
         )?;
 
@@ -343,13 +354,16 @@ fn hydrate_issues(
     milestone_uuid_to_id: &HashMap<String, i64>,
     issues_dir: &Path,
     layout_version: u32,
+    v2_comment_id_start: i64,
     stats: &mut HydrationStats,
 ) -> Result<()> {
     let mut next_local_id: i64 = -1;
     // V2 standalone comments use UUIDs, not sequential integer IDs.
     // Assign unique negative IDs during hydration so each row satisfies
-    // the PRIMARY KEY UNIQUE constraint on the comments table.
-    let mut next_v2_comment_id: i64 = -1;
+    // the PRIMARY KEY UNIQUE constraint on the comments table. Start below
+    // any preserved SQLite-only comment ID so restore_sqlite_only_issues
+    // can re-insert its rows without collision (#681).
+    let mut next_v2_comment_id: i64 = v2_comment_id_start;
 
     for issue in sorted_issues {
         let display_id = issue.display_id.unwrap_or_else(|| {
@@ -908,7 +922,7 @@ mod tests {
         let issue_b = make_issue(2, "Blocker issue");
 
         // issue_a is blocked by issue_b
-        let mut issue_a_with_dep = issue_a.clone();
+        let mut issue_a_with_dep = issue_a;
         issue_a_with_dep.blockers = vec![issue_b.uuid];
 
         write_issues_to_cache(cache.path(), &[issue_a_with_dep, issue_b]);
@@ -945,7 +959,7 @@ mod tests {
         let issue_a = make_issue(1, "Issue A");
         let issue_b = make_issue(2, "Issue B");
 
-        let mut issue_a_related = issue_a.clone();
+        let mut issue_a_related = issue_a;
         issue_a_related.related = vec![issue_b.uuid];
 
         write_issues_to_cache(cache.path(), &[issue_a_related, issue_b]);
@@ -1057,7 +1071,7 @@ mod tests {
             created_at: Utc::now(),
             closed_at: None,
         };
-        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{}.json", ms_uuid)), &entry)
+        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{ms_uuid}.json")), &entry)
             .unwrap();
 
         let stats = hydrate_to_sqlite(cache.path(), &db).unwrap();
@@ -1334,7 +1348,7 @@ mod tests {
             created_at: Utc::now(),
             closed_at: None,
         };
-        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{}.json", ms_uuid)), &entry)
+        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{ms_uuid}.json")), &entry)
             .unwrap();
 
         let stats = hydrate_to_sqlite(cache.path(), &db).unwrap();
@@ -1384,7 +1398,7 @@ mod tests {
             created_at: Utc::now(),
             closed_at: Some(Utc::now()),
         };
-        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{}.json", ms_uuid)), &entry)
+        crate::issue_file::write_milestone_file(&ms_dir.join(format!("{ms_uuid}.json")), &entry)
             .unwrap();
 
         let stats = hydrate_to_sqlite(cache.path(), &db).unwrap();
@@ -1425,7 +1439,7 @@ mod tests {
             signed_by: None,
             signature: None,
         };
-        write_comment_file(&comments_dir.join(format!("{}.json", comment_uuid)), &cf).unwrap();
+        write_comment_file(&comments_dir.join(format!("{comment_uuid}.json")), &cf).unwrap();
 
         // Write layout version 2
         let meta_dir = cache.path().join("meta");
@@ -1468,7 +1482,7 @@ mod tests {
             signed_by: Some("SHA256:abc123".to_string()),
             signature: Some("base64sig==".to_string()),
         };
-        write_comment_file(&comments_dir.join(format!("{}.json", comment_uuid)), &cf).unwrap();
+        write_comment_file(&comments_dir.join(format!("{comment_uuid}.json")), &cf).unwrap();
 
         let meta_dir = cache.path().join("meta");
         write_layout_version(&meta_dir, 2).unwrap();
@@ -1628,13 +1642,12 @@ mod tests {
             .join("comments");
         let entries: Vec<_> = std::fs::read_dir(&comments_dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| {
                 e.path()
                     .extension()
                     .and_then(|x| x.to_str())
-                    .map(|x| x == "json")
-                    .unwrap_or(false)
+                    .is_some_and(|x| x == "json")
             })
             .collect();
         assert_eq!(entries.len(), 2);
@@ -1671,13 +1684,12 @@ mod tests {
             .join("comments");
         let json_path = std::fs::read_dir(&comments_dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .find(|e| {
                 e.path()
                     .extension()
                     .and_then(|x| x.to_str())
-                    .map(|x| x == "json")
-                    .unwrap_or(false)
+                    .is_some_and(|x| x == "json")
             })
             .unwrap()
             .path();

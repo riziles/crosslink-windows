@@ -39,8 +39,8 @@ pub struct SmokeHarness {
     pub crosslink_bin: PathBuf,
     server_handle: Option<Child>,
     pub server_port: Option<u16>,
-    /// Bearer token for server API authentication.  Populated by `start_server()`.
-    pub auth_token: Option<String>,
+    /// Bearer token for API authentication, captured from server stdout.
+    pub server_auth_token: Option<String>,
     pub agent_id: String,
     /// Path to a bare git repo used as the shared remote.  `None` for bare
     /// harnesses and harnesses that don't need coordination.
@@ -103,7 +103,7 @@ impl SmokeHarness {
                 .args(&args)
                 .output()
                 .expect("git config/remote failed to execute");
-            assert!(out.status.success(), "git {:?} failed", args);
+            assert!(out.status.success(), "git {args:?} failed");
         }
 
         // Initial commit + push so the remote has a main branch
@@ -145,7 +145,7 @@ impl SmokeHarness {
             crosslink_bin: bin,
             server_handle: None,
             server_port: None,
-            auth_token: None,
+            server_auth_token: None,
             agent_id: "smoke-primary".to_string(),
             bare_remote,
             _remote_dir: Some(remote_dir),
@@ -164,7 +164,7 @@ impl SmokeHarness {
             crosslink_bin: bin,
             server_handle: None,
             server_port: None,
-            auth_token: None,
+            server_auth_token: None,
             agent_id: "smoke-bare".to_string(),
             bare_remote: None,
             _remote_dir: None,
@@ -252,23 +252,26 @@ impl SmokeHarness {
             .spawn()
             .expect("failed to spawn crosslink serve");
 
-        // Read stdout in a background thread to capture the auth token.
-        // The server prints "Auth:      Bearer <token>" on startup.
-        let stdout = child
-            .stdout
-            .take()
-            .expect("failed to capture server stdout");
-        let (token_tx, token_rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(stdout);
+        // Capture the auth token from server stdout before storing the child.
+        // The server prints "  Auth:      Bearer <token>" during startup.
+        if let Some(stdout) = child.stdout.take() {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            let deadline = Instant::now() + Duration::from_secs(10);
             for line in reader.lines() {
+                if Instant::now() > deadline {
+                    break;
+                }
                 let Ok(line) = line else { break };
-                if let Some(token) = line.strip_prefix("  Auth:      Bearer ") {
-                    let _ = token_tx.send(token.trim().to_string());
+                if let Some(token) = line.trim().strip_prefix("Auth:") {
+                    let token = token.trim();
+                    if let Some(token) = token.strip_prefix("Bearer ") {
+                        self.server_auth_token = Some(token.to_string());
+                    }
+                    break;
                 }
             }
-        });
+        }
 
         self.server_handle = Some(child);
         self.server_port = Some(port);
@@ -294,9 +297,6 @@ impl SmokeHarness {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-
-        // Capture the auth token (should be available by now since the server is ready)
-        self.auth_token = token_rx.recv_timeout(Duration::from_secs(2)).ok();
 
         port
     }
@@ -339,7 +339,7 @@ impl SmokeHarness {
         assert!(out.status.success(), "git init for fork failed");
 
         for args in [
-            vec!["config", "user.email", &format!("{}@test.local", agent_id)],
+            vec!["config", "user.email", &format!("{agent_id}@test.local")],
             vec!["config", "user.name", agent_id],
             vec![
                 "remote",
@@ -353,7 +353,7 @@ impl SmokeHarness {
                 .args(&args)
                 .output()
                 .expect("git config/remote failed");
-            assert!(out.status.success(), "git {:?} failed for fork", args);
+            assert!(out.status.success(), "git {args:?} failed for fork");
         }
 
         // Fetch and checkout main from the shared remote
@@ -397,7 +397,7 @@ impl SmokeHarness {
             crosslink_bin: bin,
             server_handle: None,
             server_port: None,
-            auth_token: None,
+            server_auth_token: None,
             agent_id: agent_id.to_string(),
             bare_remote: Some(remote_path.clone()),
             _remote_dir: None, // The remote TempDir is owned by the original harness

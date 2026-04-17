@@ -55,18 +55,16 @@ impl SyncManager {
             return self.fallback_to_driver_signing();
         }
 
-        // Set up allowed_signers path
+        // Ensure allowed_signers file always exists so git's verify-commit
+        // correctly classifies signed commits. Without this, verify-commit
+        // reports "allowedSignersFile needs to be configured" which maps
+        // to Unsigned instead of Invalid (untrusted signer).
         let allowed_signers = self.cache_dir.join("trust").join("allowed_signers");
+        if !allowed_signers.exists() {
+            signing::AllowedSigners::default().save(&allowed_signers)?;
+        }
 
-        signing::configure_git_ssh_signing(
-            &self.cache_dir,
-            &private_key,
-            if allowed_signers.exists() {
-                Some(&allowed_signers)
-            } else {
-                None
-            },
-        )?;
+        signing::configure_git_ssh_signing(&self.cache_dir, &private_key, Some(&allowed_signers))?;
 
         Ok(())
     }
@@ -339,16 +337,32 @@ impl SyncManager {
                             ("comment_id", &comment.id.to_string()),
                             ("content", &comment.content),
                         ]);
-                        // Use fingerprint as principal for verification
+                        // Try author-based principal first (original agent signature)
                         let principal = format!("{}@crosslink", &comment.author);
-                        match signing::verify_content(
+                        let original_ok = signing::verify_content(
                             &allowed_signers_path,
                             &principal,
                             "crosslink-comment",
                             &canonical,
                             sig,
+                        );
+                        if matches!(original_ok, Ok(true)) {
+                            verified += 1;
+                            continue;
+                        }
+                        // Fallback: try backfill principal with backfill namespace.
+                        // Human-attested entries use a different namespace so they
+                        // can be verified without being confused with agent sigs.
+                        match signing::verify_content(
+                            &allowed_signers_path,
+                            "backfill@crosslink",
+                            "crosslink-backfill",
+                            &canonical,
+                            sig,
                         ) {
-                            Ok(true) => verified += 1,
+                            Ok(true) => {
+                                verified += 1;
+                            }
                             Ok(false) => {
                                 tracing::warn!(
                                     "signature verification failed for comment {} by '{}' (signer: {})",
@@ -357,8 +371,6 @@ impl SyncManager {
                                 failed += 1;
                             }
                             Err(e) => {
-                                // Verification unavailable (no allowed_signers, no ssh-keygen)
-                                // Treat as unverifiable but not failed
                                 if allowed_signers_path.exists() {
                                     tracing::warn!(
                                         "signature verification error for comment {} by '{}': {}",
@@ -368,8 +380,7 @@ impl SyncManager {
                                     );
                                     failed += 1;
                                 } else {
-                                    // Can't verify without allowed_signers — count as signed but unverifiable
-                                    let _ = fingerprint; // acknowledge the signature exists
+                                    let _ = fingerprint;
                                     unsigned += 1;
                                 }
                             }

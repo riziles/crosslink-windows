@@ -72,8 +72,7 @@ pub fn acquire_hub_lock(lock_path: &Path) -> Result<HubWriteLock> {
                         std::process::Command::new("kill")
                             .args(["-0", &pid.to_string()])
                             .output()
-                            .map(|o| o.status.success())
-                            .unwrap_or(false)
+                            .is_ok_and(|o| o.status.success())
                     });
 
                 if !holder_alive {
@@ -172,8 +171,7 @@ impl SyncManager {
         // Check if remote branch exists
         let has_remote = self
             .git_in_repo(&["ls-remote", "--heads", &self.remote, HUB_BRANCH])
-            .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-            .unwrap_or(false);
+            .is_ok_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
 
         if has_remote {
             // Fetch the remote branch
@@ -227,6 +225,16 @@ impl SyncManager {
 
             // Exclude runtime files from tracking before first commit (#528)
             self.ensure_hub_gitignore()?;
+
+            // Write initial bootstrap state so it's included in the first commit.
+            // This marks the hub as being in the bootstrap phase (#644).
+            super::bootstrap::write_bootstrap_state(
+                &self.cache_dir,
+                &super::bootstrap::BootstrapState {
+                    status: "pending".to_string(),
+                    completed_at: None,
+                },
+            )?;
 
             // Commit the initial state so the branch has at least one commit.
             // Without this, `git log` and other commands fail on the empty orphan.

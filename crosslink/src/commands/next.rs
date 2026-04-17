@@ -105,7 +105,7 @@ pub fn run(db: &Database, crosslink_dir: &std::path::Path) -> Result<()> {
     }
 
     // Sort by score descending
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.score));
 
     if scored.is_empty() {
         // All ready issues are subissues or locked, show first available instead
@@ -322,7 +322,7 @@ mod tests {
         fn prop_run_never_panics(count in 0usize..5) {
             let (db, dir) = setup_test_db();
             for i in 0..count {
-                db.create_issue(&format!("Issue {}", i), None, "medium").unwrap();
+                db.create_issue(&format!("Issue {i}"), None, "medium").unwrap();
             }
             let result = run(&db, dir.path());
             prop_assert!(result.is_ok());

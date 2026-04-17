@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-17
+
+### Added
+
+#### Sentinel — Autonomous Maintenance Agent
+- Full `crosslink sentinel` module — autonomous dispatch engine that monitors the repo and launches agents to fix issues ([GH-650]–[GH-672])
+- Database schema v16 migration for sentinel state ([GH-651])
+- `GitHubLabelSource` — poll GitHub labels to trigger dispatches ([GH-652])
+- 4-layer deduplication system to prevent redundant agent dispatches ([GH-653])
+- Dispatch engine with triage logic and kickoff integration ([GH-654])
+- Structured result collection with GitHub comment reporting ([GH-655])
+- `sentinel history` command for reviewing past dispatches ([GH-656])
+- Sonnet→Opus escalation on exhausted outcomes ([GH-657])
+- `sentinel watch` daemon mode for continuous monitoring ([GH-659])
+- `agent-todo:fix` dispatch rule with `VerifyLevel::Ci` and draft PR creation ([GH-660])
+- Per-agent in-flight details in `sentinel status` ([GH-661])
+- `InternalHygieneSource` — stale issues, orphan detection, unlabeled items ([GH-663])
+- `GitHubCISource` — poll failed CI workflow runs ([GH-664])
+- `sentinel metrics` command — success rates per model and dispatch rule ([GH-665])
+- `MaintenanceSweepSource` — lint drift and test regression detection ([GH-666])
+- Webhook receiver for real-time GitHub events ([GH-667])
+- Slack/webhook notifications for dispatch results ([GH-668])
+- Historical pattern detection for sentinel dispatches ([GH-669])
+- Self-tuning model selection from historical success rates ([GH-670])
+- Async watch loop with webhook server ([GH-672])
+
+#### Integrity & Security
+- `integrity sign-backfill` command for human attestation of unsigned hub entries ([GH-546])
+- Hub signing bootstrap deadlock fix for new repos ([GH-644])
+
+### Fixed
+- Display-ID and milestone counter collision from stale counters — reconcile against on-disk state ([GH-564])
+- V2 comment ID collision with preserved SQLite-only comments during hydration ([GH-563])
+- Sentinel: don't harvest dispatches while agent is still running ([GH-561])
+- Sentinel: keep watch daemon alive when stdin is `/dev/null` ([GH-561])
+- Kickoff: propagate `CLAUDE_CONFIG_DIR` through tmux to agent ([GH-555])
+- Dashboard: wire bearer-token auth for `crosslink serve` ([GH-556])
+- Init: respect `--dry-run` flag when combined with `--force` ([GH-542])
+- Init: scaffold `agent-prompt-server.py` during `crosslink init` ([GH-549])
+- Knowledge: read stdin body content in `knowledge add` ([GH-548])
+- Suppress unsigned warning for bootstrap locks commit
+- QA audit — removed all `allow(dead_code)`, wired up unused code ([GH-671])
+- Zero clippy errors crate-wide under pedantic+nursery lints
+- Clippy 1.95 strict lint compliance (`sort_by_key`, `map_or_else`, `doc_markdown`)
+
+### Changed
+- Design doc gaps closed for V0/V1 — templates, `GH_TOKEN` handling, test coverage ([GH-662])
+- Crosslink-guide skill updated to match current CLI ([GH-547])
+- Init test coverage expanded to cover all three MCP servers ([GH-554])
+
 ## [0.7.0] - 2026-03-30
 
 ### Added

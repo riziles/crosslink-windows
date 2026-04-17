@@ -158,8 +158,7 @@ fn test_integrity_counters_clean() {
     let combined = format!("{}{}", r.stdout, r.stderr);
     assert!(
         combined.contains("PASS") || combined.contains("SKIPPED"),
-        "Expected PASS or SKIPPED for counters on fresh install, got:\n{}",
-        combined,
+        "Expected PASS or SKIPPED for counters on fresh install, got:\n{combined}",
     );
 }
 
@@ -170,8 +169,7 @@ fn test_integrity_hydration_clean() {
     let combined = format!("{}{}", r.stdout, r.stderr);
     assert!(
         combined.contains("PASS") || combined.contains("SKIPPED"),
-        "Expected PASS or SKIPPED for hydration on fresh install, got:\n{}",
-        combined,
+        "Expected PASS or SKIPPED for hydration on fresh install, got:\n{combined}",
     );
 }
 
@@ -182,8 +180,7 @@ fn test_integrity_locks_clean() {
     let combined = format!("{}{}", r.stdout, r.stderr);
     assert!(
         combined.contains("PASS") || combined.contains("SKIPPED"),
-        "Expected PASS or SKIPPED for locks on fresh install, got:\n{}",
-        combined,
+        "Expected PASS or SKIPPED for locks on fresh install, got:\n{combined}",
     );
 }
 
@@ -227,23 +224,22 @@ fn test_integrity_counters_repair() {
         let combined = format!("{}{}", r.stdout, r.stderr);
         assert!(
             combined.contains("REPAIRED") || combined.contains("PASS"),
-            "Expected REPAIRED or PASS after repair, got:\n{}",
-            combined,
+            "Expected REPAIRED or PASS after repair, got:\n{combined}",
         );
 
         // Verify it passes now
         let r = h.run_ok(&["integrity", "counters"]);
         assert_stdout_contains(&r, "PASS");
     } else {
-        // Hub cache was not populated (sync did not fully work); counters
-        // may report SKIPPED (no cache) or FAIL (DB counter drift detected
-        // without hub cache).  Both are acceptable when there is no hub cache.
+        // Hub cache exists but counters.json was not populated (sync did not
+        // fully propagate). The integrity check may report SKIPPED (no cache)
+        // or FAIL (cache exists but counters are stale). Both are acceptable
+        // when the counters file was never written.
         let r = h.run_ok(&["integrity", "counters"]);
         let combined = format!("{}{}", r.stdout, r.stderr);
         assert!(
             combined.contains("SKIPPED") || combined.contains("FAIL"),
-            "Expected SKIPPED or FAIL when hub cache not present, got:\n{}",
-            combined,
+            "Expected SKIPPED or FAIL when counters not populated, got:\n{combined}",
         );
     }
 }
@@ -323,8 +319,7 @@ fn test_prune_dry_run() {
                 || combined.contains("Prune plan")
                 || combined.contains("commit(s)")
                 || combined.contains("nothing to prune"),
-            "Expected dry-run output, got:\n{}",
-            combined,
+            "Expected dry-run output, got:\n{combined}",
         );
     }
 }
