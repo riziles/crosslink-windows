@@ -2925,3 +2925,190 @@ fn test_lock_mode_enum_in_claim_and_release() {
     // Steal release should succeed
     assert!(manager.release_lock(&agent1, 100, LockMode::Steal).unwrap());
 }
+
+// ------------------------------------------------------------------
+// repair_stale_signingkey — GH #565
+// ------------------------------------------------------------------
+
+/// Write `user.signingkey` into the cache worktree's config at whatever scope
+/// `configure_git_ssh_signing` would choose (worktree-scoped for linked worktrees).
+fn write_cache_signingkey(manager: &SyncManager, value: &str) {
+    let use_worktree = crate::signing::is_linked_worktree(&manager.cache_dir);
+    if use_worktree {
+        // Replicate enable_worktree_config side-effect: flip extensions.worktreeConfig.
+        Command::new("git")
+            .current_dir(&manager.cache_dir)
+            .args(["config", "--local", "extensions.worktreeConfig", "true"])
+            .output()
+            .unwrap();
+    }
+    let scope = if use_worktree {
+        "--worktree"
+    } else {
+        "--local"
+    };
+    Command::new("git")
+        .current_dir(&manager.cache_dir)
+        .args(["config", scope, "user.signingkey", value])
+        .output()
+        .unwrap();
+}
+
+fn read_cache_signingkey(manager: &SyncManager) -> Option<String> {
+    let out = Command::new("git")
+        .current_dir(&manager.cache_dir)
+        .args(["config", "user.signingkey"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+#[test]
+fn test_repair_stale_signingkey_missing_path_is_repaired() {
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    // Simulate the #565 state: an agent worktree wrote its key path into the
+    // hub-cache's config.worktree, then the agent worktree was deleted.
+    let stale_path = work_dir
+        .path()
+        .join("gone-agent-worktree")
+        .join("keys")
+        .join("jus4_ed25519");
+    write_cache_signingkey(&manager, stale_path.to_str().unwrap());
+    assert!(
+        !stale_path.exists(),
+        "precondition: stale path must not exist"
+    );
+
+    let repaired = manager.repair_stale_signingkey().unwrap();
+    assert!(repaired, "stale path should trigger a repair");
+
+    // After repair, the cache signingkey is either unset (no driver key) or
+    // points at an existing path (driver key). Either way, the stale path
+    // that was there before must no longer be effective.
+    let post = read_cache_signingkey(&manager);
+    if let Some(ref new_value) = post {
+        assert_ne!(
+            new_value.as_str(),
+            stale_path.to_str().unwrap(),
+            "stale signingkey must not survive a repair"
+        );
+    }
+}
+
+#[test]
+fn test_repair_stale_signingkey_valid_path_is_noop() {
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    // Create a key file that actually exists.
+    let keys_dir = crosslink_dir.join("keys");
+    std::fs::create_dir_all(&keys_dir).unwrap();
+    let key_path = keys_dir.join("real_ed25519");
+    std::fs::write(&key_path, "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n").unwrap();
+
+    let abs = key_path.to_str().unwrap().to_string();
+    write_cache_signingkey(&manager, &abs);
+
+    let repaired = manager.repair_stale_signingkey().unwrap();
+    assert!(!repaired, "valid path must not trigger a repair");
+
+    let post = read_cache_signingkey(&manager);
+    assert_eq!(post.as_deref(), Some(abs.as_str()), "signingkey unchanged");
+}
+
+#[test]
+fn test_repair_stale_signingkey_literal_key_is_skipped() {
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    // Literal key material, not a path. Git accepts these inline.
+    let literal = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAfake literal-test";
+    write_cache_signingkey(&manager, literal);
+
+    let repaired = manager.repair_stale_signingkey().unwrap();
+    assert!(!repaired, "literal key material must not trigger a repair");
+
+    let post = read_cache_signingkey(&manager);
+    assert_eq!(
+        post.as_deref(),
+        Some(literal),
+        "literal signingkey unchanged"
+    );
+}
+
+#[test]
+fn test_repair_stale_signingkey_no_worktree_override_is_noop() {
+    // When the cache worktree has no `user.signingkey` override, repair must
+    // be a no-op. The effective value may surface from the user's global
+    // git config (which this test cannot control), but as long as nothing
+    // crosslink wrote is stale, repair returns Ok(false).
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    // Explicitly unset any local/worktree-scoped signingkey.
+    let _ = Command::new("git")
+        .current_dir(&manager.cache_dir)
+        .args(["config", "--local", "--unset-all", "user.signingkey"])
+        .output();
+    let _ = Command::new("git")
+        .current_dir(&manager.cache_dir)
+        .args(["config", "--worktree", "--unset-all", "user.signingkey"])
+        .output();
+
+    // If the host's global signingkey exists, repair is Ok(false).
+    // If the host has no global signingkey OR it points at a real file,
+    // repair is still Ok(false). The only way this fires is if the host's
+    // global signingkey is stale — and that's out of scope for this test.
+    let global = Command::new("git")
+        .current_dir(work_dir.path())
+        .args(["config", "--global", "user.signingkey"])
+        .output();
+    let global_key = global
+        .ok()
+        .and_then(|o| {
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
+        .filter(|s| !s.is_empty());
+    let global_key_exists_or_absent = global_key.as_ref().map_or(true, |k| {
+        std::path::Path::new(k).exists() || k.starts_with("ssh-")
+    });
+    if !global_key_exists_or_absent {
+        // Skip — host has a stale global signingkey; not our test scenario.
+        return;
+    }
+
+    let repaired = manager.repair_stale_signingkey().unwrap();
+    assert!(!repaired, "no worktree override must not trigger a repair");
+}
+
+#[test]
+fn test_repair_stale_signingkey_cache_missing_is_noop() {
+    // No init_cache — cache_dir doesn't exist yet.
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    std::fs::create_dir_all(&crosslink_dir).unwrap();
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    assert!(!manager.cache_dir.exists());
+    let repaired = manager.repair_stale_signingkey().unwrap();
+    assert!(!repaired);
+}

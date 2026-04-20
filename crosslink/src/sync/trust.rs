@@ -22,6 +22,49 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+/// Expand a leading `~/` or bare `~` in a path string against the user's home.
+///
+/// Returns the input unchanged if there's no tilde or home cannot be resolved.
+fn expand_tilde(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home_dir().map_or_else(
+            || {
+                tracing::warn!(
+                    "tilde expansion failed: cannot determine home directory for '{}'",
+                    path
+                );
+                PathBuf::from(path)
+            },
+            |home| home.join(rest),
+        );
+    }
+    if path == "~" {
+        return home_dir().unwrap_or_else(|| PathBuf::from(path));
+    }
+    PathBuf::from(path)
+}
+
+/// Best guess whether a `user.signingkey` value is a filesystem path rather
+/// than literal key material (e.g. an inline `ssh-ed25519 AAAA...` line).
+///
+/// Only paths need existence validation; literal key material has nothing to
+/// check against the filesystem.
+fn signingkey_value_is_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Literal SSH / PGP key material — not a path.
+    if trimmed.starts_with("ssh-")
+        || trimmed.starts_with("ecdsa-")
+        || trimmed.starts_with("sk-")
+        || trimmed.starts_with("-----BEGIN")
+    {
+        return false;
+    }
+    true
+}
+
 impl SyncManager {
     /// Configure SSH signing in the hub cache worktree.
     ///
@@ -75,7 +118,7 @@ impl SyncManager {
     /// the key file exists, configures the hub cache worktree to use it.
     /// If no driver key is found, disables signing so commits can proceed
     /// unsigned rather than failing fatally.
-    fn fallback_to_driver_signing(&self) -> Result<()> {
+    pub(super) fn fallback_to_driver_signing(&self) -> Result<()> {
         // Try to read the driver's signing key from the main repo config
         let output = Command::new("git")
             .current_dir(&self.repo_root)
@@ -96,30 +139,7 @@ impl SyncManager {
         });
 
         if let Some(key_path) = driver_key {
-            // Expand tilde to home directory. Handle both "~/" and bare "~".
-            // Uses $HOME (Unix) / $USERPROFILE (Windows) directly, same
-            // approach as signing::dirs_next().
-            let expanded = key_path.strip_prefix("~/").map_or_else(
-                || {
-                    if key_path == "~" {
-                        home_dir().unwrap_or_else(|| std::path::PathBuf::from(&key_path))
-                    } else {
-                        std::path::PathBuf::from(&key_path)
-                    }
-                },
-                |rest| {
-                    home_dir().map_or_else(
-                        || {
-                            tracing::warn!(
-                                "tilde expansion failed: cannot determine home directory for '{}'",
-                                key_path
-                            );
-                            std::path::PathBuf::from(&key_path)
-                        },
-                        |home| home.join(rest),
-                    )
-                },
-            );
+            let expanded = expand_tilde(&key_path);
 
             if expanded.exists() {
                 tracing::info!(
@@ -142,6 +162,62 @@ impl SyncManager {
         }
 
         Ok(())
+    }
+
+    /// Self-heal a stale `user.signingkey` in the hub-cache worktree config.
+    ///
+    /// Reads the effective `user.signingkey` for `cache_dir`. If the value is
+    /// a filesystem path that no longer exists (typical when an agent worktree
+    /// containing the key was deleted — see GH #565), delegates to
+    /// [`Self::fallback_to_driver_signing`] to rewrite `config.worktree` with
+    /// the driver key (or disable signing if the driver has no key either).
+    ///
+    /// Returns `Ok(true)` if a repair was performed, `Ok(false)` when nothing
+    /// needed repairing. Designed to be called as a best-effort preamble to
+    /// every commit in the cache worktree: cheap on the happy path (one
+    /// `git config` read plus a single `Path::exists()` check), self-healing
+    /// on the sad path so future syncs succeed without manual intervention.
+    ///
+    /// Skips validation for literal key material (`ssh-ed25519 AAAA...`,
+    /// `-----BEGIN ...`) that git accepts inline alongside file paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if the fallback rewrite itself fails. A read
+    /// failure (no signing configured, git missing, etc.) is treated as
+    /// "nothing to repair" and returns `Ok(false)`.
+    pub fn repair_stale_signingkey(&self) -> Result<bool> {
+        if !self.cache_dir.exists() {
+            return Ok(false);
+        }
+
+        let output = Command::new("git")
+            .current_dir(&self.cache_dir)
+            .args(["config", "user.signingkey"])
+            .output();
+
+        let Ok(output) = output else { return Ok(false) };
+        if !output.status.success() {
+            return Ok(false); // No signingkey configured — nothing to repair.
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !signingkey_value_is_path(&value) {
+            return Ok(false); // Literal key material or empty — not our problem.
+        }
+
+        let expanded = expand_tilde(&value);
+        if expanded.exists() {
+            return Ok(false); // Path still valid — no repair needed.
+        }
+
+        tracing::warn!(
+            "hub-cache user.signingkey points at missing file '{}' \
+             (agent worktree likely deleted) — repairing (GH #565)",
+            expanded.display()
+        );
+        self.fallback_to_driver_signing()?;
+        Ok(true)
     }
 
     /// Ensure the agent's public key is published to `trust/keys/` on the hub.

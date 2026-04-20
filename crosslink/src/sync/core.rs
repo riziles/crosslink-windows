@@ -136,10 +136,22 @@ impl SyncManager {
     /// was only inherited from the user's global git config, bypass it to avoid
     /// failures when the global key isn't usable in the cache context.
     ///
+    /// Before committing, self-heals a stale `user.signingkey` left over from
+    /// a deleted agent worktree (GH #565) — a repair failure is logged but
+    /// doesn't abort the commit, so the existing signing error still surfaces
+    /// to the caller if auto-repair can't fix things.
+    ///
     /// # Errors
     ///
     /// Returns an error if the git commit command fails.
     pub(super) fn git_commit_in_cache(&self, args: &[&str]) -> Result<std::process::Output> {
+        // Best-effort self-heal for stale signingkey configs (GH #565).
+        // If this fails, let the commit proceed — it may still succeed, or
+        // the real signing error will surface below with full context.
+        if let Err(e) = self.repair_stale_signingkey() {
+            tracing::warn!("signingkey self-heal failed (non-fatal): {e}");
+        }
+
         let local_configured = Command::new("git")
             .current_dir(&self.cache_dir)
             .args(["config", "--local", "commit.gpgsign"])
