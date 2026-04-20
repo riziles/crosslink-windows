@@ -3,9 +3,11 @@
 // top-level routes. Real SCADA layout (sidebar, global alert rail,
 // terminal list) lands in later P1.* subissues.
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
+import { connectDashboardWs } from "@/api/ws";
 import { ProjectDetail } from "@/pages/ProjectDetail";
 import { ProjectGrid } from "@/pages/ProjectGrid";
 
@@ -19,9 +21,22 @@ const queryClient = new QueryClient({
   },
 });
 
+/// Keeps a WebSocket subscription alive for the app's lifetime.
+/// Any server-emitted dashboard event invalidates the relevant
+/// React Query cache entries so tiles refresh without waiting for
+/// the 5-second polling fallback.
+function DashboardWsBridge() {
+  const client = useQueryClient();
+  useEffect(() => {
+    return connectDashboardWs(client);
+  }, [client]);
+  return null;
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <DashboardWsBridge />
       <BrowserRouter>
         <div className="min-h-screen bg-background text-foreground">
           <Routes>

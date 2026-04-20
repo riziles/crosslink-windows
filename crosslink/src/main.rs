@@ -3097,34 +3097,17 @@ fn main() -> Result<()> {
                 let dashboard_db_path = dashboard::db::DashboardDb::default_path()?;
                 dashboard::db::DashboardDb::open(&dashboard_db_path)?;
 
-                tokio::runtime::Runtime::new()?.block_on(async move {
-                    // Spawn the 5-second poll loop alongside the server.
-                    // Cancellation token lets us shut it down cleanly
-                    // when the server exits.
-                    let cancel = tokio_util::sync::CancellationToken::new();
-                    let poll_handle = tokio::spawn({
-                        let cancel = cancel.clone();
-                        let path = dashboard_db_path.clone();
-                        async move { dashboard::poll::run(path, cancel).await }
-                    });
-
-                    // Pass the dashboard DB path to AppState so the
-                    // /api/v1/dashboard/* routes can open fresh
-                    // connections from it per request.
-                    let server_result = server::run_with_dashboard_db(
-                        port,
-                        dashboard_dir,
-                        db,
-                        crosslink_dir,
-                        Some(dashboard_db_path),
-                    )
-                    .await;
-
-                    cancel.cancel();
-                    let _ = poll_handle.await;
-
-                    server_result
-                })
+                // Server owns the poll loop + shutdown coordination
+                // now (see `server::run_with_dashboard_db`) — that's
+                // where the broadcast sender that the poll loop
+                // publishes to lives alongside the WS fanout.
+                tokio::runtime::Runtime::new()?.block_on(server::run_with_dashboard_db(
+                    port,
+                    dashboard_dir,
+                    db,
+                    crosslink_dir,
+                    Some(dashboard_db_path),
+                ))
             }
             DashboardCommands::Track { slug, clone_url } => {
                 dashboard::projects::track(&slug, clone_url.as_deref())

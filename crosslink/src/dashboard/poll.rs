@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 use super::db::DashboardDb;
 use super::projects::Project;
 use super::reader;
+use crate::server::types::{WsDashboardProjectEvent, WsEventType};
+use crate::server::ws::WsEvent;
 
 /// Default tick duration between poll cycles.
 pub const DEFAULT_TICK: Duration = Duration::from_secs(5);
@@ -41,14 +43,26 @@ const DEFAULT_STALE_LOCK_MINUTES: i64 = 60;
 /// Run the poll loop until cancelled.
 ///
 /// Blocks until the cancellation token fires; intended to be spawned
-/// as a tokio task.
-pub async fn run(db_path: PathBuf, cancel: CancellationToken) {
-    run_with_tick(db_path, DEFAULT_TICK, cancel).await;
+/// as a tokio task. `ws_tx`, when provided, receives a
+/// [`WsEvent::DashboardProjectUpdated`] after every successful
+/// per-project `project_state` upsert so WebSocket clients can
+/// invalidate their caches ahead of the next poll tick.
+pub async fn run(
+    db_path: PathBuf,
+    cancel: CancellationToken,
+    ws_tx: Option<tokio::sync::broadcast::Sender<WsEvent>>,
+) {
+    run_with_tick(db_path, DEFAULT_TICK, cancel, ws_tx).await;
 }
 
 /// Variant of [`run`] with a configurable tick duration. Split out
 /// for tests; production callers use [`run`].
-pub async fn run_with_tick(db_path: PathBuf, tick: Duration, cancel: CancellationToken) {
+pub async fn run_with_tick(
+    db_path: PathBuf,
+    tick: Duration,
+    cancel: CancellationToken,
+    ws_tx: Option<tokio::sync::broadcast::Sender<WsEvent>>,
+) {
     tracing::info!(
         "dashboard poll loop starting (tick = {:?}, db = {})",
         tick,
@@ -67,7 +81,7 @@ pub async fn run_with_tick(db_path: PathBuf, tick: Duration, cancel: Cancellatio
                 return;
             }
             _ = interval.tick() => {
-                if let Err(e) = poll_all_projects(&db_path).await {
+                if let Err(e) = poll_all_projects(&db_path, ws_tx.as_ref()).await {
                     tracing::warn!("dashboard poll tick failed: {e}");
                 }
             }
@@ -77,12 +91,24 @@ pub async fn run_with_tick(db_path: PathBuf, tick: Duration, cancel: Cancellatio
 
 /// Run one pass over every active project. Per-project failures are
 /// logged but do not abort the pass.
-pub async fn poll_all_projects(db_path: &Path) -> Result<()> {
+pub async fn poll_all_projects(
+    db_path: &Path,
+    ws_tx: Option<&tokio::sync::broadcast::Sender<WsEvent>>,
+) -> Result<()> {
     let projects = load_active_projects(db_path)?;
     for project in projects {
         let slug = project.slug.clone();
         if let Err(e) = poll_project(db_path, &project).await {
             tracing::warn!("poll failed for {slug}: {e}");
+            continue;
+        }
+        // Emit a live-update notification. Send errors only happen
+        // when there are no subscribers, which is fine.
+        if let Some(tx) = ws_tx {
+            let _ = tx.send(WsEvent::DashboardProjectUpdated(WsDashboardProjectEvent {
+                event_type: WsEventType::DashboardProjectUpdated,
+                slug,
+            }));
         }
     }
     Ok(())
@@ -386,7 +412,7 @@ mod tests {
         drop(db);
 
         // Should return Ok — per-project errors are logged, not fatal.
-        poll_all_projects(&db_path).await.unwrap();
+        poll_all_projects(&db_path, None).await.unwrap();
 
         // The good project still got its project_state populated.
         let db = DashboardDb::open(&db_path).unwrap();
@@ -410,7 +436,7 @@ mod tests {
         let handle = tokio::spawn({
             let cancel = cancel.clone();
             let path = db_path.clone();
-            async move { run_with_tick(path, Duration::from_millis(50), cancel).await }
+            async move { run_with_tick(path, Duration::from_millis(50), cancel, None).await }
         });
 
         // Let the loop tick once before cancelling.

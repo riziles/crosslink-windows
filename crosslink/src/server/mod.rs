@@ -90,9 +90,24 @@ pub async fn run_with_dashboard_db(
     dashboard_db_path: Option<PathBuf>,
 ) -> Result<()> {
     let mut state = AppState::new(db, crosslink_dir.clone());
-    if let Some(path) = dashboard_db_path {
-        state = state.with_dashboard_db(path);
-    }
+
+    // When a dashboard DB is configured, spawn the 5-second poll loop
+    // alongside the server and wire its broadcast sender to the same
+    // channel the WebSocket hub fanouts from (state.ws_tx). That way
+    // `WsEvent::DashboardProjectUpdated` events emitted by the poll
+    // loop reach connected WS clients without any extra plumbing.
+    let poll_handle = if let Some(path) = dashboard_db_path {
+        state = state.with_dashboard_db(path.clone());
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let tx = state.ws_tx.clone();
+        let handle = tokio::spawn(async move {
+            crate::dashboard::poll::run(path, cancel_clone, Some(tx)).await;
+        });
+        Some((cancel, handle))
+    } else {
+        None
+    };
 
     // Start the heartbeat watcher in the background.
     watcher::start_watcher(crosslink_dir, state.ws_tx.clone());
@@ -145,7 +160,14 @@ pub async fn run_with_dashboard_db(
     println!("  Auth:      Bearer {}", state.auth_token);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let serve_result = axum::serve(listener, app).await;
 
+    // Shut down the poll loop cleanly when the server exits.
+    if let Some((cancel, handle)) = poll_handle {
+        cancel.cancel();
+        let _ = handle.await;
+    }
+
+    serve_result?;
     Ok(())
 }
