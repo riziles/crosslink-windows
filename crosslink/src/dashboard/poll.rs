@@ -23,10 +23,12 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+use super::alerts;
+use super::alerts_db;
 use super::db::DashboardDb;
 use super::projects::Project;
 use super::reader;
-use crate::server::types::{WsDashboardProjectEvent, WsEventType};
+use crate::server::types::{WsDashboardAlertsEvent, WsDashboardProjectEvent, WsEventType};
 use crate::server::ws::WsEvent;
 
 /// Default tick duration between poll cycles.
@@ -98,24 +100,45 @@ pub async fn poll_all_projects(
     let projects = load_active_projects(db_path)?;
     for project in projects {
         let slug = project.slug.clone();
-        if let Err(e) = poll_project(db_path, &project).await {
-            tracing::warn!("poll failed for {slug}: {e}");
-            continue;
-        }
-        // Emit a live-update notification. Send errors only happen
+        let outcome = match poll_project(db_path, &project).await {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!("poll failed for {slug}: {e}");
+                continue;
+            }
+        };
+        // Emit live-update notifications. Send errors only happen
         // when there are no subscribers, which is fine.
         if let Some(tx) = ws_tx {
             let _ = tx.send(WsEvent::DashboardProjectUpdated(WsDashboardProjectEvent {
                 event_type: WsEventType::DashboardProjectUpdated,
-                slug,
+                slug: slug.clone(),
             }));
+            if outcome.alerts_opened > 0 || outcome.alerts_resolved > 0 {
+                let _ = tx.send(WsEvent::DashboardAlertsChanged(WsDashboardAlertsEvent {
+                    event_type: WsEventType::DashboardAlertsChanged,
+                    slug,
+                    opened: outcome.alerts_opened,
+                    resolved: outcome.alerts_resolved,
+                }));
+            }
         }
     }
     Ok(())
 }
 
-/// Poll a single project: fetch, read snapshot, update DB.
-pub async fn poll_project(db_path: &Path, project: &Project) -> Result<()> {
+/// Outcome of polling a single project — used to decide which WS
+/// events to emit after the DB writes land.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PollOutcome {
+    pub alerts_opened: u32,
+    pub alerts_resolved: u32,
+}
+
+/// Poll a single project: fetch, read snapshot, update DB, derive +
+/// reconcile alerts. Returns an outcome used by the caller to decide
+/// which WS notifications to broadcast.
+pub async fn poll_project(db_path: &Path, project: &Project) -> Result<PollOutcome> {
     // 1. `git fetch` the hub branch (best-effort). We don't abort on
     //    fetch failure — the snapshot reader will still observe whatever
     //    is already in the local clone.
@@ -128,31 +151,40 @@ pub async fn poll_project(db_path: &Path, project: &Project) -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("snapshot task panicked: {e}"))??;
 
-    // 3. Derive counters and write the updated state back.
+    // 3. Derive counters + alerts; write everything in one blocking
+    //    pass so the DB sees a consistent view per tick.
+    let now = Utc::now();
     let counters = snapshot.derive_counters(
-        Utc::now(),
+        now,
         DEFAULT_AGENT_ACTIVE_MINUTES,
         DEFAULT_STALE_LOCK_MINUTES,
     );
+    let derived_alerts = alerts::derive_alerts(project, &snapshot, now);
 
     let project_id = project.id;
     let hub_sha = snapshot.hub_sha.clone();
     let last_commit_at = snapshot.last_commit_at.map(|dt| dt.to_rfc3339());
-
     let db_path_owned = db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<()> {
+
+    let sync_stats = tokio::task::spawn_blocking(move || -> Result<alerts_db::SyncStats> {
         write_project_state(
             &db_path_owned,
             project_id,
             hub_sha.as_deref(),
             last_commit_at.as_deref(),
             counters,
-        )
+        )?;
+        let db = DashboardDb::open(&db_path_owned)?;
+        let stats = alerts_db::sync_alerts_for_project(&db, project_id, &derived_alerts)?;
+        Ok(stats)
     })
     .await
     .map_err(|e| anyhow::anyhow!("DB update task panicked: {e}"))??;
 
-    Ok(())
+    Ok(PollOutcome {
+        alerts_opened: u32::try_from(sync_stats.opened).unwrap_or(u32::MAX),
+        alerts_resolved: u32::try_from(sync_stats.resolved).unwrap_or(u32::MAX),
+    })
 }
 
 fn load_active_projects(db_path: &Path) -> Result<Vec<Project>> {

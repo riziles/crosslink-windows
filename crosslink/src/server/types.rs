@@ -636,6 +636,10 @@ pub enum WsEventType {
     /// tracked project. Frontend invalidates the relevant query cache
     /// entry. GH #429.
     DashboardProjectUpdated,
+    /// Dashboard aggregator: alert set for a project changed (some
+    /// combination of opens + resolves happened in one poll tick).
+    /// Frontend invalidates the alerts query. GH #429.
+    DashboardAlertsChanged,
 }
 
 /// Server → Client: a new agent heartbeat was received.
@@ -713,6 +717,22 @@ pub struct WsDashboardProjectEvent {
     pub event_type: WsEventType,
     /// `owner/repo` slug of the project whose state advanced.
     pub slug: String,
+}
+
+/// Server → Client: alert set for a project changed. Carries summary
+/// counts so the frontend can update badge counts without a second
+/// round-trip for the common case.
+#[derive(Debug, Clone, Serialize)]
+pub struct WsDashboardAlertsEvent {
+    /// Always serializes as `"dashboard_alerts_changed"`.
+    #[serde(rename = "type")]
+    pub event_type: WsEventType,
+    /// `owner/repo` slug of the project whose alerts changed.
+    pub slug: String,
+    /// Number of alerts newly opened during this poll tick.
+    pub opened: u32,
+    /// Number of alerts resolved during this poll tick.
+    pub resolved: u32,
 }
 
 /// Client → Server: subscribe to specific event channels.

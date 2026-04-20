@@ -38,6 +38,7 @@ pub fn build_router() -> Router<AppState> {
     Router::new()
         .route("/projects", get(list_projects))
         .route("/projects/{*slug}", get(get_project_detail))
+        .route("/alerts", get(list_alerts))
 }
 
 /// Wire-format representation of a tracked project on the list endpoint.
@@ -290,6 +291,72 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
     })
 }
 
+/// Wire-format alert row returned by `GET /api/v1/dashboard/alerts`.
+/// Mirrors the `alerts` table plus the `slug` of the parent project
+/// so the frontend can link-off without a second fetch.
+#[derive(Debug, Serialize)]
+struct AlertItem {
+    id: i64,
+    project_slug: String,
+    kind: String,
+    severity: String,
+    subject_ref: Option<String>,
+    detail: Option<String>,
+    opened_at: String,
+    resolved_at: Option<String>,
+    acknowledged_at: Option<String>,
+}
+
+/// `GET /api/v1/dashboard/alerts` — list currently-open alerts across
+/// all tracked projects, most recent first. No filtering for MVP;
+/// add `?severity=...` / `?project=...` query params in P3 polish.
+async fn list_alerts(State(state): State<AppState>) -> Result<Json<Vec<AlertItem>>, ApiError> {
+    let db_path = state
+        .dashboard_db_path
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("dashboard DB not configured for this server"))?
+        .clone();
+
+    let items = tokio::task::spawn_blocking(move || load_open_alerts(&db_path))
+        .await
+        .map_err(|e| ApiError::internal(format!("alerts task panicked: {e}")))??;
+    Ok(Json(items))
+}
+
+fn load_open_alerts(db_path: &std::path::Path) -> Result<Vec<AlertItem>, ApiError> {
+    let db = DashboardDb::open(db_path).map_err(|e| ApiError::internal(format!("open db: {e}")))?;
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT a.id, p.slug, a.kind, a.severity, a.subject_ref,
+                    a.detail, a.opened_at, a.resolved_at, a.acknowledged_at
+             FROM alerts a
+             JOIN projects p ON p.id = a.project_id
+             WHERE a.resolved_at IS NULL
+             ORDER BY a.opened_at DESC",
+        )
+        .map_err(|e| ApiError::internal(format!("prepare: {e}")))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AlertItem {
+                id: row.get(0)?,
+                project_slug: row.get(1)?,
+                kind: row.get(2)?,
+                severity: row.get(3)?,
+                subject_ref: row.get(4)?,
+                detail: row.get(5)?,
+                opened_at: row.get(6)?,
+                resolved_at: row.get(7)?,
+                acknowledged_at: row.get(8)?,
+            })
+        })
+        .map_err(|e| ApiError::internal(format!("query: {e}")))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| ApiError::internal(format!("collect: {e}")))?;
+    Ok(rows)
+}
+
 /// Minimal typed error with status-code mapping. Patterned after axum
 /// idioms — manual `IntoResponse` implementation maps to the right
 /// status without pulling in a full error-handling crate.
@@ -461,6 +528,101 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_list_alerts_without_dashboard_db_returns_400() {
+        let (state, _tmp) = test_state(None);
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dashboard/alerts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_list_alerts_empty_returns_empty_array() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard_db_path = tmp.path().join("dashboard.db");
+        DashboardDb::open(&dashboard_db_path).unwrap();
+
+        let (state, _tmp2) = test_state(Some(dashboard_db_path));
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dashboard/alerts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_list_alerts_returns_open_rows_with_project_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard_db_path = tmp.path().join("dashboard.db");
+        let db = DashboardDb::open(&dashboard_db_path).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
+                 VALUES ('owner/repo', '/tmp/x', 'main', 'active', '2026-04-20T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        let project_id = db.conn.last_insert_rowid();
+        db.conn
+            .execute(
+                "INSERT INTO alerts
+                   (project_id, kind, severity, subject_ref, detail, opened_at)
+                 VALUES (?1, 'stale_lock', 'warning', 'lock:42', 'held too long', '2026-04-20T12:00:00Z')",
+                rusqlite::params![project_id],
+            )
+            .unwrap();
+        // A resolved alert should NOT show up.
+        db.conn
+            .execute(
+                "INSERT INTO alerts
+                   (project_id, kind, severity, subject_ref, detail, opened_at, resolved_at)
+                 VALUES (?1, 'overdue_issue', 'warning', 'issue:1', 'was overdue', '2026-04-20T10:00:00Z', '2026-04-20T11:00:00Z')",
+                rusqlite::params![project_id],
+            )
+            .unwrap();
+
+        let (state, _tmp2) = test_state(Some(dashboard_db_path));
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dashboard/alerts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "only one open alert should be returned");
+        assert_eq!(arr[0]["project_slug"], "owner/repo");
+        assert_eq!(arr[0]["kind"], "stale_lock");
+        assert_eq!(arr[0]["subject_ref"], "lock:42");
     }
 
     #[tokio::test]
