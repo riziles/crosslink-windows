@@ -1,3 +1,4 @@
+pub mod embedded;
 pub mod errors;
 pub mod handlers;
 pub mod routes;
@@ -104,12 +105,19 @@ pub async fn run(
         .layer(cors);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    println!("crosslink serve: listening on http://{addr}");
+    println!("crosslink dashboard: listening on http://{addr}");
+    // The dashboard reads `?token=<value>` on first load, persists it
+    // to sessionStorage, and strips it from the URL (see
+    // `dashboard/src/auth/bootstrap.ts`). Subsequent reloads in the
+    // same tab reuse the stored token.
     if has_dashboard {
-        // The dashboard reads `?token=<value>` on first load, persists it to
-        // sessionStorage, and strips it from the URL (see
-        // `dashboard/src/auth/bootstrap.ts`). Subsequent reloads in the same
-        // tab reuse the stored token.
+        // --dashboard-dir override in effect: frontend served from disk.
+        println!(
+            "  Dashboard: http://{addr}/?token={}  (from --dashboard-dir)",
+            state.auth_token
+        );
+    } else {
+        // Default path: serve the embedded bundle from the binary.
         println!("  Dashboard: http://{addr}/?token={}", state.auth_token);
     }
     println!("  API:       http://{addr}/api/v1/health");

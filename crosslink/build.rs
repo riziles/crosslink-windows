@@ -60,6 +60,37 @@ fn main() {
             eprintln!("cargo:warning=Failed to generate commands_gen.rs: {e}");
         }
     }
+
+    // Track dashboard build output for rust-embed (GH #429 / #689).
+    // The frontend lives at ../dashboard/ and emits a built bundle to
+    // ../dashboard/dist/. rust-embed requires the folder to exist at
+    // compile time — if the developer hasn't run `npm --prefix dashboard
+    // run build` yet, create a minimal placeholder so `cargo build` still
+    // succeeds. CI runs the npm build first, so CI always embeds the
+    // real assets.
+    println!("cargo:rerun-if-changed=../dashboard/dist/");
+    let dashboard_dist = Path::new("../dashboard/dist");
+    let dashboard_index = dashboard_dist.join("index.html");
+    if !dashboard_index.exists() {
+        let _ = fs::create_dir_all(dashboard_dist);
+        let placeholder = r#"<!doctype html>
+<html><head><title>crosslink dashboard — not built</title></head>
+<body style="font-family: system-ui; max-width: 42rem; margin: 4rem auto; padding: 0 1rem; color: #222;">
+<h1>crosslink dashboard — frontend not built</h1>
+<p>The Rust binary was compiled without a built dashboard. To build the
+frontend assets and embed them in the next <code>cargo build</code>:</p>
+<pre>npm --prefix dashboard run build
+cargo build</pre>
+<p>See <code>DESIGN-CROSSLINK-DASHBOARD.md</code> at the repo root for
+the design; GH #429 tracks the broader feature.</p>
+</body></html>"#;
+        if let Err(e) = fs::write(&dashboard_index, placeholder) {
+            eprintln!(
+                "cargo:warning=Failed to write dashboard placeholder at {}: {e}",
+                dashboard_index.display()
+            );
+        }
+    }
 }
 
 fn generate_commands_file(commands_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {

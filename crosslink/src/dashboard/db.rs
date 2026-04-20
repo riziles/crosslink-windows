@@ -166,7 +166,6 @@ impl DashboardDb {
         )?;
         Ok(())
     }
-
 }
 
 /// Resolve the user's home directory from environment variables,
