@@ -2,6 +2,7 @@
 //!
 //! This module exposes the core functionality for use in fuzzing and testing.
 
+pub mod agent_flags;
 pub mod agent_requests;
 pub mod checkpoint;
 pub mod clock_skew;

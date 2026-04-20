@@ -182,6 +182,212 @@ pub fn new_request_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
+/// Agent-side polling: scan pending requests for the local agent,
+/// translate each into a control-flag write, and emit an ack file.
+pub mod poll {
+    use super::*;
+    use crate::agent_flags;
+    use crate::shared_writer::{PushOutcome, SharedWriter};
+
+    /// Summary of what a single polling pass did.
+    #[derive(Debug, Clone, Default)]
+    pub struct PollResult {
+        /// Requests that we acted on in this pass.
+        pub acted: Vec<PollAction>,
+        /// Requests that were already acked — ignored.
+        pub skipped_existing_ack: usize,
+    }
+
+    /// What the poll did for one request.
+    #[derive(Debug, Clone)]
+    pub struct PollAction {
+        pub request_id: String,
+        pub kind: RequestKind,
+        /// `true` if we executed the action (wrote the flag); `false`
+        /// if we rejected (schema-malformed, already-in-target-state).
+        pub acted: bool,
+        pub result: String,
+        pub push_outcome: PushOutcome,
+    }
+
+    /// Process every pending request for `agent_id`, writing local
+    /// flags and hub-branch acks as appropriate.
+    ///
+    /// Signature validation is delegated to crosslink's existing hub-
+    /// sync path: this function trusts anything that landed on the
+    /// local hub cache, since the sync machinery already rejected
+    /// unsigned / bad-signer commits at fetch time.
+    ///
+    /// # Errors
+    /// Returns an error if the request directory can't be scanned, or
+    /// if a flag write fails. Per-request ack push failures are
+    /// captured in the returned `PollResult` instead of aborting the
+    /// whole pass — one noisy request shouldn't block the others.
+    pub fn process_pending(
+        writer: &SharedWriter,
+        crosslink_dir: &std::path::Path,
+        agent_id: &str,
+    ) -> Result<PollResult> {
+        let cache_dir = crosslink_dir.join("hub-cache");
+        let entries = scan(&cache_dir, agent_id)?;
+        let mut result = PollResult::default();
+
+        for row in entries {
+            if row.ack.is_some() {
+                result.skipped_existing_ack += 1;
+                continue;
+            }
+            let (acted, summary) = apply_request(crosslink_dir, &row.request)
+                .unwrap_or_else(|e| (false, format!("error applying request: {e}")));
+
+            let ack = AgentRequestAck {
+                request_id: row.request.request_id.clone(),
+                ack_at: chrono::Utc::now().to_rfc3339(),
+                acted,
+                result: summary.clone(),
+                notes: None,
+            };
+            let push_outcome = writer.write_agent_ack(agent_id, &ack).unwrap_or_else(|e| {
+                tracing::warn!(
+                    "failed to push ack for {}: {e}; treating as LocalOnly",
+                    row.request.request_id
+                );
+                PushOutcome::LocalOnly
+            });
+
+            result.acted.push(PollAction {
+                request_id: row.request.request_id,
+                kind: row.request.kind,
+                acted,
+                result: summary,
+                push_outcome,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Apply a single request's side-effects to local flag state.
+    /// Returns `(acted, summary)`. `acted=false` means we intentionally
+    /// didn't act (e.g., resume when already running) — still writes an
+    /// ack so drivers don't see the request hanging forever.
+    fn apply_request(
+        crosslink_dir: &std::path::Path,
+        req: &AgentRequest,
+    ) -> Result<(bool, String)> {
+        match req.kind {
+            RequestKind::Pause => {
+                if agent_flags::is_paused(crosslink_dir) {
+                    Ok((false, "already paused".into()))
+                } else {
+                    agent_flags::set_paused(crosslink_dir)?;
+                    Ok((true, "paused".into()))
+                }
+            }
+            RequestKind::Resume => {
+                if agent_flags::is_paused(crosslink_dir) {
+                    agent_flags::clear_paused(crosslink_dir)?;
+                    Ok((true, "resumed".into()))
+                } else {
+                    Ok((false, "already running".into()))
+                }
+            }
+            RequestKind::Kill => {
+                if agent_flags::should_exit(crosslink_dir) {
+                    Ok((false, "already flagged for exit".into()))
+                } else {
+                    agent_flags::set_kill(crosslink_dir)?;
+                    Ok((true, "exit requested".into()))
+                }
+            }
+            RequestKind::Reprioritise => {
+                let Some(issue_id) = req.subject.issue_id else {
+                    return Ok((
+                        false,
+                        "reprioritise request missing subject.issue_id".into(),
+                    ));
+                };
+                agent_flags::set_reprioritise_hint(
+                    crosslink_dir,
+                    &agent_flags::ReprioritiseHint {
+                        issue_id,
+                        from_request_id: req.request_id.clone(),
+                    },
+                )?;
+                Ok((true, format!("reprioritise hint → #{issue_id}")))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use tempfile::tempdir;
+
+        fn make_req(kind: RequestKind, issue_id: Option<i64>) -> AgentRequest {
+            AgentRequest {
+                request_id: new_request_id(),
+                kind,
+                subject: RequestSubject { issue_id },
+                requested_by: "SHA256:test".into(),
+                requested_at: chrono::Utc::now().to_rfc3339(),
+                reason: None,
+            }
+        }
+
+        #[test]
+        fn test_apply_pause_toggles_flag() {
+            let dir = tempdir().unwrap();
+            let (acted, summary) =
+                apply_request(dir.path(), &make_req(RequestKind::Pause, None)).unwrap();
+            assert!(acted);
+            assert!(summary.contains("paused"));
+            assert!(agent_flags::is_paused(dir.path()));
+
+            // Second application no-ops (already paused).
+            let (acted2, summary2) =
+                apply_request(dir.path(), &make_req(RequestKind::Pause, None)).unwrap();
+            assert!(!acted2);
+            assert!(summary2.contains("already"));
+        }
+
+        #[test]
+        fn test_apply_resume_clears_flag() {
+            let dir = tempdir().unwrap();
+            agent_flags::set_paused(dir.path()).unwrap();
+            let (acted, _) =
+                apply_request(dir.path(), &make_req(RequestKind::Resume, None)).unwrap();
+            assert!(acted);
+            assert!(!agent_flags::is_paused(dir.path()));
+        }
+
+        #[test]
+        fn test_apply_kill_sets_flag() {
+            let dir = tempdir().unwrap();
+            let (acted, _) = apply_request(dir.path(), &make_req(RequestKind::Kill, None)).unwrap();
+            assert!(acted);
+            assert!(agent_flags::should_exit(dir.path()));
+        }
+
+        #[test]
+        fn test_apply_reprioritise_requires_issue_id() {
+            let dir = tempdir().unwrap();
+            let (acted, summary) =
+                apply_request(dir.path(), &make_req(RequestKind::Reprioritise, None)).unwrap();
+            assert!(!acted);
+            assert!(summary.contains("missing"));
+
+            let (acted_ok, _) =
+                apply_request(dir.path(), &make_req(RequestKind::Reprioritise, Some(7))).unwrap();
+            assert!(acted_ok);
+            let hint = agent_flags::read_reprioritise_hint(dir.path())
+                .unwrap()
+                .unwrap();
+            assert_eq!(hint.issue_id, 7);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

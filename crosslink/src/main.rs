@@ -42,6 +42,7 @@
 // See https://github.com/rust-lang/rust-clippy/issues for the underlying span bug.
 #![allow(clippy::large_stack_arrays)]
 
+mod agent_flags;
 mod agent_requests;
 mod checkpoint;
 mod clock_skew;
@@ -1203,6 +1204,9 @@ enum AgentCommands {
         #[arg(long)]
         pending: bool,
     },
+    /// Process pending control requests for this agent (applies
+    /// pause/kill/reprioritise flags locally, writes acks to the hub)
+    PollRequests,
 }
 
 #[derive(Subcommand)]

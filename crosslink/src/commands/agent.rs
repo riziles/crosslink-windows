@@ -71,7 +71,45 @@ pub fn run(command: AgentCommands, crosslink_dir: &Path) -> Result<()> {
         AgentCommands::Requests { target, pending } => {
             list_requests(crosslink_dir, target.as_deref(), pending)
         }
+        AgentCommands::PollRequests => poll_requests(crosslink_dir),
     }
+}
+
+/// `crosslink agent poll-requests`
+///
+/// Scans the hub cache for pending requests targeted at this agent,
+/// applies each one's local flag (pause / resume / kill / reprioritise),
+/// and writes an ack to the hub so drivers see the outcome. Idempotent
+/// — already-acked requests are skipped.
+fn poll_requests(crosslink_dir: &Path) -> Result<()> {
+    let writer = crate::shared_writer::SharedWriter::new(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "agent poll-requests requires shared-writer mode (run `crosslink agent init` first)"
+        )
+    })?;
+    let agent = AgentConfig::load(crosslink_dir)?
+        .ok_or_else(|| anyhow::anyhow!("no agent config; run `crosslink agent init`"))?;
+
+    let result =
+        crate::agent_requests::poll::process_pending(&writer, crosslink_dir, &agent.agent_id)?;
+
+    if result.acted.is_empty() && result.skipped_existing_ack == 0 {
+        println!("No pending requests for {}.", agent.agent_id);
+        return Ok(());
+    }
+    for a in &result.acted {
+        println!(
+            "{}  {:?}  acted={}  {}  ({:?})",
+            a.request_id, a.kind, a.acted, a.result, a.push_outcome
+        );
+    }
+    if result.skipped_existing_ack > 0 {
+        println!(
+            "Skipped {} already-acked request(s).",
+            result.skipped_existing_ack
+        );
+    }
+    Ok(())
 }
 
 /// `crosslink agent request <target> <kind> [--subject-issue N] [--reason "..."]`
@@ -165,10 +203,10 @@ fn list_requests(crosslink_dir: &Path, target: Option<&str>, pending_only: bool)
                 continue;
             }
             total += 1;
-            let status = row.ack.as_ref().map_or_else(
-                || "pending".to_string(),
-                |a| format!("acked: {}", a.result),
-            );
+            let status = row
+                .ack
+                .as_ref()
+                .map_or_else(|| "pending".to_string(), |a| format!("acked: {}", a.result));
             let subject = row
                 .request
                 .subject
