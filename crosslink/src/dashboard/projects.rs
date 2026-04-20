@@ -1,10 +1,20 @@
 //! Tracked-project CRUD for `crosslink dashboard track / untrack / list`.
 //!
-//! Each tracked project has a row in the `projects` table and a local
-//! clone under `~/.crosslink/dashboard-cache/<owner>/<repo>/`. This
-//! module provides the CLI-side handlers; the poll loop (P1.2.C) reads
-//! the rows this module writes and fetches + diffs the clones on a
-//! 5-second interval.
+//! The dashboard aggregates across repositories the user already has
+//! cloned locally. `track` takes a path to an existing working copy of
+//! a crosslink-managed repository — it does *not* clone; that would
+//! duplicate the user's existing crosslink workspace and force us to
+//! re-mint agent identities, signing config, and hub caches in our
+//! private copy.
+//!
+//! With this arrangement:
+//! - The poll loop runs `git fetch` in the user's real workspace; no
+//!   fresh clone needed.
+//! - The write surface (P1.8+) shells out to the real `crosslink` CLI
+//!   in that same workspace — inheriting the workspace's signing
+//!   config, agent identity, and hub-cache setup automatically.
+//! - `untrack` simply removes the DB row; it never deletes the
+//!   user's working copy.
 
 use anyhow::{bail, Context, Result};
 use rusqlite::params;
@@ -18,6 +28,8 @@ use super::db::DashboardDb;
 pub struct Project {
     pub id: i64,
     pub slug: String,
+    /// Path to the user's existing working copy of the repo (NOT a
+    /// dashboard-owned clone — we never make our own).
     pub clone_path: PathBuf,
     pub default_branch: String,
     pub hub_sha: Option<String>,
@@ -28,21 +40,6 @@ pub struct Project {
     pub pinned: bool,
 }
 
-/// Default cache-root for local clones: `~/.crosslink/dashboard-cache/`.
-///
-/// # Errors
-/// Returns an error if the user's home directory can't be resolved.
-pub fn default_cache_root() -> Result<PathBuf> {
-    let db_path = DashboardDb::default_path()?;
-    // dashboard.db lives at `~/.crosslink/dashboard.db` — strip the
-    // filename and sibling-join the cache dir so both live under the
-    // same parent.
-    let parent = db_path
-        .parent()
-        .context("dashboard DB path has no parent")?;
-    Ok(parent.join("dashboard-cache"))
-}
-
 /// Validate an `owner/repo` slug. Returns `(owner, repo)` on success.
 fn parse_slug(slug: &str) -> Result<(&str, &str)> {
     let mut parts = slug.splitn(2, '/');
@@ -51,9 +48,6 @@ fn parse_slug(slug: &str) -> Result<(&str, &str)> {
     if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
         bail!("slug must be in the form `owner/repo`, got: {slug}");
     }
-    // Reject any component that contains a path separator to prevent
-    // tracking a repo named e.g. `foo/../../etc`. `parse_slug` is the
-    // only entry point for slugs before they hit the filesystem.
     if owner.contains(std::path::is_separator)
         || repo.contains(std::path::is_separator)
         || owner.contains('\\')
@@ -64,63 +58,146 @@ fn parse_slug(slug: &str) -> Result<(&str, &str)> {
     Ok((owner, repo))
 }
 
-/// Resolve the on-disk clone path for a slug.
-fn clone_path_for(cache_root: &Path, slug: &str) -> Result<PathBuf> {
-    let (owner, repo) = parse_slug(slug)?;
-    Ok(cache_root.join(owner).join(repo))
+/// Parse `owner/repo` out of a git remote URL.
+///
+/// Handles the common forms:
+/// - `git@github.com:forecast-bio/sigil.git`
+/// - `https://github.com/forecast-bio/sigil.git`
+/// - `https://github.com/forecast-bio/sigil` (no `.git`)
+/// - Arbitrary hosts (e.g. `git@gitlab.example.com:group/proj.git`)
+///
+/// Returns `None` if the URL doesn't match an obvious "host/owner/repo"
+/// shape — callers fall back to `--slug` in that case.
+fn slug_from_remote_url(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches(".git");
+    // ssh form: git@host:owner/repo
+    if let Some((host_part, path_part)) = url.split_once(':') {
+        if !path_part.is_empty() && !path_part.starts_with("//") {
+            // Reject scheme:// URLs that happened to split on the
+            // protocol colon (http:, https:, ssh:, git:).
+            let looks_like_scheme = matches!(
+                host_part,
+                "http" | "https" | "ssh" | "git" | "ftp" | "file"
+            );
+            if !looks_like_scheme {
+                return extract_owner_repo(path_part);
+            }
+        }
+    }
+    // https / http / git:// form: strip scheme + host, take path
+    if let Some(path_part) = url
+        .split_once("://")
+        .and_then(|(_s, rest)| rest.split_once('/').map(|(_host, path)| path))
+    {
+        return extract_owner_repo(path_part);
+    }
+    None
 }
 
-/// CLI-level wrapper: resolves default paths from the user's home dir,
-/// then delegates to [`track_with_paths`].
-///
-/// # Errors
-/// As [`track_with_paths`], plus home-dir resolution.
-pub fn track(slug: &str, clone_url: Option<&str>) -> Result<()> {
-    let db_path = DashboardDb::default_path()?;
-    let cache_root = default_cache_root()?;
-    track_with_paths(slug, clone_url, &db_path, &cache_root)
+fn extract_owner_repo(path_part: &str) -> Option<String> {
+    let parts: Vec<&str> = path_part
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    // Take the LAST two segments (handles nested paths on GitLab/Gitea).
+    if parts.len() < 2 {
+        return None;
+    }
+    let owner = parts[parts.len() - 2];
+    let repo = parts[parts.len() - 1];
+    Some(format!("{owner}/{repo}"))
 }
 
-/// Core logic for tracking a repository, parameterised on paths so tests
-/// can point at a tempdir without mutating `$HOME`.
-///
-/// - Validates the slug format.
-/// - Resolves the clone URL (defaults to `https://github.com/<slug>.git`).
-/// - Clones the repo under `cache_root/<owner>/<repo>/`, restricted to
-///   the `crosslink/hub` branch so the initial fetch stays small.
-/// - Inserts a row in the `projects` table in the DB at `db_path`.
-/// - Errors loudly if the slug is already tracked.
-///
-/// # Errors
-/// Returns an error if the slug is invalid, the clone directory already
-/// exists, the git clone fails, or the DB insert fails.
-pub fn track_with_paths(
-    slug: &str,
-    clone_url: Option<&str>,
-    db_path: &Path,
-    cache_root: &Path,
-) -> Result<()> {
-    let (owner, repo) = parse_slug(slug)?;
-    let url = clone_url.map_or_else(
-        || format!("https://github.com/{owner}/{repo}.git"),
-        ToString::to_string,
-    );
-
-    let clone_path = clone_path_for(cache_root, slug)?;
-
-    if clone_path.exists() {
+/// Run `git -C <path> remote get-url origin` and return the URL.
+fn origin_url(clone_path: &Path) -> Result<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(clone_path)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .context("Failed to invoke git")?;
+    if !out.status.success() {
         bail!(
-            "clone directory {} already exists — untrack first if you want to re-add",
+            "`git remote get-url origin` failed for {}: {}",
+            clone_path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// CLI-level wrapper: resolves the default DB path and delegates.
+///
+/// # Errors
+/// As [`track_at_path`], plus home-dir resolution.
+pub fn track(clone_path: &Path, slug_override: Option<&str>) -> Result<()> {
+    let db_path = DashboardDb::default_path()?;
+    track_at_path(clone_path, slug_override, &db_path)
+}
+
+/// Add a repository to the tracked set.
+///
+/// - Validates that `clone_path` exists and is a git repository.
+/// - Derives the slug from the repo's `origin` remote URL (unless
+///   `slug_override` is provided).
+/// - Warns (but does not error) if the repo has no `crosslink/hub`
+///   branch yet — the tile will show `unreachable_project` until the
+///   branch appears; useful for tracking repos that are about to be
+///   initialized.
+/// - Inserts a row in the `projects` table. No clone, no mutation to
+///   the user's working tree.
+///
+/// # Errors
+/// Returns an error if the path doesn't exist or isn't a git repo,
+/// the slug is invalid, the slug is already tracked, or the DB insert
+/// fails.
+pub fn track_at_path(clone_path: &Path, slug_override: Option<&str>, db_path: &Path) -> Result<()> {
+    if !clone_path.is_dir() {
+        bail!(
+            "path does not exist or is not a directory: {}",
+            clone_path.display()
+        );
+    }
+    if !clone_path.join(".git").exists() {
+        bail!(
+            "path is not a git repository (no .git found): {}",
             clone_path.display()
         );
     }
 
-    // Open the dashboard DB first so we catch "already tracked" errors
-    // before making any filesystem changes we'd need to roll back.
+    let slug = if let Some(s) = slug_override {
+        parse_slug(s)?;
+        s.to_string()
+    } else {
+        let url = origin_url(clone_path)?;
+        slug_from_remote_url(&url).ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not derive slug from origin URL `{url}` — pass --slug owner/repo"
+            )
+        })?
+    };
+    parse_slug(&slug)?;
+
+    // Soft-check for the hub branch — warn if missing, don't block.
+    let hub_check = Command::new("git")
+        .arg("-C")
+        .arg(clone_path)
+        .args(["rev-parse", "--verify", "crosslink/hub"])
+        .output()
+        .ok();
+    let has_hub = hub_check.is_some_and(|o| o.status.success());
+    if !has_hub {
+        eprintln!(
+            "warning: {slug} has no `crosslink/hub` branch yet — \
+             tracking anyway, dashboard will surface this as unreachable."
+        );
+    }
+
     let db = DashboardDb::open(db_path)?;
     let existing: Option<i64> = db
         .conn
-        .query_row("SELECT id FROM projects WHERE slug = ?1", [slug], |row| {
+        .query_row("SELECT id FROM projects WHERE slug = ?1", [&slug], |row| {
             row.get(0)
         })
         .ok();
@@ -128,44 +205,30 @@ pub fn track_with_paths(
         bail!("{slug} is already tracked");
     }
 
-    if let Some(parent) = clone_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create cache parent {}", parent.display()))?;
-    }
-
-    // Shallow clone of just the hub branch. Cheaper initial pull; the
-    // poll loop fetches deltas from there.
-    let out = Command::new("git")
-        .args([
-            "clone",
-            "--single-branch",
-            "--branch",
-            "crosslink/hub",
-            "--depth",
-            "50",
-            &url,
-            clone_path.to_string_lossy().as_ref(),
-        ])
-        .output()
-        .context("Failed to invoke git clone")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        bail!("git clone of {url} failed: {}", stderr.trim());
-    }
-
+    let canonical = clone_path
+        .canonicalize()
+        .unwrap_or_else(|_| clone_path.to_path_buf());
     let now = chrono::Utc::now().to_rfc3339();
     db.conn.execute(
         "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
          VALUES (?1, ?2, ?3, 'active', ?4)",
         params![
             slug,
-            clone_path.to_string_lossy().as_ref(),
-            "main", // TODO (P1.2.B+): detect actual default branch
+            canonical.to_string_lossy().as_ref(),
+            "main", // TODO: detect actual default branch via git symbolic-ref
             now
         ],
     )?;
 
-    println!("Tracking {slug} (cloned to {})", clone_path.display());
+    println!(
+        "Tracking {slug} at {}{}",
+        canonical.display(),
+        if has_hub {
+            ""
+        } else {
+            " (crosslink/hub missing)"
+        }
+    );
     Ok(())
 }
 
@@ -173,59 +236,29 @@ pub fn track_with_paths(
 ///
 /// # Errors
 /// As [`untrack_with_path`], plus home-dir resolution.
-pub fn untrack(slug: &str, keep_clone: bool) -> Result<()> {
+pub fn untrack(slug: &str) -> Result<()> {
     let db_path = DashboardDb::default_path()?;
-    untrack_with_path(slug, keep_clone, &db_path)
+    untrack_with_path(slug, &db_path)
 }
 
-/// Core logic for untracking, parameterised on the DB path so tests can
-/// use a tempdir without mutating `$HOME`.
-///
-/// Deletes the `projects` row (CASCADE handles `project_state`,
-/// `alerts`, `activity`). Unless `keep_clone`, also `rm -rf` the
-/// clone directory that was recorded on the row.
+/// Stop tracking a project. Deletes the `projects` row (CASCADE
+/// cleans up `project_state`, `alerts`, `activity`). The user's
+/// working copy is never touched — this command only affects dashboard
+/// state.
 ///
 /// # Errors
-/// Returns an error if the slug isn't tracked, the DB delete fails, or
-/// (when not `keep_clone`) the clone directory can't be removed.
-pub fn untrack_with_path(slug: &str, keep_clone: bool, db_path: &Path) -> Result<()> {
+/// Returns an error if the slug isn't tracked or the DB delete fails.
+pub fn untrack_with_path(slug: &str, db_path: &Path) -> Result<()> {
     parse_slug(slug)?;
 
     let db = DashboardDb::open(db_path)?;
-
-    let clone_path_str: Option<String> = db
-        .conn
-        .query_row(
-            "SELECT clone_path FROM projects WHERE slug = ?1",
-            [slug],
-            |row| row.get(0),
-        )
-        .ok();
-    let Some(clone_path_str) = clone_path_str else {
-        bail!("{slug} is not currently tracked");
-    };
-
     let rows = db
         .conn
         .execute("DELETE FROM projects WHERE slug = ?1", [slug])?;
     if rows == 0 {
         bail!("{slug} is not currently tracked");
     }
-
-    let clone_path = PathBuf::from(clone_path_str);
-    if !keep_clone && clone_path.exists() {
-        std::fs::remove_dir_all(&clone_path).with_context(|| {
-            format!("Failed to remove clone directory {}", clone_path.display())
-        })?;
-        println!("Untracked {slug}; removed {}", clone_path.display());
-    } else if keep_clone {
-        println!(
-            "Untracked {slug}; kept local clone at {}",
-            clone_path.display()
-        );
-    } else {
-        println!("Untracked {slug} (clone directory was already gone)");
-    }
+    println!("Untracked {slug} (local working copy left intact)");
     Ok(())
 }
 
@@ -269,12 +302,15 @@ pub fn list_with_path(db_path: &Path) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     if projects.is_empty() {
-        println!("No tracked projects. Add one with `crosslink dashboard track <owner/repo>`.");
+        println!(
+            "No tracked projects. Add one with \
+             `crosslink dashboard track <path-to-repo>`."
+        );
         return Ok(());
     }
 
     println!(
-        "{:<5} {:<40} {:<10} {:<25} Clone",
+        "{:<5} {:<40} {:<10} {:<25} Working copy",
         "PIN", "SLUG", "STATUS", "LAST FETCH"
     );
     for p in &projects {
@@ -294,7 +330,72 @@ pub fn list_with_path(db_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command as StdCommand;
     use tempfile::tempdir;
+
+    fn temp_db() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("dashboard.db");
+        DashboardDb::open(&db_path).unwrap();
+        (dir, db_path)
+    }
+
+    /// Initialise a minimal git repo at the given path with a given
+    /// origin URL and an empty `crosslink/hub` branch.
+    fn make_fake_repo(path: &Path, origin: &str, with_hub: bool) {
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["init", "-q", "-b", "main"])
+            .status()
+            .unwrap();
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["config", "user.email", "test@test.local"])
+            .status()
+            .unwrap();
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["config", "user.name", "Test"])
+            .status()
+            .unwrap();
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["commit", "--allow-empty", "-q", "-m", "init"])
+            .status()
+            .unwrap();
+        StdCommand::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(["remote", "add", "origin", origin])
+            .status()
+            .unwrap();
+        if with_hub {
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(["checkout", "-q", "--orphan", "crosslink/hub"])
+                .status()
+                .unwrap();
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(["commit", "--allow-empty", "-q", "-m", "hub init"])
+                .status()
+                .unwrap();
+            StdCommand::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(["checkout", "-q", "main"])
+                .status()
+                .unwrap();
+        }
+    }
+
+    // ── slug parsing & derivation ──
 
     #[test]
     fn test_parse_slug_valid() {
@@ -310,18 +411,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_slug_rejects_three_segments() {
-        assert!(parse_slug("forecast/bio/crosslink").is_err());
-    }
-
-    #[test]
     fn test_parse_slug_rejects_empty_owner() {
         assert!(parse_slug("/crosslink").is_err());
-    }
-
-    #[test]
-    fn test_parse_slug_rejects_empty_repo() {
-        assert!(parse_slug("forecast-bio/").is_err());
     }
 
     #[test]
@@ -331,125 +422,174 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_path_for_composes_under_cache_root() {
-        let root = PathBuf::from("/tmp/cache");
-        let path = clone_path_for(&root, "forecast-bio/crosslink").unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/cache/forecast-bio/crosslink"));
+    fn test_slug_from_ssh_url() {
+        assert_eq!(
+            slug_from_remote_url("git@github.com:forecast-bio/sigil.git"),
+            Some("forecast-bio/sigil".to_string())
+        );
     }
 
-    /// Helper: open a fresh DB in a tempdir and return (tempdir, db_path).
-    /// Keeping the tempdir alive is the caller's responsibility.
-    fn temp_db() -> (tempfile::TempDir, PathBuf) {
+    #[test]
+    fn test_slug_from_https_url_with_git_suffix() {
+        assert_eq!(
+            slug_from_remote_url("https://github.com/forecast-bio/sigil.git"),
+            Some("forecast-bio/sigil".to_string())
+        );
+    }
+
+    #[test]
+    fn test_slug_from_https_url_without_git_suffix() {
+        assert_eq!(
+            slug_from_remote_url("https://github.com/forecast-bio/sigil"),
+            Some("forecast-bio/sigil".to_string())
+        );
+    }
+
+    #[test]
+    fn test_slug_from_nested_gitlab_path_takes_last_two() {
+        // GitLab-style nested groups: take the last two path segments.
+        assert_eq!(
+            slug_from_remote_url("https://gitlab.example.com/group/subgroup/project"),
+            Some("subgroup/project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_slug_from_garbage_returns_none() {
+        assert_eq!(slug_from_remote_url("not a url"), None);
+        assert_eq!(slug_from_remote_url(""), None);
+    }
+
+    // ── track / untrack / list ──
+
+    #[test]
+    fn test_track_rejects_nonexistent_path() {
+        let (_home, db_path) = temp_db();
+        let err =
+            track_at_path(Path::new("/definitely/not/a/real/path"), None, &db_path).unwrap_err();
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_track_rejects_non_git_directory() {
+        let (_home, db_path) = temp_db();
         let dir = tempdir().unwrap();
-        let db_path = dir.path().join("dashboard.db");
-        DashboardDb::open(&db_path).unwrap();
-        (dir, db_path)
+        let err = track_at_path(dir.path(), None, &db_path).unwrap_err();
+        assert!(err.to_string().contains("not a git repository"));
+    }
+
+    #[test]
+    fn test_track_inserts_row_with_derived_slug() {
+        let (_home, db_path) = temp_db();
+        let repo = tempdir().unwrap();
+        make_fake_repo(
+            repo.path(),
+            "https://github.com/forecast-bio/test-a.git",
+            true,
+        );
+
+        track_at_path(repo.path(), None, &db_path).unwrap();
+
+        let db = DashboardDb::open(&db_path).unwrap();
+        let slug: String = db
+            .conn
+            .query_row("SELECT slug FROM projects WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(slug, "forecast-bio/test-a");
+    }
+
+    #[test]
+    fn test_track_with_slug_override_wins_over_origin() {
+        let (_home, db_path) = temp_db();
+        let repo = tempdir().unwrap();
+        make_fake_repo(
+            repo.path(),
+            "https://github.com/forecast-bio/test-b.git",
+            true,
+        );
+
+        track_at_path(repo.path(), Some("custom/override"), &db_path).unwrap();
+
+        let db = DashboardDb::open(&db_path).unwrap();
+        let slug: String = db
+            .conn
+            .query_row("SELECT slug FROM projects WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(slug, "custom/override");
+    }
+
+    #[test]
+    fn test_track_rejects_duplicate_slug() {
+        let (_home, db_path) = temp_db();
+        let repo = tempdir().unwrap();
+        make_fake_repo(
+            repo.path(),
+            "https://github.com/forecast-bio/test-c.git",
+            true,
+        );
+
+        track_at_path(repo.path(), None, &db_path).unwrap();
+        let err = track_at_path(repo.path(), None, &db_path).unwrap_err();
+        assert!(err.to_string().contains("already tracked"));
+    }
+
+    #[test]
+    fn test_track_repo_without_hub_branch_still_succeeds() {
+        // Repos missing `crosslink/hub` track with a warning. The
+        // `unreachable_project` alert picks them up on first poll.
+        let (_home, db_path) = temp_db();
+        let repo = tempdir().unwrap();
+        make_fake_repo(
+            repo.path(),
+            "https://github.com/forecast-bio/test-d.git",
+            false,
+        );
+
+        track_at_path(repo.path(), None, &db_path).unwrap();
+
+        let db = DashboardDb::open(&db_path).unwrap();
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_untrack_removes_row_and_leaves_working_copy() {
+        let (_home, db_path) = temp_db();
+        let repo = tempdir().unwrap();
+        make_fake_repo(
+            repo.path(),
+            "https://github.com/forecast-bio/test-e.git",
+            true,
+        );
+
+        track_at_path(repo.path(), None, &db_path).unwrap();
+        untrack_with_path("forecast-bio/test-e", &db_path).unwrap();
+
+        // Row gone
+        let db = DashboardDb::open(&db_path).unwrap();
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        // Working copy left intact
+        assert!(repo.path().join(".git").exists());
     }
 
     #[test]
     fn test_untrack_rejects_unknown_slug() {
         let (_home, db_path) = temp_db();
-        let err = untrack_with_path("forecast-bio/crosslink", false, &db_path).unwrap_err();
+        let err = untrack_with_path("owner/never-tracked", &db_path).unwrap_err();
         assert!(err.to_string().contains("not currently tracked"));
     }
 
     #[test]
     fn test_list_on_empty_db_prints_help() {
         let (_home, db_path) = temp_db();
-        // Doesn't capture stdout; just verifies Ok on an empty DB.
+        // Just verifies Ok on an empty DB.
         list_with_path(&db_path).unwrap();
-    }
-
-    #[test]
-    fn test_track_rejects_invalid_slug() {
-        let (_home, db_path) = temp_db();
-        let cache = tempdir().unwrap();
-        let err = track_with_paths("not-a-slug", None, &db_path, cache.path()).unwrap_err();
-        assert!(err.to_string().contains("owner/repo"));
-    }
-
-    #[test]
-    fn test_track_rejects_duplicate_slug() {
-        let (_home, db_path) = temp_db();
-        let cache = tempdir().unwrap();
-        // Seed a row directly so we exercise the "already tracked"
-        // branch without needing a network-reachable git clone.
-        let db = DashboardDb::open(&db_path).unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
-                 VALUES ('owner/repo', '/nonexistent', 'main', 'active', '2026-04-20T00:00:00Z')",
-                [],
-            )
-            .unwrap();
-        let err = track_with_paths("owner/repo", None, &db_path, cache.path()).unwrap_err();
-        assert!(err.to_string().contains("already tracked"));
-    }
-
-    #[test]
-    fn test_track_rejects_when_clone_dir_exists() {
-        let (_home, db_path) = temp_db();
-        let cache = tempdir().unwrap();
-        // Pre-create the target clone path.
-        let pre = cache.path().join("owner").join("repo");
-        std::fs::create_dir_all(&pre).unwrap();
-        let err = track_with_paths("owner/repo", None, &db_path, cache.path()).unwrap_err();
-        assert!(
-            err.to_string().contains("already exists"),
-            "error should mention the existing clone dir: {err}"
-        );
-    }
-
-    #[test]
-    fn test_untrack_removes_row_and_directory() {
-        let (_home, db_path) = temp_db();
-        let cache = tempdir().unwrap();
-        let clone = cache.path().join("owner").join("repo");
-        std::fs::create_dir_all(&clone).unwrap();
-
-        let db = DashboardDb::open(&db_path).unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
-                 VALUES ('owner/repo', ?1, 'main', 'active', '2026-04-20T00:00:00Z')",
-                [clone.to_string_lossy().as_ref()],
-            )
-            .unwrap();
-        drop(db);
-
-        untrack_with_path("owner/repo", false, &db_path).unwrap();
-
-        assert!(!clone.exists(), "clone dir should be removed by untrack");
-        let db = DashboardDb::open(&db_path).unwrap();
-        let count: i64 = db
-            .conn
-            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn test_untrack_keep_clone_preserves_directory() {
-        let (_home, db_path) = temp_db();
-        let cache = tempdir().unwrap();
-        let clone = cache.path().join("owner").join("repo");
-        std::fs::create_dir_all(&clone).unwrap();
-
-        let db = DashboardDb::open(&db_path).unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
-                 VALUES ('owner/repo', ?1, 'main', 'active', '2026-04-20T00:00:00Z')",
-                [clone.to_string_lossy().as_ref()],
-            )
-            .unwrap();
-        drop(db);
-
-        untrack_with_path("owner/repo", true, &db_path).unwrap();
-
-        assert!(
-            clone.exists(),
-            "--keep-clone should leave the clone dir in place"
-        );
     }
 }

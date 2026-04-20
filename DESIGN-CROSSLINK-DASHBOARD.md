@@ -556,15 +556,32 @@ central server.
 
 ### Q1 — Should tracked-repo clones live next to existing repos, or in a dedicated cache?
 
-Option A: reuse user's existing clones (search paths user configures).
+Option A: reuse user's existing clones (user passes a local path).
 Option B: maintain our own shallow clones in `~/.crosslink/dashboard-cache/`.
 
-Pro-A: no duplicate disk usage, picks up the user's existing work-in-progress.
+Pro-A: no duplicate disk usage, picks up the user's existing
+   work-in-progress, AND — the decisive factor — the write surface
+   can shell out to the real `crosslink` CLI in the user's
+   already-initialised workspace (agent identity, driver signing key,
+   hub-cache worktree all set up by their normal `crosslink init`
+   flow). No second copy of that machinery to maintain.
 Pro-B: isolated state, never conflicts with active user work, always
    guaranteed fetchable state of `crosslink/hub`.
 
-**Proposal**: start with **B** (dedicated cache) for predictability.
-Advanced users can point at an existing clone via per-project config.
+**Resolution**: **A** (reuse existing clones). B was the original
+proposal, but it forced us into one of three architecturally ugly
+positions for the write surface: re-mint each cache clone as a
+crosslink workspace on track, duplicate the CLI's write logic in the
+dashboard, or teach the CLI a new `--hub-dir` flag. A cuts through
+all three.
+
+Mechanically: `crosslink dashboard track <path>` takes a path to the
+user's existing local working copy of a crosslink-managed repository.
+The slug is derived from `git remote get-url origin` (override with
+`--slug owner/repo`). `untrack` removes the DB row only — the user's
+working copy is never touched. Poll-loop `git fetch` runs in that
+same workspace; write operations (P1.8+) shell out to `crosslink` via
+`Command::new("crosslink").current_dir(clone_path)`.
 
 ### Q2 — How does the write path handle conflicts?
 

@@ -878,21 +878,24 @@ enum DashboardCommands {
         #[arg(long)]
         dashboard_dir: Option<PathBuf>,
     },
-    /// Track a repository (adds it to the panel and clones it locally).
+    /// Track a repository by pointing at your existing local working copy.
+    ///
+    /// The dashboard reads hub state and shells out to the real
+    /// `crosslink` CLI in this workspace for write operations — so no
+    /// extra setup is needed beyond a normal `git clone` +
+    /// `crosslink init` of the target project.
     Track {
-        /// Repository slug, e.g. `forecast-bio/crosslink`
-        slug: String,
-        /// Git URL to clone from (defaults to `https://github.com/<slug>.git`)
+        /// Path to a locally-cloned crosslink-managed repository.
+        path: PathBuf,
+        /// Override the owner/repo slug (default: derived from origin URL).
         #[arg(long)]
-        clone_url: Option<String>,
+        slug: Option<String>,
     },
-    /// Stop tracking a repository.
+    /// Stop tracking a repository. The user's working copy is left
+    /// untouched — only the dashboard's DB row is removed.
     Untrack {
         /// Repository slug to stop tracking
         slug: String,
-        /// Keep the local cache clone on disk (default: delete it)
-        #[arg(long)]
-        keep_clone: bool,
     },
     /// List tracked repositories.
     List,
@@ -3109,12 +3112,10 @@ fn main() -> Result<()> {
                     Some(dashboard_db_path),
                 ))
             }
-            DashboardCommands::Track { slug, clone_url } => {
-                dashboard::projects::track(&slug, clone_url.as_deref())
+            DashboardCommands::Track { path, slug } => {
+                dashboard::projects::track(&path, slug.as_deref())
             }
-            DashboardCommands::Untrack { slug, keep_clone } => {
-                dashboard::projects::untrack(&slug, keep_clone)
-            }
+            DashboardCommands::Untrack { slug } => dashboard::projects::untrack(&slug),
             DashboardCommands::List => dashboard::projects::list(),
         },
         Commands::Serve {
