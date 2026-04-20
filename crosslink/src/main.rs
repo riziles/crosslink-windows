@@ -3092,18 +3092,29 @@ fn main() -> Result<()> {
             } => {
                 let crosslink_dir = find_crosslink_dir()?;
                 let db = get_db()?;
-                // Bootstrap (or open) the per-user dashboard index at
+                // Bootstrap the per-user dashboard index at
                 // ~/.crosslink/dashboard.db. Schema is applied idempotently.
-                // The handle isn't wired into server::run yet — that comes
-                // in P1.2 when the poll loop starts populating the index.
                 let dashboard_db_path = dashboard::db::DashboardDb::default_path()?;
-                let _dashboard_db = dashboard::db::DashboardDb::open(&dashboard_db_path)?;
-                tokio::runtime::Runtime::new()?.block_on(server::run(
-                    port,
-                    dashboard_dir,
-                    db,
-                    crosslink_dir,
-                ))
+                dashboard::db::DashboardDb::open(&dashboard_db_path)?;
+
+                tokio::runtime::Runtime::new()?.block_on(async move {
+                    // Spawn the 5-second poll loop alongside the server.
+                    // Cancellation token lets us shut it down cleanly
+                    // when the server exits.
+                    let cancel = tokio_util::sync::CancellationToken::new();
+                    let poll_handle = tokio::spawn({
+                        let cancel = cancel.clone();
+                        let path = dashboard_db_path.clone();
+                        async move { dashboard::poll::run(path, cancel).await }
+                    });
+
+                    let server_result = server::run(port, dashboard_dir, db, crosslink_dir).await;
+
+                    cancel.cancel();
+                    let _ = poll_handle.await;
+
+                    server_result
+                })
             }
             DashboardCommands::Track { slug, clone_url } => {
                 dashboard::projects::track(&slug, clone_url.as_deref())

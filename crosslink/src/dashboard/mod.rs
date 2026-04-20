@@ -20,5 +20,6 @@
 //! issues.
 
 pub mod db;
+pub mod poll;
 pub mod projects;
 pub mod reader;
