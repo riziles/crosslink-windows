@@ -335,3 +335,28 @@ export function useStealLock(slug: string) {
     onSuccess: () => invalidate(),
   });
 }
+
+/// Send a control request to an agent via the hub branch.
+/// Kinds: `kill` | `pause` | `resume` | `reprioritise`.
+/// See design doc §9 for protocol details.
+export function useAgentRequest(slug: string) {
+  const invalidate = useProjectMutations(slug);
+  return useMutation<
+    ActionResponse,
+    ApiRequestError,
+    {
+      agentId: string;
+      kind: "kill" | "pause" | "resume" | "reprioritise";
+      subjectIssue?: number;
+      reason?: string;
+    }
+  >({
+    mutationFn: ({ agentId, kind, subjectIssue, reason }) =>
+      apiPost<ActionResponse>(`/w/${slug}/agents/${agentId}/request`, {
+        kind,
+        subject_issue: subjectIssue,
+        reason,
+      }),
+    onSuccess: () => invalidate(),
+  });
+}

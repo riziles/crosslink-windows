@@ -236,6 +236,7 @@ mod tests {
             issues: vec![],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         }
     }

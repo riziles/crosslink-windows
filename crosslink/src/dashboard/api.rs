@@ -69,6 +69,10 @@ pub fn build_router() -> Router<AppState> {
         .route("/w/{owner}/{repo}/locks/{id}/claim", post(claim_lock))
         .route("/w/{owner}/{repo}/locks/{id}/release", post(release_lock))
         .route("/w/{owner}/{repo}/locks/{id}/steal", post(steal_lock))
+        .route(
+            "/w/{owner}/{repo}/agents/{agent_id}/request",
+            post(agent_request),
+        )
 }
 
 /// Wire-format representation of a tracked project on the list endpoint.
@@ -120,6 +124,61 @@ struct ProjectDetail {
     locks: Vec<SerializableLock>,
     /// Hub layout version (1 or 2).
     layout_version: u32,
+    /// Agent control requests grouped by target agent.
+    agent_requests: Vec<SerializableAgentRequests>,
+}
+
+/// Flattened view of a target agent's request stream for JSON output.
+#[derive(Debug, Serialize)]
+struct SerializableAgentRequests {
+    agent_id: String,
+    requests: Vec<SerializableAgentRequest>,
+}
+
+#[derive(Debug, Serialize)]
+struct SerializableAgentRequest {
+    request_id: String,
+    kind: String,
+    subject_issue: Option<i64>,
+    requested_by: String,
+    requested_at: String,
+    reason: Option<String>,
+    /// `None` when pending; set once the target agent acknowledges.
+    ack: Option<SerializableAgentRequestAck>,
+}
+
+#[derive(Debug, Serialize)]
+struct SerializableAgentRequestAck {
+    ack_at: String,
+    acted: bool,
+    result: String,
+    notes: Option<String>,
+}
+
+impl From<reader::AgentRequestsForAgent> for SerializableAgentRequests {
+    fn from(group: reader::AgentRequestsForAgent) -> Self {
+        Self {
+            agent_id: group.agent_id,
+            requests: group
+                .requests
+                .into_iter()
+                .map(|r| SerializableAgentRequest {
+                    request_id: r.request.request_id,
+                    kind: format!("{:?}", r.request.kind).to_lowercase(),
+                    subject_issue: r.request.subject.issue_id,
+                    requested_by: r.request.requested_by,
+                    requested_at: r.request.requested_at,
+                    reason: r.request.reason,
+                    ack: r.ack.map(|a| SerializableAgentRequestAck {
+                        ack_at: a.ack_at,
+                        acted: a.acted,
+                        result: a.result,
+                        notes: a.notes,
+                    }),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Flat lock representation for JSON output. The reader's `LockRecord`
@@ -292,6 +351,7 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
             issues: vec![],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         })
     } else {
@@ -301,6 +361,7 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
             issues: vec![],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         }
     };
@@ -318,6 +379,11 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
         issues: snapshot.issues,
         agents: snapshot.agents,
         locks: snapshot.locks.into_iter().map(Into::into).collect(),
+        agent_requests: snapshot
+            .agent_requests
+            .into_iter()
+            .map(Into::into)
+            .collect(),
     })
 }
 
@@ -748,6 +814,68 @@ async fn milestone_remove_issue(
 struct ClaimLockBody {
     #[serde(default)]
     branch: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRequestBody {
+    /// kill | pause | resume | reprioritise
+    kind: String,
+    #[serde(default)]
+    subject_issue: Option<i64>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// `POST /api/v1/dashboard/w/{owner}/{repo}/agents/{agent_id}/request`
+///
+/// Body: `{ "kind": "kill|pause|resume|reprioritise",
+///          "subject_issue"?: N, "reason"?: "..." }`. Shells out to
+/// `crosslink agent request`, which writes a signed JSON under
+/// `agents/<agent_id>/requests/` on the hub branch. See design doc §9.
+async fn agent_request(
+    State(state): State<AppState>,
+    Path((owner, repo, agent_id)): Path<(String, String, String)>,
+    Json(body): Json<AgentRequestBody>,
+) -> Result<Json<ActionResponse>, ApiError> {
+    if body.kind.trim().is_empty() {
+        return Err(ApiError::bad_request("request kind cannot be empty"));
+    }
+    // Validate kind before shelling out — gives a precise 400 instead of
+    // a generic CLI error on the other side.
+    crate::agent_requests::RequestKind::parse(body.kind.trim())
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+    let (db_path, project) = resolve_project(&state, &owner, &repo).await?;
+
+    let kind = body.kind.trim().to_string();
+    let subject_str = body.subject_issue.map(|n| n.to_string());
+    let reason = body.reason.as_ref().map(|s| s.trim().to_string());
+
+    let mut args: Vec<&str> = vec!["agent", "request", &agent_id, &kind];
+    if let Some(ref s) = subject_str {
+        args.push("--subject-issue");
+        args.push(s);
+    }
+    if let Some(ref r) = reason {
+        if !r.is_empty() {
+            args.push("--reason");
+            args.push(r);
+        }
+    }
+
+    let result = actions::run_cli(
+        &db_path,
+        &project,
+        "agent_request",
+        Some(&format!("agent:{agent_id}")),
+        &args,
+    )
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(Json(ActionResponse {
+        stdout: result.stdout,
+        stderr: result.stderr,
+    }))
 }
 
 /// `POST /api/v1/dashboard/w/{owner}/{repo}/locks/{id}/claim`
@@ -1258,6 +1386,119 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_agent_request_rejects_unknown_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard_db_path = tmp.path().join("dashboard.db");
+        let db = DashboardDb::open(&dashboard_db_path).unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-q"])
+            .status()
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
+                 VALUES ('owner/repo', ?1, 'main', 'active', '2026-04-20T00:00:00Z')",
+                [repo.to_string_lossy().as_ref()],
+            )
+            .unwrap();
+
+        let (state, _tmp2) = test_state(Some(dashboard_db_path));
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/dashboard/w/owner/repo/agents/jus4/request")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"kind":"bogus"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_agent_request_returns_404_for_untracked_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard_db_path = tmp.path().join("dashboard.db");
+        DashboardDb::open(&dashboard_db_path).unwrap();
+
+        let (state, _tmp2) = test_state(Some(dashboard_db_path));
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/dashboard/w/nobody/noop/agents/jus4/request")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"kind":"pause"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_project_detail_surfaces_pending_agent_requests() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dashboard_db_path = tmp.path().join("dashboard.db");
+        DashboardDb::open(&dashboard_db_path).unwrap();
+
+        let clone = tmp.path().join("clone");
+        std::fs::create_dir_all(clone.join("agents/jus4/requests")).unwrap();
+        // Write a pending request; no ack.
+        let req = crate::agent_requests::AgentRequest {
+            request_id: "01HXY000000000000000000001".into(),
+            kind: crate::agent_requests::RequestKind::Pause,
+            subject: crate::agent_requests::RequestSubject { issue_id: Some(42) },
+            requested_by: "SHA256:driver".into(),
+            requested_at: "2026-04-20T18:30:00Z".into(),
+            reason: Some("stuck".into()),
+        };
+        std::fs::write(
+            clone.join(format!("agents/jus4/requests/{}.json", req.request_id)),
+            serde_json::to_vec(&req).unwrap(),
+        )
+        .unwrap();
+
+        seed_project(&dashboard_db_path, "owner/repo", &clone);
+
+        let (state, _tmp2) = test_state(Some(dashboard_db_path));
+        let app = Router::new()
+            .nest("/api/v1/dashboard", build_router())
+            .with_state(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/dashboard/projects/owner/repo")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        let groups = json["agent_requests"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0]["agent_id"], "jus4");
+        let reqs = groups[0]["requests"].as_array().unwrap();
+        assert_eq!(reqs.len(), 1);
+        assert_eq!(reqs[0]["kind"], "pause");
+        assert_eq!(reqs[0]["subject_issue"], 42);
+        assert!(reqs[0]["ack"].is_null());
     }
 
     #[tokio::test]

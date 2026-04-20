@@ -17,7 +17,7 @@ mod tests;
 
 // Re-export public API at the module level so external callers
 // continue to use `crate::shared_writer::SharedWriter`, etc.
-pub use self::core::SharedWriter;
+pub use self::core::{PushOutcome, SharedWriter};
 pub use locks::LockClaimResult;
 pub use mutations::{DescriptionUpdate, FieldUpdate, IssueUpdate};
 

@@ -42,6 +42,7 @@
 // See https://github.com/rust-lang/rust-clippy/issues for the underlying span bug.
 #![allow(clippy::large_stack_arrays)]
 
+mod agent_requests;
 mod checkpoint;
 mod clock_skew;
 mod commands;
@@ -1175,6 +1176,32 @@ enum AgentCommands {
         /// Target directory (default: current directory)
         #[arg(long, default_value = ".")]
         target: String,
+    },
+    /// Send a control request to an agent via the hub branch
+    ///
+    /// Writes a signed JSON file under `agents/<target>/requests/` on
+    /// `crosslink/hub`. The target agent's poll loop picks it up and
+    /// acts (kill / pause / resume / reprioritise). See design doc §9.
+    Request {
+        /// Target agent ID (the one that should act, not this driver)
+        target: String,
+        /// What to do: kill | pause | resume | reprioritise
+        kind: String,
+        /// Issue display-id to attach as request subject
+        #[arg(long)]
+        subject_issue: Option<i64>,
+        /// Human-readable reason recorded alongside the request
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List agent control requests on the hub branch
+    Requests {
+        /// Target agent to filter by (omit to list for all agents)
+        #[arg(long)]
+        target: Option<String>,
+        /// Only show pending (unacknowledged) requests
+        #[arg(long)]
+        pending: bool,
     },
 }
 

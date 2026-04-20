@@ -56,7 +56,135 @@ pub fn run(command: AgentCommands, crosslink_dir: &Path) -> Result<()> {
             }
             Ok(())
         }
+        AgentCommands::Request {
+            target,
+            kind,
+            subject_issue,
+            reason,
+        } => request(
+            crosslink_dir,
+            &target,
+            &kind,
+            subject_issue,
+            reason.as_deref(),
+        ),
+        AgentCommands::Requests { target, pending } => {
+            list_requests(crosslink_dir, target.as_deref(), pending)
+        }
     }
+}
+
+/// `crosslink agent request <target> <kind> [--subject-issue N] [--reason "..."]`
+///
+/// Writes a signed JSON file to `agents/<target>/requests/<ulid>.json`
+/// on `crosslink/hub`. The target agent's polling loop picks it up and
+/// executes the action (design doc §9).
+fn request(
+    crosslink_dir: &Path,
+    target: &str,
+    kind_str: &str,
+    subject_issue: Option<i64>,
+    reason: Option<&str>,
+) -> Result<()> {
+    let kind = crate::agent_requests::RequestKind::parse(kind_str)?;
+
+    let writer = crate::shared_writer::SharedWriter::new(crosslink_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "agent request requires shared-writer mode (run `crosslink agent init` first)"
+        )
+    })?;
+
+    let driver = AgentConfig::load(crosslink_dir)?
+        .ok_or_else(|| anyhow::anyhow!("no agent config; run `crosslink agent init`"))?;
+
+    let requested_by = driver
+        .ssh_fingerprint
+        .clone()
+        .unwrap_or_else(|| format!("agent:{}", driver.agent_id));
+
+    let req = crate::agent_requests::AgentRequest {
+        request_id: crate::agent_requests::new_request_id(),
+        kind,
+        subject: crate::agent_requests::RequestSubject {
+            issue_id: subject_issue,
+        },
+        requested_by,
+        requested_at: chrono::Utc::now().to_rfc3339(),
+        reason: reason.map(str::to_string),
+    };
+
+    let outcome = writer.write_agent_request(target, &req)?;
+    match outcome {
+        crate::shared_writer::PushOutcome::Pushed => {
+            println!(
+                "Request {} ({}) sent to {}.",
+                req.request_id, kind_str, target
+            );
+        }
+        crate::shared_writer::PushOutcome::LocalOnly => {
+            println!(
+                "Request {} ({}) saved locally for {} (push deferred — offline or contested hub).",
+                req.request_id, kind_str, target
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `crosslink agent requests [--target <id>] [--pending]`
+fn list_requests(crosslink_dir: &Path, target: Option<&str>, pending_only: bool) -> Result<()> {
+    let sync = sync::SyncManager::new(crosslink_dir)?;
+    let cache = sync.cache_path();
+    if !cache.exists() {
+        println!("No hub cache present (nothing synced yet).");
+        return Ok(());
+    }
+
+    let agents_dir = cache.join("agents");
+    if !agents_dir.exists() {
+        println!("No agents on hub yet.");
+        return Ok(());
+    }
+
+    let agent_ids: Vec<String> = if let Some(t) = target {
+        vec![t.to_string()]
+    } else {
+        std::fs::read_dir(&agents_dir)
+            .with_context(|| format!("read_dir {}", agents_dir.display()))?
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .collect()
+    };
+
+    let mut total = 0;
+    for agent_id in agent_ids {
+        let entries = crate::agent_requests::scan(cache, &agent_id)?;
+        for row in entries {
+            if pending_only && row.ack.is_some() {
+                continue;
+            }
+            total += 1;
+            let status = row.ack.as_ref().map_or_else(
+                || "pending".to_string(),
+                |a| format!("acked: {}", a.result),
+            );
+            let subject = row
+                .request
+                .subject
+                .issue_id
+                .map_or_else(|| "-".to_string(), format_issue_id);
+            println!(
+                "{agent_id}  {}  {:?}  subject={subject}  [{status}]  by {}",
+                row.request.request_id, row.request.kind, row.request.requested_by
+            );
+        }
+    }
+
+    if total == 0 {
+        println!("No requests found.");
+    }
+    Ok(())
 }
 
 /// `crosslink agent init <agent-id> [-d "description"] [--no-key] [--force]`

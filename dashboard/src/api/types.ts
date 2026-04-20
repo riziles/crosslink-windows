@@ -59,6 +59,30 @@ export interface LockEntry {
   signed_by: string;
 }
 
+export type AgentRequestKind = "kill" | "pause" | "resume" | "reprioritise";
+
+export interface AgentRequestAck {
+  ack_at: string;
+  acted: boolean;
+  result: string;
+  notes: string | null;
+}
+
+export interface AgentRequest {
+  request_id: string;
+  kind: AgentRequestKind;
+  subject_issue: number | null;
+  requested_by: string;
+  requested_at: string;
+  reason: string | null;
+  ack: AgentRequestAck | null;
+}
+
+export interface AgentRequestsForAgent {
+  agent_id: string;
+  requests: AgentRequest[];
+}
+
 export interface ProjectDetail {
   slug: string;
   status: string;
@@ -72,6 +96,7 @@ export interface ProjectDetail {
   agents: AgentHeartbeat[];
   locks: LockEntry[];
   layout_version: number;
+  agent_requests: AgentRequestsForAgent[];
 }
 
 export interface ApiError {

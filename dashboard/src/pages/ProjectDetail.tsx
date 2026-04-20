@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import {
+  useAgentRequest,
   useBlockIssue,
   useCloseIssue,
   useCommentIssue,
@@ -21,7 +22,12 @@ import {
   useUnblockIssue,
   useUnlabelIssue,
 } from "@/api/client";
-import type { IssueFile, LockEntry } from "@/api/types";
+import type {
+  AgentRequestKind,
+  AgentRequestsForAgent,
+  IssueFile,
+  LockEntry,
+} from "@/api/types";
 
 export function ProjectDetail() {
   // React Router wildcards ({*slug}) are surfaced via the `"*"` param key.
@@ -76,17 +82,18 @@ export function ProjectDetail() {
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Agents ({data.agents.length})
         </h2>
-        {data.agents.length === 0 ? (
+        {data.agents.length === 0 && data.agent_requests.length === 0 ? (
           <p className="text-sm text-muted-foreground">No agents have heartbeated on this project.</p>
         ) : (
           <ul className="divide-y divide-border rounded border bg-card">
-            {data.agents.map((a) => (
-              <li key={a.agent_id} className="flex items-baseline justify-between px-3 py-2 text-sm">
-                <span className="font-medium">{a.agent_id}</span>
-                <span className="text-xs text-muted-foreground tabular-nums">
-                  last heartbeat {a.last_heartbeat}
-                </span>
-              </li>
+            {agentRows(data.agents, data.agent_requests).map((row) => (
+              <AgentRow
+                key={row.agent_id}
+                slug={data.slug}
+                agentId={row.agent_id}
+                lastHeartbeat={row.last_heartbeat}
+                requests={row.requests}
+              />
             ))}
           </ul>
         )}
@@ -512,6 +519,208 @@ function ClosedIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
       </div>
       {reopen.error && (
         <p className="mt-1 text-xs text-rose-500">{reopen.error.message}</p>
+      )}
+    </li>
+  );
+}
+
+type AgentRowData = {
+  agent_id: string;
+  last_heartbeat: string | null;
+  requests: AgentRequestsForAgent["requests"];
+};
+
+/// Merge heartbeats + request streams into a single ordered list.
+/// Every agent with either a heartbeat or a request shows up exactly
+/// once; heartbeat-less agents (request-only targets) render with a
+/// placeholder last-heartbeat.
+function agentRows(
+  agents: { agent_id: string; last_heartbeat: string }[],
+  requestGroups: AgentRequestsForAgent[],
+): AgentRowData[] {
+  const byId = new Map<string, AgentRowData>();
+  for (const a of agents) {
+    byId.set(a.agent_id, {
+      agent_id: a.agent_id,
+      last_heartbeat: a.last_heartbeat,
+      requests: [],
+    });
+  }
+  for (const g of requestGroups) {
+    const existing = byId.get(g.agent_id);
+    if (existing) {
+      existing.requests = g.requests;
+    } else {
+      byId.set(g.agent_id, {
+        agent_id: g.agent_id,
+        last_heartbeat: null,
+        requests: g.requests,
+      });
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) =>
+    a.agent_id.localeCompare(b.agent_id),
+  );
+}
+
+function AgentRow({
+  slug,
+  agentId,
+  lastHeartbeat,
+  requests,
+}: {
+  slug: string;
+  agentId: string;
+  lastHeartbeat: string | null;
+  requests: AgentRequestsForAgent["requests"];
+}) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [kind, setKind] = useState<AgentRequestKind>("pause");
+  const [subjectIssue, setSubjectIssue] = useState("");
+  const [reason, setReason] = useState("");
+  const send = useAgentRequest(slug);
+
+  const pendingCount = requests.filter((r) => r.ack === null).length;
+
+  return (
+    <li className="px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="flex items-baseline gap-2">
+          <span className="font-medium">{agentId}</span>
+          {pendingCount > 0 && (
+            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] text-amber-500">
+              {pendingCount} pending request{pendingCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {lastHeartbeat
+              ? `last heartbeat ${lastHeartbeat}`
+              : "no heartbeat"}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFormOpen((v) => !v)}
+            className="rounded border px-2 py-0.5 text-xs hover:bg-accent/10"
+          >
+            {formOpen ? "Cancel" : "Send request"}
+          </button>
+        </span>
+      </div>
+
+      {formOpen && (
+        <form
+          className="mt-2 flex flex-col gap-2 rounded border bg-background/50 p-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const n = subjectIssue.trim()
+              ? Number(subjectIssue.trim())
+              : undefined;
+            send.mutate(
+              {
+                agentId,
+                kind,
+                subjectIssue:
+                  Number.isInteger(n) && (n as number) > 0
+                    ? (n as number)
+                    : undefined,
+                reason: reason.trim() || undefined,
+              },
+              {
+                onSuccess: () => {
+                  setFormOpen(false);
+                  setSubjectIssue("");
+                  setReason("");
+                },
+              },
+            );
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground w-16">Kind</label>
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as AgentRequestKind)}
+              className="rounded border bg-background px-2 py-0.5 text-xs"
+            >
+              <option value="pause">pause</option>
+              <option value="resume">resume</option>
+              <option value="kill">kill</option>
+              <option value="reprioritise">reprioritise</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground w-16">
+              Issue id
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={subjectIssue}
+              onChange={(e) => setSubjectIssue(e.target.value)}
+              placeholder="optional"
+              className="flex-1 rounded border bg-background px-2 py-0.5 text-xs"
+            />
+          </div>
+          <div className="flex items-start gap-2">
+            <label className="text-xs text-muted-foreground w-16 mt-1">
+              Reason
+            </label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="optional — shows up in audit trail"
+              rows={2}
+              className="flex-1 rounded border bg-background p-1 text-xs"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={send.isPending}
+              className="rounded border px-2 py-0.5 text-xs hover:bg-accent/10 disabled:opacity-50"
+            >
+              {send.isPending ? "Sending…" : "Send"}
+            </button>
+            {send.error && (
+              <span className="text-xs text-rose-500">{send.error.message}</span>
+            )}
+          </div>
+        </form>
+      )}
+
+      {requests.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {requests.map((r) => (
+            <li
+              key={r.request_id}
+              className="flex flex-wrap items-baseline gap-2 border-l-2 border-border pl-2 text-xs"
+            >
+              <span className="tabular-nums text-muted-foreground">
+                {r.request_id}
+              </span>
+              <span className="font-medium">{r.kind}</span>
+              {r.subject_issue != null && (
+                <span className="text-muted-foreground">#{r.subject_issue}</span>
+              )}
+              {r.ack ? (
+                <span
+                  className={
+                    r.ack.acted ? "text-emerald-500" : "text-amber-500"
+                  }
+                >
+                  acked: {r.ack.result}
+                </span>
+              ) : (
+                <span className="text-amber-500">pending</span>
+              )}
+              {r.reason && (
+                <span className="text-muted-foreground">— {r.reason}</span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </li>
   );

@@ -41,9 +41,20 @@ pub struct HubSnapshot {
     pub agents: Vec<crate::locks::Heartbeat>,
     /// Lock entries, keyed by issue display ID.
     pub locks: Vec<LockRecord>,
+    /// Agent control requests keyed by target agent ID. Each entry
+    /// pairs a request with its ack (if written). Empty when no
+    /// requests have been issued.
+    pub agent_requests: Vec<AgentRequestsForAgent>,
     /// Timestamp of the most recent git commit on the hub branch
     /// (a rough "last change" indicator used for tile freshness).
     pub last_commit_at: Option<DateTime<Utc>>,
+}
+
+/// A target agent's request stream, surfaced to dashboard consumers.
+#[derive(Debug, Clone)]
+pub struct AgentRequestsForAgent {
+    pub agent_id: String,
+    pub requests: Vec<crate::agent_requests::RequestWithAck>,
 }
 
 /// Flattened lock record (`LocksFile`'s `HashMap` -> `Vec` for easier iteration).
@@ -91,6 +102,7 @@ pub fn read_snapshot(clone_path: &Path) -> Result<HubSnapshot> {
 
     let agents = read_agent_heartbeats(clone_path);
     let locks = read_locks(clone_path);
+    let agent_requests = read_agent_requests(clone_path, &agents);
 
     Ok(HubSnapshot {
         hub_sha,
@@ -98,8 +110,47 @@ pub fn read_snapshot(clone_path: &Path) -> Result<HubSnapshot> {
         issues,
         agents,
         locks,
+        agent_requests,
         last_commit_at,
     })
+}
+
+/// Scan `agents/<id>/requests/` for every agent visible in the snapshot.
+/// Returns only agents with at least one request on disk.
+fn read_agent_requests(
+    clone_path: &Path,
+    agents: &[crate::locks::Heartbeat],
+) -> Vec<AgentRequestsForAgent> {
+    let agents_dir = clone_path.join("agents");
+    if !agents_dir.is_dir() {
+        return Vec::new();
+    }
+
+    // Union of heartbeat-visible agents plus any agent directory that
+    // exists on disk (a driver may have written a request to an agent
+    // that hasn't heartbeated on this hub yet).
+    let mut ids: std::collections::BTreeSet<String> =
+        agents.iter().map(|a| a.agent_id.clone()).collect();
+    if let Ok(entries) = std::fs::read_dir(&agents_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    ids.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for agent_id in ids {
+        let Ok(requests) = crate::agent_requests::scan(clone_path, &agent_id) else {
+            continue;
+        };
+        if !requests.is_empty() {
+            out.push(AgentRequestsForAgent { agent_id, requests });
+        }
+    }
+    out
 }
 
 /// Read `agents/<id>/heartbeat.json` files (V2 layout).
@@ -486,6 +537,7 @@ mod tests {
             ],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         };
         let counters = snap.derive_counters(now_fixed(), 10, 60);
@@ -528,6 +580,7 @@ mod tests {
             ],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);
@@ -579,6 +632,7 @@ mod tests {
             ],
             agents: vec![],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         };
         let c = snap.derive_counters(now_fixed(), 10, 60);
@@ -607,6 +661,7 @@ mod tests {
             issues: vec![],
             agents: vec![fresh, stale],
             locks: vec![],
+            agent_requests: vec![],
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);
@@ -640,6 +695,7 @@ mod tests {
             issues: vec![],
             agents: vec![],
             locks: vec![fresh, stale],
+            agent_requests: vec![],
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);
