@@ -7,10 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- Phase 5.1: dashboard export — `projects.csv`/`projects.json` and
-  `alerts.csv`/`alerts.json` endpoints under `/api/v1/dashboard/export/*`,
-  plus CSV/JSON download buttons on the Projects grid and Alerts page
-  (GH #429) (#702)
+- Phase 5.1: dashboard export — projects.csv + alerts.csv endpoints + UI download buttons (GH #429) (#702)
 - Phase 4.1: GitHub PAT storage + token management endpoint (GH #429) (#701)
 
 #### Dashboard — multi-project control panel ([GH-429])
