@@ -22,12 +22,18 @@ use std::collections::HashMap;
 use super::alerts::DerivedAlert;
 use super::db::DashboardDb;
 
-/// Outcome counters — useful for tests and optional logging.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Outcome of one reconcile pass.
+///
+/// Counts are the headline numbers (used by logging and WebSocket
+/// fanout); `opened_alerts` carries the full records for alerts that
+/// just fired so the caller can side-effect on them (e.g. dispatching
+/// outbound webhooks — see [`super::webhook`]).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SyncStats {
     pub opened: usize,
     pub resolved: usize,
     pub unchanged: usize,
+    pub opened_alerts: Vec<DerivedAlert>,
 }
 
 /// Reconcile the derived-alerts set for one project against the DB.
@@ -80,7 +86,9 @@ pub fn sync_alerts_for_project(
 
     let mut stats = SyncStats::default();
 
-    // Open new alerts.
+    // Open new alerts. Collect the full records alongside the counter
+    // so the caller can dispatch webhooks on the fire event without a
+    // second DB round-trip.
     for (key, alert) in &derived_keys {
         if open_rows.contains_key(key) {
             stats.unchanged += 1;
@@ -100,6 +108,7 @@ pub fn sync_alerts_for_project(
             ],
         )?;
         stats.opened += 1;
+        stats.opened_alerts.push((*alert).clone());
     }
 
     // Resolve alerts that are no longer derived.
@@ -181,6 +190,32 @@ mod tests {
         assert_eq!(stats.opened, 2);
         assert_eq!(stats.resolved, 0);
         assert_eq!(count_open(&db, pid), 2);
+        // opened_alerts carries the full records for webhook dispatch.
+        assert_eq!(stats.opened_alerts.len(), 2);
+        let kinds: Vec<_> = stats.opened_alerts.iter().map(|a| a.kind).collect();
+        assert!(kinds.contains(&"stale_lock"));
+        assert!(kinds.contains(&"overdue_issue"));
+    }
+
+    #[test]
+    fn test_sync_opened_alerts_only_contains_fires() {
+        let (_dir, db, pid) = open_temp_db();
+        // Tick 1 opens one alert.
+        sync_alerts_for_project(&db, pid, &[mk("stale_lock", "lock:1", Severity::Warning)])
+            .unwrap();
+        // Tick 2 keeps it + opens a new one. opened_alerts must only
+        // include the new one.
+        let stats = sync_alerts_for_project(
+            &db,
+            pid,
+            &[
+                mk("stale_lock", "lock:1", Severity::Warning),
+                mk("overdue_issue", "issue:5", Severity::Warning),
+            ],
+        )
+        .unwrap();
+        assert_eq!(stats.opened_alerts.len(), 1);
+        assert_eq!(stats.opened_alerts[0].kind, "overdue_issue");
     }
 
     #[test]

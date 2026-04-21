@@ -28,6 +28,7 @@ use super::alerts_db;
 use super::db::DashboardDb;
 use super::projects::Project;
 use super::reader;
+use super::webhook;
 use crate::server::types::{WsDashboardAlertsEvent, WsDashboardProjectEvent, WsEventType};
 use crate::server::ws::WsEvent;
 
@@ -167,21 +168,41 @@ pub async fn poll_project(db_path: &Path, project: &Project) -> Result<PollOutco
     let ci_state = snapshot.ci_status.as_ref().map(|c| c.state.clone());
     let db_path_owned = db_path.to_path_buf();
 
-    let sync_stats = tokio::task::spawn_blocking(move || -> Result<alerts_db::SyncStats> {
-        write_project_state(
-            &db_path_owned,
-            project_id,
-            hub_sha.as_deref(),
-            last_commit_at.as_deref(),
-            counters,
-            ci_state.as_deref(),
-        )?;
-        let db = DashboardDb::open(&db_path_owned)?;
-        let stats = alerts_db::sync_alerts_for_project(&db, project_id, &derived_alerts)?;
-        Ok(stats)
-    })
+    // Also pull the configured webhook URLs while we're on the blocking
+    // pool — one DB open, same transaction window as the reconcile.
+    let (sync_stats, webhook_urls) = tokio::task::spawn_blocking(
+        move || -> Result<(alerts_db::SyncStats, Vec<String>)> {
+            write_project_state(
+                &db_path_owned,
+                project_id,
+                hub_sha.as_deref(),
+                last_commit_at.as_deref(),
+                counters,
+                ci_state.as_deref(),
+            )?;
+            let db = DashboardDb::open(&db_path_owned)?;
+            let stats = alerts_db::sync_alerts_for_project(&db, project_id, &derived_alerts)?;
+            let urls = webhook::load_urls(&db).unwrap_or_default();
+            Ok((stats, urls))
+        },
+    )
     .await
     .map_err(|e| anyhow::anyhow!("DB update task panicked: {e}"))??;
+
+    // Dispatch webhooks for newly-opened alerts. Fire-and-forget per
+    // URL — a stuck endpoint must not hold up the rest of the poll
+    // cycle. We spawn one task per (alert × URL) pair so they overlap.
+    if !webhook_urls.is_empty() && !sync_stats.opened_alerts.is_empty() {
+        let slug = project.slug.clone();
+        let fired_at = now;
+        for alert in &sync_stats.opened_alerts {
+            let notif = webhook::AlertNotification::new(alert, slug.clone(), fired_at);
+            let urls = webhook_urls.clone();
+            tokio::spawn(async move {
+                webhook::dispatch_all(&urls, &notif).await;
+            });
+        }
+    }
 
     Ok(PollOutcome {
         alerts_opened: u32::try_from(sync_stats.opened).unwrap_or(u32::MAX),

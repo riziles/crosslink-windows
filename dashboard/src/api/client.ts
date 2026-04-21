@@ -16,6 +16,8 @@ import type {
   ProjectListItem,
   PtySession,
   PtySpawnRequest,
+  SetWebhooksBody,
+  WebhooksView,
 } from "./types";
 
 const API_BASE = "/api/v1/dashboard";
@@ -52,8 +54,20 @@ async function apiFetch<T>(path: string): Promise<T> {
 }
 
 async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  return apiWrite<T>("POST", path, body);
+}
+
+async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+  return apiWrite<T>("PUT", path, body);
+}
+
+async function apiWrite<T>(
+  method: "POST" | "PUT",
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    method,
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -67,7 +81,6 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     }
     throw new ApiRequestError(resp.status, message);
   }
-  // Responses may be empty; guard against that.
   const text = await resp.text();
   return (text ? JSON.parse(text) : ({} as T)) as T;
 }
@@ -476,5 +489,28 @@ export function useAgentRequest(slug: string) {
         reason,
       }),
     onSuccess: () => invalidate(),
+  });
+}
+
+/// List the configured outbound webhook URLs (plaintext — the user
+/// typed them and edits them here). Empty list on first run.
+export function useWebhooks() {
+  return useQuery<WebhooksView, ApiRequestError>({
+    queryKey: ["dashboard", "webhooks"],
+    queryFn: () => apiFetch<WebhooksView>("/webhooks"),
+    refetchOnWindowFocus: false,
+  });
+}
+
+/// Replace the full webhook URL list. Server validates each URL
+/// (https + host, or http for loopback) and rejects the batch on any
+/// failure without partial writes.
+export function useSetWebhooks() {
+  const client = useQueryClient();
+  return useMutation<WebhooksView, ApiRequestError, SetWebhooksBody>({
+    mutationFn: (body) => apiPut<WebhooksView>("/webhooks", body),
+    onSuccess: (data) => {
+      client.setQueryData(["dashboard", "webhooks"], data);
+    },
   });
 }

@@ -15,6 +15,7 @@ import { Alerts } from "@/pages/Alerts";
 import { ProjectDetail } from "@/pages/ProjectDetail";
 import { ProjectGrid } from "@/pages/ProjectGrid";
 import { SettingsGithub } from "@/pages/SettingsGithub";
+import { SettingsWebhooks } from "@/pages/SettingsWebhooks";
 import { Terminals } from "@/pages/Terminals";
 
 const queryClient = new QueryClient({
@@ -63,6 +64,9 @@ function TopNav() {
           <NavLink to="/settings/github" className={linkClass}>
             GitHub
           </NavLink>
+          <NavLink to="/settings/webhooks" className={linkClass}>
+            Webhooks
+          </NavLink>
         </span>
       </div>
     </nav>
@@ -83,6 +87,7 @@ export function App() {
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/terminals" element={<Terminals />} />
             <Route path="/settings/github" element={<SettingsGithub />} />
+            <Route path="/settings/webhooks" element={<SettingsWebhooks />} />
           </Routes>
         </div>
       </BrowserRouter>

@@ -172,3 +172,11 @@ export interface GithubTrackAllOutcome {
   tracked: string[];
   skipped: { slug: string; reason: string }[];
 }
+
+export interface WebhooksView {
+  urls: string[];
+}
+
+export interface SetWebhooksBody {
+  urls: string[];
+}
