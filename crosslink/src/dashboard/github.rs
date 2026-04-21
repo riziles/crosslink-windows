@@ -77,11 +77,13 @@ fn derive_machine_key(db_path: &std::path::Path) -> [u8; 32] {
             let mut buf = [0u8; 32];
             #[cfg(unix)]
             {
-                // /dev/urandom is universally available on Unix.
-                if let Ok(bytes) = std::fs::read("/dev/urandom") {
-                    if bytes.len() >= 32 {
-                        buf.copy_from_slice(&bytes[..32]);
-                    }
+                use std::io::Read;
+                // /dev/urandom is universally available on Unix, but
+                // it has NO EOF — `std::fs::read` would `read_to_end`
+                // forever and OOM the process (tracked in #706). Use
+                // a bounded `read_exact` against an open handle.
+                if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+                    let _ = f.read_exact(&mut buf);
                 }
             }
             let _ = std::fs::write(&fallback_path, buf);
@@ -116,17 +118,25 @@ pub fn seal(plaintext: &str, db_path: &std::path::Path) -> Result<String> {
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
 
-    // 12-byte nonce from the first bytes of /dev/urandom. AES-GCM
-    // nonces must be unique; we rely on each encrypt generating fresh
-    // bytes (single-writer dashboard, not a collision concern).
+    // 12-byte nonce from /dev/urandom. AES-GCM nonces must be unique
+    // AND unpredictable — a zero nonce with key reuse is catastrophic.
+    // We use a bounded `read_exact`: `std::fs::read` on `/dev/urandom`
+    // would loop forever (no EOF) and OOM (#706). We also surface a
+    // read failure as an error instead of falling through to the all-
+    // zeros default — refusing to encrypt beats producing ciphertext
+    // with a predictable nonce.
     let mut nonce_bytes = [0u8; 12];
     #[cfg(unix)]
     {
-        if let Ok(bytes) = std::fs::read("/dev/urandom") {
-            if bytes.len() >= 12 {
-                nonce_bytes.copy_from_slice(&bytes[..12]);
-            }
-        }
+        use std::io::Read;
+        let mut f = std::fs::File::open("/dev/urandom")
+            .map_err(|e| anyhow::anyhow!("open /dev/urandom for nonce: {e}"))?;
+        f.read_exact(&mut nonce_bytes)
+            .map_err(|e| anyhow::anyhow!("read /dev/urandom for nonce: {e}"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        anyhow::bail!("secure nonce source not wired for this platform");
     }
     let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -183,6 +193,16 @@ pub fn set_token(db: &DashboardDb, token: &str, db_path: &std::path::Path) -> Re
     Ok(())
 }
 
+/// Where the effective GitHub token came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenSource {
+    /// Encrypted PAT stored in the dashboard DB (primary path).
+    Stored,
+    /// `gh auth token` — the user's GitHub CLI login, shelled out to
+    /// as a fallback when no PAT is stored.
+    GhCli,
+}
+
 /// Retrieve the stored GitHub PAT, if any. Malformed / undecryptable
 /// rows are returned as `None`.
 ///
@@ -200,6 +220,55 @@ pub fn get_token(db: &DashboardDb, db_path: &std::path::Path) -> Result<Option<S
         Err(e) => return Err(e.into()),
     };
     Ok(unseal(&raw, db_path))
+}
+
+/// Best-effort fallback: ask the `gh` CLI for its currently-active
+/// token. Returns `None` if `gh` isn't installed, if the user isn't
+/// logged in, or if the subprocess fails for any other reason. The
+/// output is deliberately never logged or echoed.
+#[must_use]
+pub fn gh_cli_token() -> Option<String> {
+    let out = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let tok = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if tok.is_empty() {
+        None
+    } else {
+        Some(tok)
+    }
+}
+
+/// Resolve the effective token used by the GitHub integration:
+///
+/// 1. If a PAT is stored in the dashboard DB, return that with
+///    [`TokenSource::Stored`].
+/// 2. Otherwise, try `gh auth token` and return that with
+///    [`TokenSource::GhCli`].
+/// 3. Otherwise, return `None`.
+///
+/// Callers should use this instead of [`get_token`] when they're
+/// about to actually hit the GitHub API — the fallback makes the
+/// common "already logged in via `gh`" case work without a separate
+/// paste-a-PAT step.
+///
+/// # Errors
+/// Returns an error only on DB access failure.
+pub fn get_effective_token(
+    db: &DashboardDb,
+    db_path: &std::path::Path,
+) -> Result<Option<(String, TokenSource)>> {
+    if let Some(stored) = get_token(db, db_path)? {
+        return Ok(Some((stored, TokenSource::Stored)));
+    }
+    if let Some(gh) = gh_cli_token() {
+        return Ok(Some((gh, TokenSource::GhCli)));
+    }
+    Ok(None)
 }
 
 /// Set or delete a plain-text config value (used for non-secret

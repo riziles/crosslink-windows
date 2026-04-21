@@ -41,6 +41,18 @@ struct ConfigView {
     /// can show *which* token is configured without revealing it.
     token_fingerprint: Option<String>,
     default_org: Option<String>,
+    /// Where the effective token comes from:
+    /// - `"stored"` — encrypted PAT in the dashboard DB
+    /// - `"gh-cli"` — falling back to `gh auth token`
+    /// - `null`     — no token available from either source
+    token_source: Option<&'static str>,
+}
+
+fn source_tag(s: github::TokenSource) -> &'static str {
+    match s {
+        github::TokenSource::Stored => "stored",
+        github::TokenSource::GhCli => "gh-cli",
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,14 +69,23 @@ async fn get_config(State(state): State<AppState>) -> Result<Json<ConfigView>, G
     let view = tokio::task::spawn_blocking(move || -> Result<ConfigView, GitHubApiError> {
         let db = DashboardDb::open(&db_path)
             .map_err(|e| GitHubApiError::Internal(format!("open db: {e}")))?;
-        let token = github::get_token(&db, &db_path)
+        let effective = github::get_effective_token(&db, &db_path)
             .map_err(|e| GitHubApiError::Internal(format!("read token: {e}")))?;
         let default_org = github::get_plain(&db, github::KEY_DEFAULT_ORG)
             .map_err(|e| GitHubApiError::Internal(format!("read org: {e}")))?;
-        Ok(ConfigView {
-            token_present: token.is_some(),
-            token_fingerprint: token.as_deref().map(mask_token),
-            default_org,
+        Ok(match effective {
+            Some((tok, src)) => ConfigView {
+                token_present: true,
+                token_fingerprint: Some(mask_token(&tok)),
+                default_org,
+                token_source: Some(source_tag(src)),
+            },
+            None => ConfigView {
+                token_present: false,
+                token_fingerprint: None,
+                default_org,
+                token_source: None,
+            },
         })
     })
     .await
@@ -101,14 +122,23 @@ async fn set_config(
             github::set_plain(&db, github::KEY_DEFAULT_ORG, org_change.as_deref())
                 .map_err(|e| GitHubApiError::Internal(format!("set org: {e}")))?;
         }
-        let token = github::get_token(&db, &db_path)
+        let effective = github::get_effective_token(&db, &db_path)
             .map_err(|e| GitHubApiError::Internal(format!("read token: {e}")))?;
         let default_org = github::get_plain(&db, github::KEY_DEFAULT_ORG)
             .map_err(|e| GitHubApiError::Internal(format!("read org: {e}")))?;
-        Ok(ConfigView {
-            token_present: token.is_some(),
-            token_fingerprint: token.as_deref().map(mask_token),
-            default_org,
+        Ok(match effective {
+            Some((tok, src)) => ConfigView {
+                token_present: true,
+                token_fingerprint: Some(mask_token(&tok)),
+                default_org,
+                token_source: Some(source_tag(src)),
+            },
+            None => ConfigView {
+                token_present: false,
+                token_fingerprint: None,
+                default_org,
+                token_source: None,
+            },
         })
     })
     .await
@@ -266,15 +296,19 @@ fn require_db_path(state: &AppState) -> Result<std::path::PathBuf, GitHubApiErro
 
 async fn load_token(db_path: &std::path::Path) -> Result<String, GitHubApiError> {
     let db_path_owned = db_path.to_path_buf();
-    let token = tokio::task::spawn_blocking(move || {
+    let resolved = tokio::task::spawn_blocking(move || {
         let db = DashboardDb::open(&db_path_owned).ok()?;
-        github::get_token(&db, &db_path_owned).ok().flatten()
+        github::get_effective_token(&db, &db_path_owned)
+            .ok()
+            .flatten()
     })
     .await
     .map_err(|e| GitHubApiError::Internal(format!("load token task panicked: {e}")))?;
-    token.ok_or_else(|| {
+    resolved.map(|(tok, _src)| tok).ok_or_else(|| {
         GitHubApiError::BadRequest(
-            "no GitHub token configured — POST /github/config first".into(),
+            "no GitHub token available — store a PAT via POST /github/config, \
+             or run `gh auth login` in a shell"
+                .into(),
         )
     })
 }

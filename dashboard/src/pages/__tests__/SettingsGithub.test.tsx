@@ -64,12 +64,14 @@ const emptyConfig: GithubConfigView = {
   token_present: false,
   token_fingerprint: null,
   default_org: null,
+  token_source: null,
 };
 
 const populatedConfig: GithubConfigView = {
   token_present: true,
   token_fingerprint: "ghp_1234…wxyz",
   default_org: "my-org",
+  token_source: "stored",
 };
 
 const repoHit: GithubRepoHit = {

@@ -189,9 +189,9 @@ export function OpenIssueRow({ slug, issue }: { slug: string; issue: IssueFile }
         {issue.due_at && (
           <span className="text-xs text-muted-foreground">due {issue.due_at}</span>
         )}
-        {issue.blockers.length > 0 && (
+        {(issue.blockers?.length ?? 0) > 0 && (
           <span className="text-xs text-amber-500">
-            blocked by {issue.blockers.length}
+            blocked by {issue.blockers?.length ?? 0}
           </span>
         )}
         <span className="ml-auto flex items-center gap-2">
@@ -221,9 +221,9 @@ export function OpenIssueRow({ slug, issue }: { slug: string; issue: IssueFile }
           </button>
         </span>
       </div>
-      {issue.labels.length > 0 && (
+      {(issue.labels?.length ?? 0) > 0 && (
         <div className="mt-1 flex flex-wrap gap-1">
-          {issue.labels.map((l) => (
+          {(issue.labels ?? []).map((l) => (
             <span
               key={l}
               className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground"

@@ -38,9 +38,14 @@ export interface IssueFile {
   closed_at?: string | null;
   scheduled_at?: string | null;
   due_at?: string | null;
-  labels: string[];
-  blockers: string[];
-  related: string[];
+  /**
+   * Backend uses `#[serde(skip_serializing_if = "Vec::is_empty")]` on
+   * these list fields — they're omitted from JSON when empty. Callers
+   * must default to `[]` at read time (use `labels ?? []`).
+   */
+  labels?: string[];
+  blockers?: string[];
+  related?: string[];
   milestone_uuid?: string | null;
 }
 
@@ -149,6 +154,13 @@ export interface GithubConfigView {
   token_present: boolean;
   token_fingerprint: string | null;
   default_org: string | null;
+  /**
+   * Where the effective token comes from.
+   * - `"stored"`: encrypted PAT in the dashboard DB (primary path)
+   * - `"gh-cli"`: `gh auth token` fallback (no stored PAT configured)
+   * - `null`: no token available from either source
+   */
+  token_source: "stored" | "gh-cli" | null;
 }
 
 export interface GithubConfigUpdate {

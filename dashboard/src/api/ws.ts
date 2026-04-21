@@ -45,10 +45,17 @@ type IncomingEnvelope =
 /// Event passed to `subscribeAlertOpens` listeners. Mirrors the
 /// `DashboardAlertsChanged` WS payload but filtered to fires only
 /// (`opened > 0`) and typed cleanly for downstream consumers.
+///
+/// `worstSeverity` is optional because the server-side WS payload
+/// today only carries aggregate counts, not per-alert severity —
+/// listeners that care (e.g. alertSound) fall back to a conservative
+/// default when it's absent. A future enhancement can plumb the
+/// worst severity through without a breaking change.
 export interface WsAlertOpenedEvent {
   slug: string;
   opened: number;
   resolved: number;
+  worstSeverity?: import("./types").AlertSeverity;
 }
 
 const alertOpenListeners = new Set<(e: WsAlertOpenedEvent) => void>();
