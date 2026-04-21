@@ -126,6 +126,13 @@ struct ProjectDetail {
     layout_version: u32,
     /// Agent control requests grouped by target agent.
     agent_requests: Vec<SerializableAgentRequests>,
+    /// CI status for the hub-tip commit, when a pipeline reports it.
+    /// Shape: `{sha, state: "passing|failing|pending", url?}` from
+    /// `meta/ci-status.json` on the hub branch.
+    ci_status: Option<reader::CiStatus>,
+    /// Coarse signature state of the hub-tip commit. One of `"valid"`,
+    /// `"unsigned"`, `"invalid"`, or `"unknown"`.
+    signature_state: &'static str,
 }
 
 /// Flattened view of a target agent's request stream for JSON output.
@@ -352,6 +359,8 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: reader::SignatureState::Unknown,
             last_commit_at: None,
         })
     } else {
@@ -362,6 +371,8 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: reader::SignatureState::Unknown,
             last_commit_at: None,
         }
     };
@@ -384,6 +395,8 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
             .into_iter()
             .map(Into::into)
             .collect(),
+        ci_status: snapshot.ci_status,
+        signature_state: snapshot.signature_state.as_str(),
     })
 }
 

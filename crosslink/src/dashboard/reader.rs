@@ -45,6 +45,15 @@ pub struct HubSnapshot {
     /// pairs a request with its ack (if written). Empty when no
     /// requests have been issued.
     pub agent_requests: Vec<AgentRequestsForAgent>,
+    /// CI status for the current hub-tip commit, if a pipeline wrote
+    /// `meta/ci-status.json` and its sha matches `hub_sha`. `None`
+    /// means we have no signal — render as neutral on the tile.
+    pub ci_status: Option<CiStatus>,
+    /// Result of verifying the hub-tip commit's signature. `Unknown`
+    /// when verification is unavailable (no `allowed_signers`, no commits,
+    /// etc.) — distinguish from `Unsigned` so the alert engine doesn't
+    /// fire on tooling gaps.
+    pub signature_state: SignatureState,
     /// Timestamp of the most recent git commit on the hub branch
     /// (a rough "last change" indicator used for tile freshness).
     pub last_commit_at: Option<DateTime<Utc>>,
@@ -55,6 +64,45 @@ pub struct HubSnapshot {
 pub struct AgentRequestsForAgent {
     pub agent_id: String,
     pub requests: Vec<crate::agent_requests::RequestWithAck>,
+}
+
+/// CI status for the current hub-tip commit. Sourced from
+/// `meta/ci-status.json` on the hub branch — pipelines that want to
+/// surface CI state on the dashboard write that file as part of their
+/// post-build hook. Schema:
+/// ```json
+/// { "sha": "abc...", "state": "passing|failing|pending", "url": "..." }
+/// ```
+/// Entries whose `sha` doesn't match `hub_sha` are ignored (stale).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct CiStatus {
+    pub sha: String,
+    pub state: String,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Coarse signature state for the hub-tip commit. Mirrors
+/// [`crate::signing::SignatureVerification`] but flattens to a wire-
+/// friendly enum so the dashboard JSON layer stays simple.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignatureState {
+    Valid,
+    Unsigned,
+    Invalid,
+    Unknown,
+}
+
+impl SignatureState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Unsigned => "unsigned",
+            Self::Invalid => "invalid",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// Flattened lock record (`LocksFile`'s `HashMap` -> `Vec` for easier iteration).
@@ -115,6 +163,8 @@ pub fn read_snapshot(clone_path: &Path) -> Result<HubSnapshot> {
     let agents = read_agent_heartbeats(&hub_root);
     let locks = read_locks(&hub_root);
     let agent_requests = read_agent_requests(&hub_root, &agents);
+    let ci_status = read_ci_status(&hub_root, hub_sha.as_deref());
+    let signature_state = read_signature_state(clone_path);
 
     Ok(HubSnapshot {
         hub_sha,
@@ -123,8 +173,57 @@ pub fn read_snapshot(clone_path: &Path) -> Result<HubSnapshot> {
         agents,
         locks,
         agent_requests,
+        ci_status,
+        signature_state,
         last_commit_at,
     })
+}
+
+/// Load `meta/ci-status.json` and confirm it matches `hub_sha`. Stale
+/// entries (sha mismatch) are dropped so the dashboard never alerts on
+/// CI for a commit that's been superseded.
+fn read_ci_status(hub_root: &Path, hub_sha: Option<&str>) -> Option<CiStatus> {
+    let path = hub_root.join("meta").join("ci-status.json");
+    if !path.is_file() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let status: CiStatus = serde_json::from_str(&raw).ok()?;
+    match hub_sha {
+        Some(sha) if status.sha == sha => Some(status),
+        // No hub_sha available — accept the file at face value.
+        None => Some(status),
+        // Stale CI signal; ignore.
+        Some(_) => None,
+    }
+}
+
+/// Verify the most recent hub commit's signature. Returns `Unknown`
+/// if the verification path isn't available — `crosslink/hub` not
+/// fetched yet, no `allowed_signers` configured, anything that would
+/// otherwise produce false-positive alerts.
+fn read_signature_state(crosslink_workspace: &Path) -> SignatureState {
+    // Locate the .crosslink dir for this workspace so SyncManager can
+    // load. If it's missing, signature verification is impossible.
+    let candidates = [
+        crosslink_workspace.join("crosslink").join(".crosslink"),
+        crosslink_workspace.join(".crosslink"),
+    ];
+    let Some(crosslink_dir) = candidates.iter().find(|c| c.is_dir()) else {
+        return SignatureState::Unknown;
+    };
+    let Ok(sync) = crate::sync::SyncManager::new(crosslink_dir) else {
+        return SignatureState::Unknown;
+    };
+    if !sync.is_initialized() {
+        return SignatureState::Unknown;
+    }
+    match sync.verify_locks_signature() {
+        Ok(crate::signing::SignatureVerification::Valid { .. }) => SignatureState::Valid,
+        Ok(crate::signing::SignatureVerification::Unsigned { .. }) => SignatureState::Unsigned,
+        Ok(crate::signing::SignatureVerification::Invalid { .. }) => SignatureState::Invalid,
+        Ok(crate::signing::SignatureVerification::NoCommits) | Err(_) => SignatureState::Unknown,
+    }
 }
 
 /// Pick the directory that contains hub-branch content for this
@@ -579,6 +678,8 @@ mod tests {
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: SignatureState::Unknown,
             last_commit_at: None,
         };
         let counters = snap.derive_counters(now_fixed(), 10, 60);
@@ -622,6 +723,8 @@ mod tests {
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: SignatureState::Unknown,
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);
@@ -674,6 +777,8 @@ mod tests {
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: SignatureState::Unknown,
             last_commit_at: None,
         };
         let c = snap.derive_counters(now_fixed(), 10, 60);
@@ -703,6 +808,8 @@ mod tests {
             agents: vec![fresh, stale],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: SignatureState::Unknown,
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);
@@ -737,6 +844,8 @@ mod tests {
             agents: vec![],
             locks: vec![fresh, stale],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: SignatureState::Unknown,
             last_commit_at: None,
         };
         let c = snap.derive_counters(now, 10, 60);

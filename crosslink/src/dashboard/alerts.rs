@@ -9,20 +9,22 @@
 //! returns the set of alerts that should be open right now. DB sync
 //! lives in [`super::alerts_db`] (added in P1.6.B).
 //!
-//! Phase-1 coverage (derivable from `HubSnapshot` + `Project` alone):
+//! Coverage:
 //!
-//! | Kind                | Derived when                            | Severity |
-//! |---------------------|-----------------------------------------|----------|
-//! | `stale_lock`        | Lock held longer than stale window      | warning  |
-//! | `silent_agent`      | Agent holding a lock + heartbeat silent | critical |
-//! | `overdue_issue`     | Open issue with `due_at < now`          | warning  |
-//! | `orphan_subissue`   | Closed parent with open subissues       | info     |
-//! | `unreachable_project` | `project.status == "error"`           | warning  |
+//! | Kind                  | Derived when                                | Severity |
+//! |-----------------------|---------------------------------------------|----------|
+//! | `stale_lock`          | Lock held longer than stale window          | warning  |
+//! | `silent_agent`        | Agent holding a lock + heartbeat silent     | critical |
+//! | `overdue_issue`       | Open issue with `due_at < now`              | warning  |
+//! | `orphan_subissue`     | Closed parent with open subissues           | info     |
+//! | `unreachable_project` | `project.status == "error"`                 | warning  |
+//! | `ci_failure`          | `meta/ci-status.json.state == "failing"`    | warning  |
+//! | `signature_invalid`   | Hub-tip commit signature verification failed| critical |
 //!
-//! Catalogue items that depend on extra telemetry (`ci_failure`,
-//! `hub_diverged`, `hub_parse_error`, `untrusted_signer`,
-//! `pending_request`, `compaction_lag`) are deferred to P3 polish and
-//! folded in once the respective signals land.
+//! Catalogue items that depend on telemetry crosslink doesn't yet
+//! collect (`hub_diverged`, `hub_parse_error`, `untrusted_signer`,
+//! `pending_request`, `compaction_lag`) remain deferred until the
+//! respective signals land in `HubSnapshot`.
 
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
@@ -166,6 +168,44 @@ pub fn derive_alerts(
         }
     }
 
+    // CI failure — surfaces whatever the project's pipeline wrote
+    // into `meta/ci-status.json` on the hub branch. Reader has
+    // already filtered stale entries (sha mismatch).
+    if let Some(ci) = &snapshot.ci_status {
+        if ci.state == "failing" {
+            let detail = ci.url.as_deref().map_or_else(
+                || format!("CI failing on hub-tip ({})", ci.sha),
+                |u| format!("CI failing on hub-tip ({}); {u}", ci.sha),
+            );
+            out.push(DerivedAlert {
+                kind: "ci_failure",
+                severity: Severity::Warning,
+                subject_ref: format!("commit:{}", ci.sha),
+                detail,
+            });
+        }
+    }
+
+    // Signature invalid on the hub-tip commit. Critical because it
+    // means an unauthorized writer landed something on the shared
+    // branch — operators should investigate immediately. We don't
+    // alert on `Unsigned` (intentional unsigned setups exist) or
+    // `Unknown` (verification path unavailable).
+    if matches!(
+        snapshot.signature_state,
+        super::reader::SignatureState::Invalid
+    ) {
+        out.push(DerivedAlert {
+            kind: "signature_invalid",
+            severity: Severity::Critical,
+            subject_ref: snapshot
+                .hub_sha
+                .as_deref()
+                .map_or_else(|| "commit:unknown".to_string(), |s| format!("commit:{s}")),
+            detail: "hub-tip commit signature failed verification".to_string(),
+        });
+    }
+
     // Orphan subissues — parent closed with open subissues. This is
     // a low-severity housekeeping signal, not an emergency.
     let by_uuid: std::collections::HashMap<Uuid, &crate::issue_file::IssueFile> =
@@ -237,6 +277,8 @@ mod tests {
             agents: vec![],
             locks: vec![],
             agent_requests: vec![],
+            ci_status: None,
+            signature_state: super::super::reader::SignatureState::Unknown,
             last_commit_at: None,
         }
     }
@@ -422,5 +464,63 @@ mod tests {
         snap.issues.push(child);
         let alerts = derive_alerts(&base_project(), &snap, now_fixed());
         assert!(alerts.iter().all(|a| a.kind != "orphan_subissue"));
+    }
+
+    #[test]
+    fn test_ci_failure_emits_warning() {
+        let mut snap = empty_snapshot();
+        snap.hub_sha = Some("abc1234".into());
+        snap.ci_status = Some(super::super::reader::CiStatus {
+            sha: "abc1234".into(),
+            state: "failing".into(),
+            url: Some("https://ci.example.com/run/42".into()),
+        });
+        let alerts = derive_alerts(&base_project(), &snap, now_fixed());
+        let ci = alerts
+            .iter()
+            .find(|a| a.kind == "ci_failure")
+            .expect("ci_failure alert expected");
+        assert_eq!(ci.severity, Severity::Warning);
+        assert_eq!(ci.subject_ref, "commit:abc1234");
+        assert!(ci.detail.contains("ci.example.com"));
+    }
+
+    #[test]
+    fn test_ci_passing_does_not_alert() {
+        let mut snap = empty_snapshot();
+        snap.hub_sha = Some("abc1234".into());
+        snap.ci_status = Some(super::super::reader::CiStatus {
+            sha: "abc1234".into(),
+            state: "passing".into(),
+            url: None,
+        });
+        let alerts = derive_alerts(&base_project(), &snap, now_fixed());
+        assert!(alerts.iter().all(|a| a.kind != "ci_failure"));
+    }
+
+    #[test]
+    fn test_signature_invalid_emits_critical() {
+        let mut snap = empty_snapshot();
+        snap.hub_sha = Some("deadbeef".into());
+        snap.signature_state = super::super::reader::SignatureState::Invalid;
+        let alerts = derive_alerts(&base_project(), &snap, now_fixed());
+        let sig = alerts
+            .iter()
+            .find(|a| a.kind == "signature_invalid")
+            .expect("signature_invalid alert expected");
+        assert_eq!(sig.severity, Severity::Critical);
+        assert_eq!(sig.subject_ref, "commit:deadbeef");
+    }
+
+    #[test]
+    fn test_signature_unknown_or_unsigned_does_not_alert() {
+        let mut snap = empty_snapshot();
+        snap.signature_state = super::super::reader::SignatureState::Unsigned;
+        let alerts = derive_alerts(&base_project(), &snap, now_fixed());
+        assert!(alerts.iter().all(|a| a.kind != "signature_invalid"));
+
+        snap.signature_state = super::super::reader::SignatureState::Unknown;
+        let alerts2 = derive_alerts(&base_project(), &snap, now_fixed());
+        assert!(alerts2.iter().all(|a| a.kind != "signature_invalid"));
     }
 }

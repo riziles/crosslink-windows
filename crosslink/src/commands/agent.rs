@@ -143,8 +143,7 @@ fn request(
             .unwrap_or_else(|| format!("agent:{}", driver.agent_id))
     } else {
         let workspace_root = crosslink_dir.parent().unwrap_or(crosslink_dir);
-        resolve_driver_signing_key(workspace_root)
-            .unwrap_or_else(|| "driver:unknown".to_string())
+        resolve_driver_signing_key(workspace_root).unwrap_or_else(|| "driver:unknown".to_string())
     };
 
     let req = crate::agent_requests::AgentRequest {
@@ -199,7 +198,10 @@ fn resolve_driver_signing_key(workspace_root: &Path) -> Option<String> {
     // not we just record what's there as the principal.
     let path = std::path::Path::new(&raw);
     if path.exists() {
-        let pub_path = if raw.ends_with(".pub") {
+        let pub_path = if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pub"))
+        {
             path.to_path_buf()
         } else {
             std::path::PathBuf::from(format!("{raw}.pub"))

@@ -164,6 +164,7 @@ pub async fn poll_project(db_path: &Path, project: &Project) -> Result<PollOutco
     let project_id = project.id;
     let hub_sha = snapshot.hub_sha.clone();
     let last_commit_at = snapshot.last_commit_at.map(|dt| dt.to_rfc3339());
+    let ci_state = snapshot.ci_status.as_ref().map(|c| c.state.clone());
     let db_path_owned = db_path.to_path_buf();
 
     let sync_stats = tokio::task::spawn_blocking(move || -> Result<alerts_db::SyncStats> {
@@ -173,6 +174,7 @@ pub async fn poll_project(db_path: &Path, project: &Project) -> Result<PollOutco
             hub_sha.as_deref(),
             last_commit_at.as_deref(),
             counters,
+            ci_state.as_deref(),
         )?;
         let db = DashboardDb::open(&db_path_owned)?;
         let stats = alerts_db::sync_alerts_for_project(&db, project_id, &derived_alerts)?;
@@ -223,6 +225,7 @@ fn write_project_state(
     hub_sha: Option<&str>,
     last_commit_at: Option<&str>,
     counters: super::reader::ProjectCounters,
+    ci_status: Option<&str>,
 ) -> Result<()> {
     let db = DashboardDb::open(db_path)?;
     let now = Utc::now().to_rfc3339();
@@ -240,7 +243,7 @@ fn write_project_state(
         "INSERT INTO project_state
            (project_id, open_issues, overdue_issues, due_soon_issues, blocked_issues,
             active_agents, stale_locks, ci_status, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(project_id) DO UPDATE SET
            open_issues = excluded.open_issues,
            overdue_issues = excluded.overdue_issues,
@@ -248,6 +251,7 @@ fn write_project_state(
            blocked_issues = excluded.blocked_issues,
            active_agents = excluded.active_agents,
            stale_locks = excluded.stale_locks,
+           ci_status = excluded.ci_status,
            updated_at = excluded.updated_at",
         rusqlite::params![
             project_id,
@@ -257,6 +261,7 @@ fn write_project_state(
             counters.blocked_issues,
             counters.active_agents,
             counters.stale_locks,
+            ci_status,
             now,
         ],
     )?;

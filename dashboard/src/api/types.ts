@@ -83,6 +83,15 @@ export interface AgentRequestsForAgent {
   requests: AgentRequest[];
 }
 
+export interface CiStatus {
+  sha: string;
+  /** "passing" | "failing" | "pending" — pipeline-defined */
+  state: string;
+  url?: string | null;
+}
+
+export type SignatureState = "valid" | "unsigned" | "invalid" | "unknown";
+
 export interface ProjectDetail {
   slug: string;
   status: string;
@@ -97,6 +106,8 @@ export interface ProjectDetail {
   locks: LockEntry[];
   layout_version: number;
   agent_requests: AgentRequestsForAgent[];
+  ci_status: CiStatus | null;
+  signature_state: SignatureState;
 }
 
 export interface ApiError {
