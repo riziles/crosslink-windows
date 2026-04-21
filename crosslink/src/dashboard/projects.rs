@@ -206,21 +206,15 @@ pub fn track_with_init(
     track_at_path(clone_path, slug_override, &db_path)
 }
 
-/// Shell out to the running `crosslink` binary to initialise a
-/// workspace. Used by both the CLI (`crosslink dashboard track
-/// --init`) and the retrofit REST endpoint.
+/// Shell out to the `crosslink` binary to initialise a workspace.
+/// Used by both the CLI (`crosslink dashboard track --init`) and
+/// the retrofit REST endpoint.
 ///
 /// # Errors
 /// Returns an error describing which subprocess step failed and its
 /// stderr output.
 pub fn run_init_and_agent_in(workspace: &Path, agent_id: &str) -> Result<()> {
-    let self_exe = std::env::current_exe().ok();
-    let usable_self = self_exe.as_deref().filter(|p| {
-        !p.components()
-            .any(|c| c.as_os_str() == std::ffi::OsStr::new("deps"))
-    });
-    let cmd_name: std::ffi::OsString = usable_self
-        .map_or_else(|| "crosslink".into(), |p| p.as_os_str().to_os_string());
+    let cmd_name = resolve_crosslink_bin();
 
     // `--force` lets init re-run cleanly when a previous retrofit left
     // partial state (a stray `.crosslink/agent.json` without
@@ -404,12 +398,26 @@ pub fn untrack_with_path(slug: &str, db_path: &Path) -> Result<()> {
     parse_slug(slug)?;
 
     let db = DashboardDb::open(db_path)?;
-    let rows = db
-        .conn
-        .execute("DELETE FROM projects WHERE slug = ?1", [slug])?;
+
+    // The `actions` table (audit log) references `projects(id)` with
+    // no `ON DELETE` action, so a raw DELETE on `projects` FK-fails
+    // whenever we've ever run a write through the dashboard for this
+    // slug. Null out the reference first so the audit history
+    // survives the untrack as orphan rows (project_id=NULL), then
+    // drop the project row. Other dependent tables (alerts,
+    // project_state, activity) have CASCADE; pty_sessions has SET
+    // NULL — both fine already.
+    let tx = db.conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE actions SET project_id = NULL
+         WHERE project_id = (SELECT id FROM projects WHERE slug = ?1)",
+        [slug],
+    )?;
+    let rows = tx.execute("DELETE FROM projects WHERE slug = ?1", [slug])?;
     if rows == 0 {
         bail!("{slug} is not currently tracked");
     }
+    tx.commit()?;
     println!("Untracked {slug} (local working copy left intact)");
     Ok(())
 }
@@ -477,6 +485,59 @@ pub fn list_with_path(db_path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Decide which `crosslink` binary to spawn for dashboard-initiated
+/// actions. Order of preference:
+///
+/// 1. `$CROSSLINK_BIN` env var — explicit override for operators who
+///    want to pin a specific build.
+/// 2. `crosslink` on `$PATH` — canonical for installed setups
+///    (`cargo install crosslink`, package manager, ops runbook).
+///    Reinstalling the CLI automatically updates dashboard behaviour.
+/// 3. `std::env::current_exe()` — dev fallback for running the
+///    dashboard straight from `target/release/crosslink` before
+///    installing. Skipped when the path looks like a cargo-test
+///    binary (`/deps/`).
+/// 4. Bare `"crosslink"` — final fallback; if PATH is missing the
+///    name, spawn fails with a clear error the user can debug.
+///
+/// Using PATH as the primary mechanism was the whole point of
+/// `cargo install`: the user's installed binary *is* the one
+/// subprocesses should invoke. Self-exe was an anti-feature that
+/// coupled dashboard behaviour to an ephemeral dev path (#713).
+pub fn resolve_crosslink_bin() -> std::ffi::OsString {
+    if let Some(override_path) = std::env::var_os("CROSSLINK_BIN") {
+        if !override_path.is_empty() {
+            return override_path;
+        }
+    }
+    if which_on_path("crosslink").is_some() {
+        return "crosslink".into();
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let looks_like_test = exe
+            .components()
+            .any(|c| c.as_os_str() == std::ffi::OsStr::new("deps"));
+        if !looks_like_test && exe.is_file() {
+            return exe.into_os_string();
+        }
+    }
+    "crosslink".into()
+}
+
+/// Trivial `which`: walks `$PATH` looking for `name`. Returns the
+/// first match. `None` if not found or `PATH` unset.
+fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
