@@ -11,10 +11,18 @@ import { Link, NavLink } from "react-router-dom";
 
 import { connectDashboardWs } from "@/api/ws";
 import { AlertRail } from "@/components/AlertRail";
+import { installAlertSoundBridge } from "@/lib/alertSound";
+import {
+  patchPreferences,
+  usePreferences,
+  type ThemePreference,
+} from "@/lib/preferences";
+import { resolveTheme, useThemeBridge } from "@/lib/theme";
 import { Alerts } from "@/pages/Alerts";
 import { ProjectDetail } from "@/pages/ProjectDetail";
 import { ProjectGrid } from "@/pages/ProjectGrid";
 import { SettingsGithub } from "@/pages/SettingsGithub";
+import { SettingsPreferences } from "@/pages/SettingsPreferences";
 import { SettingsWebhooks } from "@/pages/SettingsWebhooks";
 import { Terminals } from "@/pages/Terminals";
 
@@ -38,6 +46,35 @@ function DashboardWsBridge() {
     return connectDashboardWs(client);
   }, [client]);
   return null;
+}
+
+/// Mounts the alert-sound bridge for the app lifetime. Split from
+/// DashboardWsBridge so it can be disabled in isolation during tests.
+function AlertSoundBridge() {
+  useEffect(() => installAlertSoundBridge(), []);
+  return null;
+}
+
+/// One-click light/dark toggle in the nav. Leaves "system" mode alone
+/// unless the user wanted it; first click from "system" picks the
+/// opposite of what's currently rendered so the visible change is
+/// immediate.
+function ThemeToggleButton() {
+  const prefs = usePreferences();
+  const resolved = resolveTheme(prefs.theme);
+  const next: ThemePreference = resolved === "dark" ? "light" : "dark";
+  const label = resolved === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  return (
+    <button
+      type="button"
+      onClick={() => patchPreferences({ theme: next })}
+      aria-label={label}
+      title={label}
+      className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent/10"
+    >
+      {resolved === "dark" ? "☀︎" : "☾"}
+    </button>
+  );
 }
 
 function TopNav() {
@@ -67,9 +104,39 @@ function TopNav() {
           <NavLink to="/settings/webhooks" className={linkClass}>
             Webhooks
           </NavLink>
+          <NavLink to="/settings/preferences" className={linkClass}>
+            Preferences
+          </NavLink>
+        </span>
+        <span className="ml-auto">
+          <ThemeToggleButton />
         </span>
       </div>
     </nav>
+  );
+}
+
+function AppShell() {
+  useThemeBridge();
+  return (
+    <BrowserRouter>
+      <div className="min-h-screen bg-background text-foreground">
+        <TopNav />
+        <AlertRail />
+        <Routes>
+          <Route path="/" element={<ProjectGrid />} />
+          <Route path="/project/*" element={<ProjectDetail />} />
+          <Route path="/alerts" element={<Alerts />} />
+          <Route path="/terminals" element={<Terminals />} />
+          <Route path="/settings/github" element={<SettingsGithub />} />
+          <Route path="/settings/webhooks" element={<SettingsWebhooks />} />
+          <Route
+            path="/settings/preferences"
+            element={<SettingsPreferences />}
+          />
+        </Routes>
+      </div>
+    </BrowserRouter>
   );
 }
 
@@ -77,20 +144,8 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <DashboardWsBridge />
-      <BrowserRouter>
-        <div className="min-h-screen bg-background text-foreground">
-          <TopNav />
-          <AlertRail />
-          <Routes>
-            <Route path="/" element={<ProjectGrid />} />
-            <Route path="/project/*" element={<ProjectDetail />} />
-            <Route path="/alerts" element={<Alerts />} />
-            <Route path="/terminals" element={<Terminals />} />
-            <Route path="/settings/github" element={<SettingsGithub />} />
-            <Route path="/settings/webhooks" element={<SettingsWebhooks />} />
-          </Routes>
-        </div>
-      </BrowserRouter>
+      <AlertSoundBridge />
+      <AppShell />
     </QueryClientProvider>
   );
 }
