@@ -321,4 +321,67 @@ describe("Alerts page", () => {
     // Link nav doesn't bubble up, so still collapsed.
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("shows success banner after Close mutation resolves", async () => {
+    const close = stubMutation<unknown, number>();
+    close.isSuccess = true;
+    mocks.useCloseIssue.mockReturnValue(close);
+    mocks.useAlerts.mockReturnValue(
+      stubQuery([
+        mkAlert({ kind: "overdue_issue", subject_ref: "issue:17" }),
+      ]),
+    );
+    const { Alerts } = await import("../Alerts");
+    render_(<Alerts />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /toggle overdue_issue/i }),
+    );
+    const banner = screen.getByRole("status");
+    expect(banner).toHaveTextContent(/issue closed/i);
+    expect(banner).toHaveTextContent(/alert clears on the next poll/i);
+  });
+
+  it("shows success banner after Release Lock mutation resolves", async () => {
+    const release = stubMutation<unknown, number>();
+    release.isSuccess = true;
+    mocks.useReleaseLock.mockReturnValue(release);
+    mocks.useAlerts.mockReturnValue(
+      stubQuery([mkAlert({ subject_ref: "lock:42" })]),
+    );
+    const { Alerts } = await import("../Alerts");
+    render_(<Alerts />);
+
+    fireEvent.click(screen.getByRole("button", { name: /toggle stale_lock/i }));
+    expect(screen.getByRole("status")).toHaveTextContent(/lock released/i);
+  });
+
+  it("comment drawer renders for orphan_subissue too (not just overdue_issue)", async () => {
+    const comment = stubMutation<unknown, { issueId: number; content: string }>();
+    mocks.useCommentIssue.mockReturnValue(comment);
+    mocks.useAlerts.mockReturnValue(
+      stubQuery([
+        mkAlert({
+          kind: "orphan_subissue",
+          subject_ref: "issue:17",
+          severity: "info",
+        }),
+      ]),
+    );
+    const { Alerts } = await import("../Alerts");
+    render_(<Alerts />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /toggle orphan_subissue/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^comment$/i }));
+    // Textarea must render — this was the dead-stub bug.
+    const ta = screen.getByPlaceholderText(/comment text/i);
+    fireEvent.change(ta, { target: { value: "wrapping this up" } });
+    fireEvent.click(screen.getByRole("button", { name: /post comment/i }));
+    expect(comment.mutate).toHaveBeenCalledWith(
+      { issueId: 17, content: "wrapping this up" },
+      expect.any(Object),
+    );
+  });
 });

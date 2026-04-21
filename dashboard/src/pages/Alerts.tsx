@@ -267,6 +267,24 @@ function AlertActions({
     stealLock.error?.message ||
     agentRequest.error?.message;
 
+  // Confirmation banner: the alert row stays visible until the next
+  // poll tick re-reads the hub (≤5s); without this the user can't
+  // tell their click registered. Shown for any mutation's isSuccess
+  // state; cleared on the next poll refresh when the alert row
+  // unmounts.
+  const successMessage =
+    (closeIssue.isSuccess && "Issue closed — alert clears on the next poll tick.") ||
+    (releaseLock.isSuccess && "Lock released — alert clears on the next poll tick.") ||
+    (stealLock.isSuccess && "Lock stolen — alert clears on the next poll tick.") ||
+    (commentIssue.isSuccess && "Comment posted.") ||
+    (agentRequest.isSuccess && "Agent request sent — alert clears on the next poll tick.") ||
+    null;
+  // Note: `kind` is consumed implicitly via the useProjectMutations
+  // invalidation chain; kept as a prop so future per-kind affordances
+  // (e.g. "dismiss without closing" for orphan_subissue) can branch
+  // on it.
+  void kind;
+
   // Subject-less alert → show a project-scoped shortcut only.
   if (!subject) {
     return (
@@ -375,44 +393,50 @@ function AlertActions({
         </Link>
       </div>
 
-      {/* Comment drawer */}
-      {kind === "overdue_issue" && subject.kind === "issue" && commentOpen &&
-        issueId != null && (
-          <form
-            className="mt-1 flex flex-col gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!commentText.trim()) return;
-              commentIssue.mutate(
-                { issueId, content: commentText },
-                {
-                  onSuccess: () => {
-                    setCommentText("");
-                    setCommentOpen(false);
-                  },
+      {/* Comment drawer — applies to any issue-subject alert (overdue
+          or orphan), since commenting on the subissue is a reasonable
+          follow-up in either case. */}
+      {subject.kind === "issue" && commentOpen && issueId != null && (
+        <form
+          className="mt-1 flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!commentText.trim()) return;
+            commentIssue.mutate(
+              { issueId, content: commentText },
+              {
+                onSuccess: () => {
+                  setCommentText("");
+                  setCommentOpen(false);
                 },
-              );
-            }}
-          >
-            <textarea
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              rows={3}
-              placeholder="Comment text"
-              className="w-full rounded border bg-background p-2 text-xs"
-            />
-            <div>
-              <button
-                type="submit"
-                disabled={!commentText.trim() || commentIssue.isPending}
-                className="rounded border px-2 py-1 text-xs hover:bg-black/10 disabled:opacity-50"
-              >
-                {commentIssue.isPending ? "Posting…" : "Post comment"}
-              </button>
-            </div>
-          </form>
-        )}
+              },
+            );
+          }}
+        >
+          <textarea
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            rows={3}
+            placeholder="Comment text"
+            className="w-full rounded border bg-background p-2 text-xs"
+          />
+          <div>
+            <button
+              type="submit"
+              disabled={!commentText.trim() || commentIssue.isPending}
+              className="rounded border px-2 py-1 text-xs hover:bg-black/10 disabled:opacity-50"
+            >
+              {commentIssue.isPending ? "Posting…" : "Post comment"}
+            </button>
+          </div>
+        </form>
+      )}
 
+      {successMessage && (
+        <p className="text-xs text-emerald-500" role="status" aria-live="polite">
+          {successMessage}
+        </p>
+      )}
       {anyError && (
         <p className="text-xs text-rose-500">{anyError}</p>
       )}

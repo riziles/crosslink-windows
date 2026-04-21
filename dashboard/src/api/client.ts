@@ -127,16 +127,17 @@ export function useAlerts() {
   });
 }
 
-/// Shared post-mutation invalidator. Both the project detail query
-/// and the global projects query get invalidated so the tile grid
-/// and drill-down page catch up to the new state. The next polling
-/// tick would do this anyway, but optimistic invalidation makes the
-/// click-to-visible latency feel snappy.
+/// Shared post-mutation invalidator. Projects list + project detail
+/// + alerts list all get invalidated so every surface that could be
+/// displaying stale state catches up immediately. Without the alerts
+/// invalidation a close-from-the-alerts-page looks like a no-op
+/// until the 5s polling tick refreshes independently (GH #709).
 function useProjectMutations(slug: string) {
   const client = useQueryClient();
   return (after: () => void = () => undefined) => {
     client.invalidateQueries({ queryKey: ["dashboard", "projects"] });
     client.invalidateQueries({ queryKey: ["dashboard", "project", slug] });
+    client.invalidateQueries({ queryKey: ["dashboard", "alerts"] });
     after();
   };
 }
