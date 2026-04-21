@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Unit tests for shared writer lock operations
 
 ### Fixed
+- Fix agent init --force clobbering agent.json ssh fields (regression from signing role work) (#711)
 - Agent signing chicken-and-egg during init
 - TUI agents tab V2 heartbeat reading
 - Milestone persistence to coordination branch
