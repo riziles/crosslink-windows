@@ -291,16 +291,104 @@ fn write_project_state(
 }
 
 async fn fetch_hub(clone_path: &Path) -> Result<()> {
+    // Fetch with an explicit refspec so the local `crosslink/hub` ref
+    // is created/updated, not just the remote-tracking ref. The `+`
+    // allows non-fast-forward updates (shouldn't happen in practice
+    // but doesn't cost anything). Dashboard-auto-cloned repos start
+    // with no local branch, and the reader looks for the local ref
+    // via `git rev-parse crosslink/hub` — without this refspec, hub
+    // state appears empty to the panel despite being present on the
+    // remote.
     let status = Command::new("git")
         .arg("-C")
         .arg(clone_path)
-        .args(["fetch", "--quiet", "origin", "crosslink/hub"])
+        .args([
+            "fetch",
+            "--quiet",
+            "origin",
+            "+refs/heads/crosslink/hub:refs/heads/crosslink/hub",
+        ])
         .status()
         .await?;
     if !status.success() {
         anyhow::bail!("git fetch exited with {status}");
     }
+
+    // Materialise the hub branch into `.crosslink/.hub-cache/` as a
+    // worktree so the reader's filesystem scan actually finds the
+    // issues / heartbeats / locks files. For repos that were set up
+    // via `crosslink sync` this already exists (idempotent); for
+    // dashboard-auto-cloned repos it doesn't and we'd otherwise read
+    // from the `main` working tree which has no hub layout.
+    ensure_hub_cache_worktree(clone_path).await;
     Ok(())
+}
+
+/// Ensure a `.crosslink/.hub-cache/` worktree exists pointing at the
+/// local `crosslink/hub` ref. Idempotent:
+/// - If the worktree is missing, create it via `git worktree add`.
+/// - If it exists, fast-forward it via `git reset --hard`.
+///
+/// Best-effort: failures are logged and swallowed. A broken hub-cache
+/// just means the reader falls back to scanning the working tree (the
+/// legacy path), which is no worse than before this function existed.
+async fn ensure_hub_cache_worktree(clone_path: &Path) {
+    let cache_path = clone_path.join(".crosslink").join(".hub-cache");
+
+    // Create parent dir idempotently — `git worktree add` expects the
+    // immediate parent to exist.
+    if let Some(parent) = cache_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    if cache_path.is_dir() {
+        // Already exists — fast-forward to the new hub tip. We use
+        // `reset --hard` against the ref name rather than a SHA so we
+        // don't have to query the tip separately.
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&cache_path)
+            .args(["reset", "--hard", "--quiet", "crosslink/hub"])
+            .status()
+            .await;
+        if let Ok(s) = status {
+            if !s.success() {
+                tracing::warn!(
+                    "hub-cache reset failed at {}: status {s}",
+                    cache_path.display()
+                );
+            }
+        }
+        return;
+    }
+
+    // First-time setup. `--force` lets us proceed even if the path
+    // was left in a half-initialised state by a prior crash. The ref
+    // comes from the fetch above, so this is almost always cheap.
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(clone_path)
+        .args([
+            "worktree",
+            "add",
+            "--force",
+            "--quiet",
+            cache_path.to_string_lossy().as_ref(),
+            "crosslink/hub",
+        ])
+        .status()
+        .await;
+    match status {
+        Ok(s) if s.success() => {}
+        Ok(s) => tracing::warn!(
+            "`git worktree add` for hub-cache exited with {s} in {}",
+            clone_path.display()
+        ),
+        Err(e) => tracing::warn!(
+            "`git worktree add` for hub-cache failed in {}: {e}",
+            clone_path.display()
+        ),
+    }
 }
 
 #[cfg(test)]

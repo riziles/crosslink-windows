@@ -191,9 +191,8 @@ fn walk(
         return;
     }
 
-    let entries = match std::fs::read_dir(&canon) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = std::fs::read_dir(&canon) else {
+        return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -201,9 +200,8 @@ fn walk(
         if should_skip(name_str.as_ref()) {
             continue;
         }
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
+        let Ok(file_type) = entry.file_type() else {
+            continue;
         };
         // Don't follow symlinks — prevents looping and avoids
         // pulling in state that lives outside the user's expected

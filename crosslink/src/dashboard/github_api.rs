@@ -48,13 +48,18 @@ struct ConfigView {
     token_source: Option<&'static str>,
 }
 
-fn source_tag(s: github::TokenSource) -> &'static str {
+const fn source_tag(s: github::TokenSource) -> &'static str {
     match s {
         github::TokenSource::Stored => "stored",
         github::TokenSource::GhCli => "gh-cli",
     }
 }
 
+// The nested Option<Option<String>> on default_org is load-bearing
+// PATCH semantics: absent field = "no change", `null` = "clear org",
+// string value = "set org". Flattening it to Option<String> loses the
+// "no change" case.
+#[allow(clippy::option_option)]
 #[derive(Debug, Deserialize)]
 struct SetConfigBody {
     /// `Some("")` deletes the stored token; `None` leaves it unchanged.
@@ -289,8 +294,7 @@ fn ensure_clone_and_track(
 fn require_db_path(state: &AppState) -> Result<std::path::PathBuf, GitHubApiError> {
     state
         .dashboard_db_path
-        .as_ref()
-        .cloned()
+        .clone()
         .ok_or_else(|| GitHubApiError::BadRequest("dashboard DB not configured".into()))
 }
 

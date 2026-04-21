@@ -377,6 +377,30 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
         }
     };
 
+    // Sort issues deterministically: display_id ascending, then
+    // closed-after-open so the currently-actionable work floats up.
+    // Local-only issues (no display_id yet) land at the end in uuid
+    // order so they don't jump around between ticks.
+    let mut issues = snapshot.issues;
+    issues.sort_by(|a, b| {
+        use std::cmp::Ordering;
+        let by_status = match (a.status, b.status) {
+            (s1, s2) if s1 == s2 => Ordering::Equal,
+            (crate::models::IssueStatus::Open, _) => Ordering::Less,
+            (_, crate::models::IssueStatus::Open) => Ordering::Greater,
+            _ => Ordering::Equal,
+        };
+        if by_status != Ordering::Equal {
+            return by_status;
+        }
+        match (a.display_id, b.display_id) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.uuid.cmp(&b.uuid),
+        }
+    });
+
     Ok(ProjectDetail {
         slug: project.slug,
         status: project.status,
@@ -387,7 +411,7 @@ fn load_project_detail(db_path: &std::path::Path, slug: &str) -> Result<ProjectD
         added_at: project.added_at,
         counters,
         layout_version: snapshot.layout_version,
-        issues: snapshot.issues,
+        issues,
         agents: snapshot.agents,
         locks: snapshot.locks.into_iter().map(Into::into).collect(),
         agent_requests: snapshot

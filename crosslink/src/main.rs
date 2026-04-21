@@ -879,6 +879,12 @@ enum DashboardCommands {
         /// (development only — bundled assets are preferred otherwise)
         #[arg(long)]
         dashboard_dir: Option<PathBuf>,
+        /// Force-rotate the persisted auth token at
+        /// `~/.crosslink/.dashboard-token`. Without this flag the
+        /// server reuses the existing token so open browser tabs keep
+        /// working across binary rebuilds.
+        #[arg(long)]
+        rotate_token: bool,
     },
     /// Track a repository by pointing at your existing local working copy.
     ///
@@ -3153,6 +3159,7 @@ fn main() -> Result<()> {
             DashboardCommands::Serve {
                 port,
                 dashboard_dir,
+                rotate_token,
             } => {
                 let crosslink_dir = find_crosslink_dir()?;
                 let db = get_db()?;
@@ -3160,6 +3167,12 @@ fn main() -> Result<()> {
                 // ~/.crosslink/dashboard.db. Schema is applied idempotently.
                 let dashboard_db_path = dashboard::db::DashboardDb::default_path()?;
                 dashboard::db::DashboardDb::open(&dashboard_db_path)?;
+                if rotate_token {
+                    // Discard the cached token so the next AppState::new
+                    // generates a fresh one.
+                    let _ = crate::server::state::rotate_auth_token();
+                    println!("auth token rotated at ~/.crosslink/.dashboard-token");
+                }
 
                 // Server owns the poll loop + shutdown coordination
                 // now (see `server::run_with_dashboard_db`) — that's
@@ -3207,10 +3220,7 @@ fn main() -> Result<()> {
                     );
                     return Ok(());
                 }
-                println!(
-                    "{:<40} {:<10} {}",
-                    "SLUG", "TRACKED?", "PATH"
-                );
+                println!("{:<40} {:<10} PATH", "SLUG", "TRACKED?");
                 for h in &hits {
                     println!(
                         "{:<40} {:<10} {}",

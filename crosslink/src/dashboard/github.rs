@@ -45,7 +45,7 @@ struct Sealed {
 }
 
 /// Derive the 32-byte AES key for this machine. SHA-256 of
-/// (machine_id || username || "crosslink-dashboard-pat-v1"). If
+/// (`machine_id` || `username` || `"crosslink-dashboard-pat-v1"`). If
 /// `/etc/machine-id` isn't readable, falls back to hostname and
 /// finally a random key persisted alongside the DB.
 fn derive_machine_key(db_path: &std::path::Path) -> [u8; 32] {
