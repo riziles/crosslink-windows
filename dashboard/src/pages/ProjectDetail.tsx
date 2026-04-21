@@ -151,7 +151,7 @@ export function ProjectDetail() {
   );
 }
 
-function OpenIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
+export function OpenIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
   const [commentOpen, setCommentOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -416,7 +416,7 @@ function OpenIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
   );
 }
 
-function NewMilestoneForm({ slug }: { slug: string }) {
+export function NewMilestoneForm({ slug }: { slug: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -495,7 +495,7 @@ function NewMilestoneForm({ slug }: { slug: string }) {
   );
 }
 
-function ClosedIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
+export function ClosedIssueRow({ slug, issue }: { slug: string; issue: IssueFile }) {
   const reopen = useReopenIssue(slug);
   const id = issue.display_id;
   const canAct = id != null;
@@ -563,7 +563,7 @@ function agentRows(
   );
 }
 
-function AgentRow({
+export function AgentRow({
   slug,
   agentId,
   lastHeartbeat,
@@ -726,7 +726,7 @@ function AgentRow({
   );
 }
 
-function LockRow({ slug, lock }: { slug: string; lock: LockEntry }) {
+export function LockRow({ slug, lock }: { slug: string; lock: LockEntry }) {
   const release = useReleaseLock(slug);
   const steal = useStealLock(slug);
   const error = release.error?.message ?? steal.error?.message;
