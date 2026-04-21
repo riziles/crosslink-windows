@@ -101,8 +101,8 @@ pub async fn run_cli(
         !p.components()
             .any(|c| c.as_os_str() == std::ffi::OsStr::new("deps"))
     });
-    let cmd_name: std::ffi::OsString = usable_self
-        .map_or_else(|| "crosslink".into(), |p| p.as_os_str().to_os_string());
+    let cmd_name: std::ffi::OsString =
+        usable_self.map_or_else(|| "crosslink".into(), |p| p.as_os_str().to_os_string());
     let output = Command::new(&cmd_name)
         .current_dir(&project.clone_path)
         .args(args)

@@ -32,6 +32,9 @@ pub struct AppState {
     /// path. Dashboard API handlers open fresh connections from this
     /// path per request (`SQLite` opens are cheap).
     pub dashboard_db_path: Option<PathBuf>,
+    /// In-process registry of live PTY sessions backing the embedded
+    /// terminal. Empty until the first `/api/v1/pty` POST.
+    pub pty_registry: crate::dashboard::pty::SessionRegistry,
 }
 
 impl AppState {
@@ -45,6 +48,7 @@ impl AppState {
             ws_tx,
             auth_token,
             dashboard_db_path: None,
+            pty_registry: crate::dashboard::pty::SessionRegistry::new(),
         }
     }
 

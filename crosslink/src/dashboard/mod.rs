@@ -26,4 +26,6 @@ pub mod api;
 pub mod db;
 pub mod poll;
 pub mod projects;
+pub mod pty;
+pub mod pty_api;
 pub mod reader;

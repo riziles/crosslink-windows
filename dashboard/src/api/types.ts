@@ -115,6 +115,22 @@ export interface ApiError {
   status: number;
 }
 
+export interface PtySession {
+  id: string;
+  project_slug: string;
+  command: string;
+  started_at: string;
+  exit_code: number | null;
+}
+
+export interface PtySpawnRequest {
+  project_slug: string;
+  command: string;
+  args?: string[];
+  rows?: number;
+  cols?: number;
+}
+
 export type AlertSeverity = "info" | "warning" | "critical";
 
 export interface AlertItem {

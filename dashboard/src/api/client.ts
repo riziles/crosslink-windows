@@ -6,7 +6,13 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { AlertItem, ProjectDetail, ProjectListItem } from "./types";
+import type {
+  AlertItem,
+  ProjectDetail,
+  ProjectListItem,
+  PtySession,
+  PtySpawnRequest,
+} from "./types";
 
 const API_BASE = "/api/v1/dashboard";
 
@@ -333,6 +339,55 @@ export function useStealLock(slug: string) {
     mutationFn: (issueId: number) =>
       apiPost<ActionResponse>(`/w/${slug}/locks/${issueId}/steal`),
     onSuccess: () => invalidate(),
+  });
+}
+
+/// Live PTY sessions across all projects. Refetched lazily; the
+/// terminal page renders this list.
+export function usePtySessions() {
+  return useQuery<PtySession[], ApiRequestError>({
+    queryKey: ["pty", "sessions"],
+    queryFn: async () => {
+      const resp = await fetch("/api/v1/pty/sessions", {
+        headers: { Accept: "application/json" },
+      });
+      if (!resp.ok) {
+        throw new ApiRequestError(resp.status, `HTTP ${resp.status}`);
+      }
+      return (await resp.json()) as PtySession[];
+    },
+    refetchInterval: REFETCH_MS,
+  });
+}
+
+/// Spawn a new PTY session on the server. Returns the session id;
+/// the caller then opens `ws://.../ws/pty/<id>` to attach.
+export function useSpawnPty() {
+  const client = useQueryClient();
+  return useMutation<PtySession, ApiRequestError, PtySpawnRequest>({
+    mutationFn: async (req) => {
+      const resp = await fetch("/api/v1/pty", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(req),
+      });
+      if (!resp.ok) {
+        let message = `HTTP ${resp.status}`;
+        try {
+          const body = (await resp.json()) as { error?: string };
+          if (body.error) message = body.error;
+        } catch {
+          // non-JSON; fall back
+        }
+        throw new ApiRequestError(resp.status, message);
+      }
+      return (await resp.json()) as PtySession;
+    },
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: ["pty", "sessions"] }),
   });
 }
 

@@ -32,6 +32,8 @@
     "react-router-dom": "^7.14.1",
     "recharts": "^3.8.0",
     "tailwind-merge": "^3.3.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
