@@ -68,7 +68,7 @@ fn parse_slug(slug: &str) -> Result<(&str, &str)> {
 ///
 /// Returns `None` if the URL doesn't match an obvious "host/owner/repo"
 /// shape — callers fall back to `--slug` in that case.
-fn slug_from_remote_url(url: &str) -> Option<String> {
+pub(super) fn slug_from_remote_url(url: &str) -> Option<String> {
     let url = url.trim().trim_end_matches(".git");
     // ssh form: git@host:owner/repo
     if let Some((host_part, path_part)) = url.split_once(':') {

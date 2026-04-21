@@ -901,6 +901,25 @@ enum DashboardCommands {
     },
     /// List tracked repositories.
     List,
+    /// Scan local filesystem for crosslink-enabled repos and
+    /// (optionally) track the hits. Looks for directories that are
+    /// both git repos and have a `.crosslink/` directory at the root.
+    ///
+    /// Roots are bounded by `--depth` and skip standard noise
+    /// directories (`node_modules`, `target`, hidden dirs, etc.) so
+    /// a full `$HOME` scan typically finishes in under a second.
+    Discover {
+        /// Root directory to walk. Repeatable. Defaults to `$HOME`.
+        #[arg(long)]
+        root: Vec<PathBuf>,
+        /// Maximum directory depth below each root. Default 4.
+        #[arg(long, default_value_t = crate::dashboard::discover::DEFAULT_DEPTH)]
+        depth: usize,
+        /// Track every discovered repo that isn't already tracked.
+        /// Without this flag the command only reports.
+        #[arg(long)]
+        track: bool,
+    },
 }
 
 /// Helper enum for `crosslink issues <subcommand>` alias
@@ -3159,6 +3178,63 @@ fn main() -> Result<()> {
             }
             DashboardCommands::Untrack { slug } => dashboard::projects::untrack(&slug),
             DashboardCommands::List => dashboard::projects::list(),
+            DashboardCommands::Discover {
+                root,
+                depth,
+                track,
+            } => {
+                let opts = if root.is_empty() {
+                    let mut o = dashboard::discover::DiscoverOptions::defaults();
+                    o.depth = depth;
+                    o
+                } else {
+                    dashboard::discover::DiscoverOptions {
+                        roots: root,
+                        depth,
+                    }
+                };
+                let db_path = dashboard::db::DashboardDb::default_path()?;
+                let db = dashboard::db::DashboardDb::open(&db_path)?;
+                let hits = dashboard::discover::discover(&db, &opts)?;
+                if hits.is_empty() {
+                    println!(
+                        "No crosslink-enabled repos found under: {}",
+                        opts.roots
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    return Ok(());
+                }
+                println!(
+                    "{:<40} {:<10} {}",
+                    "SLUG", "TRACKED?", "PATH"
+                );
+                for h in &hits {
+                    println!(
+                        "{:<40} {:<10} {}",
+                        h.slug,
+                        if h.already_tracked { "yes" } else { "no" },
+                        h.path.display()
+                    );
+                }
+                if track {
+                    let to_track: Vec<_> =
+                        hits.iter().filter(|h| !h.already_tracked).collect();
+                    if to_track.is_empty() {
+                        println!("\nAll {} hits already tracked.", hits.len());
+                    } else {
+                        println!("\nTracking {} new repo(s)…", to_track.len());
+                        for h in to_track {
+                            if let Err(e) = dashboard::projects::track(&h.path, None) {
+                                eprintln!("  {}: {e}", h.slug);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
         },
         Commands::Serve {
             port,
