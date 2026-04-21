@@ -80,13 +80,24 @@ impl WriteCapability {
 ///
 /// Pure filesystem check — no subprocess, no git touch. Safe to call
 /// on every API serialization.
+///
+/// Agent-readiness check: modern crosslink (post-agent.json era)
+/// needs `.crosslink/agent.json` for `locks steal`, `locks release`,
+/// and similar agent-scoped operations. Older workspaces initialised
+/// before the agent.json migration have `driver-key.pub` but no
+/// `agent.json` — dashboard writes that only need signing work fine,
+/// but anything agent-scoped fails with "No agent configured". We
+/// require BOTH files for `Ready` so the dashboard's Init banner
+/// surfaces the gap and the retrofit endpoint can fix it.
 #[must_use]
 pub fn write_capability(clone_path: &Path) -> WriteCapability {
     let cl = clone_path.join(".crosslink");
     if !cl.join("issues.db").is_file() {
         return WriteCapability::NotInitialized;
     }
-    if !cl.join("driver-key.pub").is_file() {
+    let has_driver_key = cl.join("driver-key.pub").is_file();
+    let has_agent_json = cl.join("agent.json").is_file();
+    if !has_driver_key || !has_agent_json {
         return WriteCapability::AgentMissing;
     }
     WriteCapability::Ready
@@ -157,6 +168,75 @@ fn extract_owner_repo(path_part: &str) -> Option<String> {
     let owner = parts[parts.len() - 2];
     let repo = parts[parts.len() - 1];
     Some(format!("{owner}/{repo}"))
+}
+
+/// Best-effort detection of the repository's default branch name.
+///
+/// Cascade:
+/// 1. `git symbolic-ref refs/remotes/origin/HEAD` — what the remote
+///    advertised at clone time. Produces `refs/remotes/origin/main`
+///    or similar. Most reliable when the remote was cloned normally.
+/// 2. `git remote show origin | grep "HEAD branch:"` — re-queries
+///    the remote. Works when HEAD isn't locally recorded but is
+///    available over the network.
+/// 3. Try `main`, then `master` as rev-parse candidates — whichever
+///    the repo actually has.
+///
+/// Returns `None` if none of the above yield a branch name. The
+/// caller falls back to `"main"` since that's the modern default
+/// and usually right even when detection fails.
+fn detect_default_branch(clone_path: &Path) -> Option<String> {
+    // 1. symbolic-ref against the locally-recorded remote HEAD.
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(clone_path)
+        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // Output is e.g. "origin/main" — strip the "origin/" prefix.
+        if let Some(branch) = s.strip_prefix("origin/") {
+            if !branch.is_empty() {
+                return Some(branch.to_string());
+            }
+        }
+    }
+
+    // 2. `git remote show origin` — network-scoped but authoritative.
+    // Parses `HEAD branch: main` out of the human-readable output.
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(clone_path)
+        .args(["remote", "show", "origin"])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let t = line.trim();
+            if let Some(branch) = t.strip_prefix("HEAD branch:") {
+                let branch = branch.trim();
+                if !branch.is_empty() && branch != "(unknown)" {
+                    return Some(branch.to_string());
+                }
+            }
+        }
+    }
+
+    // 3. Literal guesses — whichever branch exists locally.
+    for candidate in ["main", "master"] {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(clone_path)
+            .args(["rev-parse", "--verify", &format!("refs/heads/{candidate}")])
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if ok {
+            return Some(candidate.to_string());
+        }
+    }
+
+    None
 }
 
 /// Run `git -C <path> remote get-url origin` and return the URL.
@@ -458,6 +538,7 @@ pub fn track_at_path(clone_path: &Path, slug_override: Option<&str>, db_path: &P
     let canonical = clone_path
         .canonicalize()
         .unwrap_or_else(|_| clone_path.to_path_buf());
+    let default_branch = detect_default_branch(&canonical).unwrap_or_else(|| "main".into());
     let now = chrono::Utc::now().to_rfc3339();
     db.conn.execute(
         "INSERT INTO projects (slug, clone_path, default_branch, status, added_at)
@@ -465,7 +546,7 @@ pub fn track_at_path(clone_path: &Path, slug_override: Option<&str>, db_path: &P
         params![
             slug,
             canonical.to_string_lossy().as_ref(),
-            "main", // TODO: detect actual default branch via git symbolic-ref
+            default_branch,
             now
         ],
     )?;
@@ -689,12 +770,27 @@ mod tests {
     }
 
     #[test]
-    fn test_write_capability_ready_when_both_present() {
+    fn test_write_capability_agent_missing_when_agent_json_absent() {
+        // Older-layout workspace with driver-key.pub but no agent.json
+        // — agent-scoped operations like `locks steal` fail with
+        // "No agent configured". Must surface as AgentMissing so the
+        // dashboard's InitBanner offers the retrofit.
         let dir = tempdir().unwrap();
         let cl = dir.path().join(".crosslink");
         std::fs::create_dir_all(&cl).unwrap();
         std::fs::write(cl.join("issues.db"), []).unwrap();
         std::fs::write(cl.join("driver-key.pub"), b"ssh-ed25519 AAAA...").unwrap();
+        assert_eq!(write_capability(dir.path()), WriteCapability::AgentMissing);
+    }
+
+    #[test]
+    fn test_write_capability_ready_when_all_present() {
+        let dir = tempdir().unwrap();
+        let cl = dir.path().join(".crosslink");
+        std::fs::create_dir_all(&cl).unwrap();
+        std::fs::write(cl.join("issues.db"), []).unwrap();
+        std::fs::write(cl.join("driver-key.pub"), b"ssh-ed25519 AAAA...").unwrap();
+        std::fs::write(cl.join("agent.json"), b"{\"agent_id\":\"x\"}").unwrap();
         assert_eq!(write_capability(dir.path()), WriteCapability::Ready);
     }
 

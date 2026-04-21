@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Design doc for GH issue #367 (#203)
+- Integrate pre-flight check improvements for kickoff command: consolidate the inline prerequisite checks in run() and plan() with a unified preflight_check function that adds resolve_timeout_command() for macOS gtimeout support, PreflightResult struct that threads timeout_cmd through to launch_local() and plan(), and detailed platform-specific install instructions. Keep existing tests intact. Reference the worktree version at .worktrees/kickoff-pre-flight-check-for-required-external-commands-e-g/crosslink/src/commands/kickoff.rs for the target implementation. (#151)
+- TUI: fix issues tab scroll and improve startup/tab-switch latency. Two bugs: (1) Issues tab scroll is broken - selection cursor moves past visible area but list doesn't scroll to follow, viewport never advances. Fix so selected entry is always visible. (2) Startup and tab-switch latency - noticeable delay on launch and switching to Agents tab from synchronous data loading. Introduce TUI-local cache that populates display immediately with stale/empty state, then updates asynchronously once real data arrives. See GitHub issue #240. (#150)
+- Add agent prompting norms for saving research to knowledge repo (#80)
 - Phase 4.1: GitHub PAT storage + token management endpoint (GH #429) (#701)
 - Dashboard: detect + remedy tracked clones without crosslink init / agent config (#710)
 - Dashboard: make alerts clickable to expand with actions (#708)
@@ -96,6 +100,9 @@ new subcommand for log-scraping continuity.
 - Auto-discover rule files and command files from resources directories in `build.rs` ([CL-387])
 
 ### Fixed
+- Fix piped shell commands in skill templates that fail permission checks (#254)
+- Fix hub cache recovery loop caused by tracked .hub-write-lock file (#634)
+- Fix auth token refresh (#146)
 - Alert lock actions: surface holder + disambiguate Release vs Steal (#716)
 - Dashboard InitBanner doesn't refresh on init success + track-all init fails on subset of repos (#715)
 - Clone target should be $HOME/<repo>, not $HOME/<owner>/<repo> (#714)
@@ -136,6 +143,9 @@ new subcommand for log-scraping continuity.
 - Add `INTENTIONAL` comments to deliberate error suppression patterns ([CL-419])
 
 ### Changed
+- Release v0.6.0 — version bump, changelog, docs, tests (#258)
+- Add VHS tape and screenshot scripts for docs visuals (#131)
+- Manual test container-based agent execution (#73)
 - Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
 - Repo cleanup: migrate design docs to knowledge, move docs, remove root scripts (#171)
 - Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
