@@ -96,6 +96,7 @@ new subcommand for log-scraping continuity.
 - Auto-discover rule files and command files from resources directories in `build.rs` ([CL-387])
 
 ### Fixed
+- Clone target should be $HOME/<repo>, not $HOME/<owner>/<repo> (#714)
 - Resolve crosslink binary via PATH first, not current_exe (#713)
 - InitBanner error 'spawn crosslink init' hides the real underlying cause (#712)
 - Change default clone_root from ~/crosslink-tracked to $HOME (#711)
