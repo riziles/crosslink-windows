@@ -41,7 +41,10 @@ ratatui = "0.30"
 crossterm = "0.29"
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+rust-embed = "8"
+mime_guess = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 notify = "6"
 toml = "0.8"
 sha2 = "0.10"
@@ -49,6 +52,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 hmac = "0.12"
 hex = "0.4.3"
+ulid = { version = "1", features = ["serde"] }
+portable-pty = "0.9"
+base64 = "0.22"
+aes-gcm = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = "3"

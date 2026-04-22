@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Design doc for GH issue #367 (#203)
+- Integrate pre-flight check improvements for kickoff command: consolidate the inline prerequisite checks in run() and plan() with a unified preflight_check function that adds resolve_timeout_command() for macOS gtimeout support, PreflightResult struct that threads timeout_cmd through to launch_local() and plan(), and detailed platform-specific install instructions. Keep existing tests intact. Reference the worktree version at .worktrees/kickoff-pre-flight-check-for-required-external-commands-e-g/crosslink/src/commands/kickoff.rs for the target implementation. (#151)
+- TUI: fix issues tab scroll and improve startup/tab-switch latency. Two bugs: (1) Issues tab scroll is broken - selection cursor moves past visible area but list doesn't scroll to follow, viewport never advances. Fix so selected entry is always visible. (2) Startup and tab-switch latency - noticeable delay on launch and switching to Agents tab from synchronous data loading. Introduce TUI-local cache that populates display immediately with stale/empty state, then updates asynchronously once real data arrives. See GitHub issue #240. (#150)
+- Add agent prompting norms for saving research to knowledge repo (#80)
+- Phase 4.1: GitHub PAT storage + token management endpoint (GH #429) (#701)
+- Dashboard: detect + remedy tracked clones without crosslink init / agent config (#710)
+- Dashboard: make alerts clickable to expand with actions (#708)
+- crosslink dashboard discover: filesystem autodiscovery of crosslink-enabled repos (GH #429 followup) (#705)
+- Write DESIGN-CROSSLINK-OPS.md (GH #429 followup) (#688)
+- Phase 5.3: dashboard polish — theme toggle + audible alerts + preferences page (GH #429) (#704)
+- Phase 5.2: dashboard webhook alerting — outbound Slack/Discord/generic JSON on alert fire (GH #429) (#703)
+- Phase 5.1: dashboard export — projects.csv + alerts.csv endpoints + UI download buttons (GH #429) (#702)
+- Phase 4.1: GitHub PAT storage + token management endpoint (GH #429) (#701)
+
+#### Dashboard — multi-project control panel ([GH-429])
+
+- `crosslink dashboard serve` — new SCADA-style panel replacing
+  `crosslink serve`'s single-project focus. Aggregates every tracked
+  project into one view with live tiles, alerts, and full CLI parity
+  for writes.
+- `crosslink dashboard track <path>` / `untrack` / `list` — point the
+  panel at user's existing project workspaces (no private clones).
+- 5-second poll loop per project: git fetch → hub snapshot → counters +
+  derived alerts → SQLite persistence → WebSocket fanout.
+- Alerts surface: `stale_lock`, `silent_agent`, `overdue_issue`,
+  `orphan_subissue`, `unreachable_project` — open/resolve reconciled
+  against derived set on every tick.
+- Write surface (shell out through `run_cli` primitive; every
+  invocation audited to the `actions` table with actor + verb +
+  outcome):
+  - Issues: close, reopen, comment, block, unblock, relate, label,
+    unlabel
+  - Milestones: create (with optional description), add issue,
+    remove issue, close
+  - Locks: claim (with optional branch), release, steal
+  - Agents: send control request (kill / pause / resume / reprioritise)
+    via the git-native protocol from design doc §9
+- Git-native agent control protocol:
+  - `crosslink agent request <target> <kind>` writes a signed JSON
+    under `agents/<target>/requests/` on the hub branch.
+  - `crosslink agent poll-requests` (run automatically every
+    `crosslink sync`) translates incoming requests into local
+    control flags under `.crosslink/agent-flags/` and writes an
+    ack back to the hub so the dashboard shows outcome status.
+  - `crosslink agent requests` lists pending/acked requests for
+    triage.
+- Per-user SQLite index at `~/.crosslink/dashboard.db` with 7 tables
+  (projects, project_state, alerts, pty_sessions, actions, activity,
+  config).
+- React + Vite frontend embedded via `rust-embed`, bundled with the
+  binary. New IA: project grid (default), per-project detail (issues
+  with inline label chips + comment/label/block/relate drawers,
+  agents, locks with Release + Steal controls, milestones with
+  create form), /alerts page grouped by severity.
+- Deprecates `crosslink serve` — prints a warning pointing users at
+  `crosslink dashboard serve`.
+
+`crosslink serve`'s legacy JSON log format is preserved under the
+new subcommand for log-scraping continuity.
+
 ## [0.5.2] - 2026-03-19
 
 ### Added
@@ -39,6 +100,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Auto-discover rule files and command files from resources directories in `build.rs` ([CL-387])
 
 ### Fixed
+- Signing: human key always signs hub commits; agent keys only for identity (#718)
+- Fix piped shell commands in skill templates that fail permission checks (#254)
+- Fix hub cache recovery loop caused by tracked .hub-write-lock file (#634)
+- Fix auth token refresh (#146)
+- Alert lock actions: surface holder + disambiguate Release vs Steal (#716)
+- Dashboard InitBanner doesn't refresh on init success + track-all init fails on subset of repos (#715)
+- Clone target should be $HOME/<repo>, not $HOME/<owner>/<repo> (#714)
+- Resolve crosslink binary via PATH first, not current_exe (#713)
+- InitBanner error 'spawn crosslink init' hides the real underlying cause (#712)
+- Change default clone_root from ~/crosslink-tracked to $HOME (#711)
+- Alerts page mutations don't invalidate alerts query; orphan_subissue close appears to no-op (#709)
+- Dashboard polish: token refresh UX + issue ordering + remote-repo hub data missing (#707)
+- Dashboard: project detail page blank on click + gh CLI auth fallback (#706)
+- Fix crosslink init: deploy agent-prompt-server.py (GH#554) (#677)
+- Fix kickoff env propagation: CLAUDE_CONFIG_DIR not reaching tmux agent (GH#555) (#676)
+- Fix dashboard auth: wire API client to bearer token (GH#556) (#675)
 
 #### Hub & Sync
 - V1/V2 hub layout coexistence — resolve inconsistent write paths and cache corruption ([GH-428])
@@ -67,6 +144,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Add `INTENTIONAL` comments to deliberate error suppression patterns ([CL-419])
 
 ### Changed
+- Release v0.6.0 — version bump, changelog, docs, tests (#258)
+- Add VHS tape and screenshot scripts for docs visuals (#131)
+- Manual test container-based agent execution (#73)
+- Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
+- Repo cleanup: migrate design docs to knowledge, move docs, remove root scripts (#171)
+- Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
+- Repo cleanup: migrate design docs to knowledge, move docs, remove root scripts (#171)
+- Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
+- Repo cleanup: migrate design docs to knowledge, move docs, remove root scripts (#171)
+- Configure GitHub rulesets for release/* branches and create RELEASING.md (#170)
+- Repo cleanup: migrate design docs to knowledge, move docs, remove root scripts (#171)
+- P1.11: agent request protocol — hub-branch agents/<id>/requests/*.json + agent-side polling lib + kill/pause/resume/reprioritise verbs + audit log (#700)
+- P1.10: lock controls — claim, release, steal (#699)
+- P1.9: write surface — milestones + relations + blockers (#698)
+- P1.8: write surface — issues + labels (close, reopen, comment, update, label, unlabel) (#697)
+- P1.7: alert UI — banner, sidebar rail, /alerts page, desktop notifications (#696)
+- P1.6: alert engine — derived alerts (stale_lock, silent_agent, overdue_issue, ci_failure, unreachable, signature_invalid, orphan_subissue, hub_diverged, hub_parse_error, untrusted_signer, pending_request, compaction_lag) (#695)
+- P1.5: WebSocket live updates — push change notifications, frontend refetch-on-signal (#694)
+- P1.4: project grid (read-only frontend) — tile component, fetch projects, show counts (#693)
+- P1.3: REST API — projects + activity endpoints, bearer auth (#692)
+- P1.2: poll loop + single-project index — git-fetch every 5s, populate projects/project_state/activity (#691)
+- P1.1: scaffolding — crosslink dashboard subcommand + serve deprecation + empty SPA + SQLite bootstrap (#690)
+- Manual QA for PR #553 sentinel run + webhook tests (#678)
+- Manual QA for PR #553 sentinel run + webhook tests (#678)
 
 #### Codebase Decomposition
 - Decompose 6 god files into focused submodules — `shared_writer.rs`, `kickoff.rs`, `db.rs`, `sync.rs`, `knowledge.rs`, `commands/knowledge.rs` ([CL-413])

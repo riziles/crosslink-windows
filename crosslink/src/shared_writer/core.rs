@@ -44,7 +44,7 @@ pub(super) const LOCK_CONFIRM_TIMEOUT_SECS: u64 = 30;
 
 /// Outcome of a `write_commit_push` operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PushOutcome {
+pub enum PushOutcome {
     /// Commit was pushed to remote successfully.
     Pushed,
     /// Commit was saved locally but push failed (offline or all retries exhausted).
@@ -346,6 +346,187 @@ impl SharedWriter {
                         tracing::warn!(
                             "Warning: push failed after {} retries (conflict), changes saved locally only: {}",
                             MAX_RETRIES, message
+                        );
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(PushOutcome::Pushed)
+    }
+
+    /// Write an agent control request to the hub branch.
+    ///
+    /// Drops a JSON file at `agents/<target_agent_id>/requests/<request_id>.json`
+    /// on `crosslink/hub`, commits it (signed by the driver's key if
+    /// available), and pushes. The filename is lex-sortable so the
+    /// target agent's poll loop processes requests in arrival order.
+    ///
+    /// Conflict recovery mirrors [`emit_compact_push`]: on push rejection
+    /// we rebase onto remote hub and retry, falling back to `LocalOnly`
+    /// after [`MAX_RETRIES`] so the driver is never blocked by a noisy
+    /// hub.
+    ///
+    /// # Errors
+    /// Returns an error if the cache can't be prepared, the write/commit
+    /// fails for a reason other than push conflict, or the request's
+    /// JSON encoding fails.
+    pub fn write_agent_request(
+        &self,
+        target_agent_id: &str,
+        request: &crate::agent_requests::AgentRequest,
+    ) -> Result<PushOutcome> {
+        // Serialize access to the hub cache (#372).
+        let _lock_guard = self.sync.acquire_lock()?;
+
+        let rel_path = crate::agent_requests::request_path(target_agent_id, &request.request_id);
+        let abs_path = self.cache_dir.join(&rel_path);
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create agent request dir {}", parent.display()))?;
+        }
+
+        let body = serde_json::to_vec_pretty(request).context("serialize agent request")?;
+        std::fs::write(&abs_path, &body)
+            .with_context(|| format!("write agent request {}", abs_path.display()))?;
+
+        let rel_str = rel_path.to_string_lossy().into_owned();
+
+        let commit_msg = format!(
+            "{}: agent request {} ({:?}) for {} at {}",
+            self.agent.agent_id,
+            request.request_id,
+            request.kind,
+            target_agent_id,
+            Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
+        );
+
+        for attempt in 0..MAX_RETRIES {
+            self.git_in_cache(&["add", &rel_str])?;
+            let commit_result = self.git_commit_in_cache(&commit_msg);
+            if let Err(ref e) = commit_result {
+                let err_str = e.to_string();
+                if err_str.contains("nothing to commit") || err_str.contains("no changes added") {
+                    return Ok(PushOutcome::Pushed);
+                }
+            }
+            commit_result?;
+
+            let remote = self.sync.remote();
+            let push_result = self.git_in_cache(&["push", remote, crate::sync::HUB_BRANCH]);
+            match push_result {
+                Ok(_) => return Ok(PushOutcome::Pushed),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Could not resolve host")
+                        || err_str.contains("Could not read from remote")
+                    {
+                        tracing::warn!(
+                            "Warning: push failed (offline), agent request saved locally: {}",
+                            request.request_id
+                        );
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
+                        if attempt < MAX_RETRIES - 1 {
+                            self.check_divergence()?;
+                            self.recover_from_push_conflict(remote)?;
+                            // Request file survives the rebase — re-add + retry.
+                            continue;
+                        }
+                        tracing::warn!(
+                            "Warning: push failed after {} retries (conflict), agent request saved locally: {}",
+                            MAX_RETRIES, request.request_id
+                        );
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(PushOutcome::Pushed)
+    }
+
+    /// Write an ack for a previously-received agent request.
+    ///
+    /// Drops a JSON file at `agents/<target_agent_id>/requests/<request_id>.ack.json`
+    /// on `crosslink/hub`, committed + pushed under the current agent's
+    /// identity. Drivers (dashboard) diff `requests/*.json` vs
+    /// `requests/*.ack.json` to render request state.
+    ///
+    /// Follows the same rebase-retry / offline-fallback pattern as
+    /// [`Self::write_agent_request`] so an offline agent still writes
+    /// the ack locally for the next successful sync.
+    ///
+    /// # Errors
+    /// Returns an error if the cache can't be prepared, the write/commit
+    /// fails for a reason other than push conflict, or the ack's JSON
+    /// encoding fails.
+    pub fn write_agent_ack(
+        &self,
+        target_agent_id: &str,
+        ack: &crate::agent_requests::AgentRequestAck,
+    ) -> Result<PushOutcome> {
+        let _lock_guard = self.sync.acquire_lock()?;
+
+        let rel_path = crate::agent_requests::requests_dir(target_agent_id)
+            .join(format!("{}.ack.json", ack.request_id));
+        let abs_path = self.cache_dir.join(&rel_path);
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create agent request dir {}", parent.display()))?;
+        }
+
+        let body = serde_json::to_vec_pretty(ack).context("serialize agent request ack")?;
+        std::fs::write(&abs_path, &body)
+            .with_context(|| format!("write agent request ack {}", abs_path.display()))?;
+
+        let rel_str = rel_path.to_string_lossy().into_owned();
+        let commit_msg = format!(
+            "{}: ack agent request {} ({}) for {} at {}",
+            self.agent.agent_id,
+            ack.request_id,
+            if ack.acted { "acted" } else { "rejected" },
+            target_agent_id,
+            Utc::now().format("%Y-%m-%dT%H:%M:%SZ")
+        );
+
+        for attempt in 0..MAX_RETRIES {
+            self.git_in_cache(&["add", &rel_str])?;
+            let commit_result = self.git_commit_in_cache(&commit_msg);
+            if let Err(ref e) = commit_result {
+                let err_str = e.to_string();
+                if err_str.contains("nothing to commit") || err_str.contains("no changes added") {
+                    return Ok(PushOutcome::Pushed);
+                }
+            }
+            commit_result?;
+
+            let remote = self.sync.remote();
+            let push_result = self.git_in_cache(&["push", remote, crate::sync::HUB_BRANCH]);
+            match push_result {
+                Ok(_) => return Ok(PushOutcome::Pushed),
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("Could not resolve host")
+                        || err_str.contains("Could not read from remote")
+                    {
+                        tracing::warn!(
+                            "Warning: ack push failed (offline), saved locally: {}",
+                            ack.request_id
+                        );
+                        return Ok(PushOutcome::LocalOnly);
+                    }
+                    if err_str.contains("rejected") || err_str.contains("non-fast-forward") {
+                        if attempt < MAX_RETRIES - 1 {
+                            self.check_divergence()?;
+                            self.recover_from_push_conflict(remote)?;
+                            continue;
+                        }
+                        tracing::warn!(
+                            "Warning: ack push failed after {} retries (conflict), saved locally: {}",
+                            MAX_RETRIES, ack.request_id
                         );
                         return Ok(PushOutcome::LocalOnly);
                     }

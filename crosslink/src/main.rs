@@ -42,11 +42,14 @@
 // See https://github.com/rust-lang/rust-clippy/issues for the underlying span bug.
 #![allow(clippy::large_stack_arrays)]
 
+mod agent_flags;
+mod agent_requests;
 mod checkpoint;
 mod clock_skew;
 mod commands;
 mod compaction;
 mod daemon;
+mod dashboard;
 mod db;
 mod events;
 mod external;
@@ -346,7 +349,20 @@ enum Commands {
         #[arg(long, default_value = "tiled")]
         layout: String,
     },
-    /// Start the crosslink web dashboard server
+    /// Multi-project SCADA-style control panel (GH #429).
+    ///
+    /// Group command: `crosslink dashboard serve` runs the local server,
+    /// `track`/`untrack`/`list` manage the tracked-project set. See
+    /// DESIGN-CROSSLINK-DASHBOARD.md for the architecture.
+    Dashboard {
+        #[command(subcommand)]
+        action: DashboardCommands,
+    },
+    /// Deprecated: alias for `crosslink dashboard`.
+    ///
+    /// Will be removed in a future release. See GH #429 and
+    /// DESIGN-CROSSLINK-DASHBOARD.md §17 for the deprecation timeline.
+    #[command(hide = true)]
     Serve {
         /// Port to listen on
         #[arg(long, default_value = "3100")]
@@ -851,6 +867,80 @@ enum MigrateCommands {
     RenameBranch,
 }
 
+/// Subcommands for `crosslink dashboard` (GH #429).
+#[derive(Subcommand)]
+enum DashboardCommands {
+    /// Start the dashboard server (binds 127.0.0.1:3100 by default).
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "3100")]
+        port: u16,
+        /// Override bundled dashboard assets with a local build output
+        /// (development only — bundled assets are preferred otherwise)
+        #[arg(long)]
+        dashboard_dir: Option<PathBuf>,
+        /// Force-rotate the persisted auth token at
+        /// `~/.crosslink/.dashboard-token`. Without this flag the
+        /// server reuses the existing token so open browser tabs keep
+        /// working across binary rebuilds.
+        #[arg(long)]
+        rotate_token: bool,
+    },
+    /// Track a repository by pointing at your existing local working copy.
+    ///
+    /// The dashboard reads hub state and shells out to the real
+    /// `crosslink` CLI in this workspace for write operations — so no
+    /// extra setup is needed beyond a normal `git clone` +
+    /// `crosslink init` of the target project.
+    ///
+    /// Pass `--init --agent-id <ID>` to run `crosslink init` +
+    /// `crosslink agent init` in the workspace after tracking, so
+    /// dashboard write actions (close, release, etc.) work without
+    /// a manual bootstrap step.
+    Track {
+        /// Path to a locally-cloned crosslink-managed repository.
+        path: PathBuf,
+        /// Override the owner/repo slug (default: derived from origin URL).
+        #[arg(long)]
+        slug: Option<String>,
+        /// Run `crosslink init --defaults` + `crosslink agent init` in
+        /// the workspace after tracking. Requires `--agent-id`.
+        #[arg(long)]
+        init: bool,
+        /// Agent identifier for `crosslink agent init`. Required when
+        /// `--init` is passed.
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
+    /// Stop tracking a repository. The user's working copy is left
+    /// untouched — only the dashboard's DB row is removed.
+    Untrack {
+        /// Repository slug to stop tracking
+        slug: String,
+    },
+    /// List tracked repositories.
+    List,
+    /// Scan local filesystem for crosslink-enabled repos and
+    /// (optionally) track the hits. Looks for directories that are
+    /// both git repos and have a `.crosslink/` directory at the root.
+    ///
+    /// Roots are bounded by `--depth` and skip standard noise
+    /// directories (`node_modules`, `target`, hidden dirs, etc.) so
+    /// a full `$HOME` scan typically finishes in under a second.
+    Discover {
+        /// Root directory to walk. Repeatable. Defaults to `$HOME`.
+        #[arg(long)]
+        root: Vec<PathBuf>,
+        /// Maximum directory depth below each root. Default 4.
+        #[arg(long, default_value_t = crate::dashboard::discover::DEFAULT_DEPTH)]
+        depth: usize,
+        /// Track every discovered repo that isn't already tracked.
+        /// Without this flag the command only reports.
+        #[arg(long)]
+        track: bool,
+    },
+}
+
 /// Helper enum for `crosslink issues <subcommand>` alias
 #[derive(Subcommand)]
 enum IssuesAliasCommands {
@@ -1092,6 +1182,15 @@ enum AgentCommands {
         /// Overwrite existing agent configuration
         #[arg(long)]
         force: bool,
+        /// Role this identity plays — `driver` for the main human-
+        /// operated workspace (commits sign with the driver's
+        /// GitHub-registered key), `agent` for subagent worktrees
+        /// spawned by kickoff/swarm (commits sign with the agent's
+        /// own key for attribution). Default: `agent` — preserves
+        /// pre-#718 behaviour for kickoff/swarm flows; dashboard
+        /// retrofits pass `--role driver` explicitly.
+        #[arg(long, value_parser = ["driver", "agent"])]
+        role: Option<String>,
     },
     /// Show current agent identity
     Status,
@@ -1125,6 +1224,46 @@ enum AgentCommands {
         /// Target directory (default: current directory)
         #[arg(long, default_value = ".")]
         target: String,
+    },
+    /// Send a control request to an agent via the hub branch
+    ///
+    /// Writes a signed JSON file under `agents/<target>/requests/` on
+    /// `crosslink/hub`. The target agent's poll loop picks it up and
+    /// acts (kill / pause / resume / reprioritise). See design doc §9.
+    Request {
+        /// Target agent ID (the one that should act, not this driver)
+        target: String,
+        /// What to do: kill | pause | resume | reprioritise
+        kind: String,
+        /// Issue display-id to attach as request subject
+        #[arg(long)]
+        subject_issue: Option<i64>,
+        /// Human-readable reason recorded alongside the request
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List agent control requests on the hub branch
+    Requests {
+        /// Target agent to filter by (omit to list for all agents)
+        #[arg(long)]
+        target: Option<String>,
+        /// Only show pending (unacknowledged) requests
+        #[arg(long)]
+        pending: bool,
+    },
+    /// Process pending control requests for this agent (applies
+    /// pause/kill/reprioritise flags locally, writes acks to the hub)
+    PollRequests,
+    /// Show local agent control flag state (paused / kill / reprioritise)
+    ///
+    /// Designed for hooks: `--json` output is `{paused, kill, reprioritise}`
+    /// where each value is a boolean (or null for `reprioritise`'s hint
+    /// payload). Exit code is non-zero only when --strict is set and a
+    /// blocking flag is active.
+    Flags {
+        /// Exit non-zero if `paused` or `kill` is set (use from `PreToolUse` hooks).
+        #[arg(long)]
+        strict: bool,
     },
 }
 
@@ -2375,7 +2514,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let log_format = match &cli.command {
-        Commands::Serve { .. } if cli.log_format == "text" => "json",
+        Commands::Dashboard {
+            action: DashboardCommands::Serve { .. },
+        }
+        | Commands::Serve { .. }
+            if cli.log_format == "text" =>
+        {
+            "json"
+        }
         _ => cli.log_format.as_str(),
     };
     init_tracing(&cli.log_level, log_format);
@@ -3031,10 +3177,114 @@ fn main() -> Result<()> {
             let crosslink_dir = find_crosslink_dir()?;
             commands::mission_control::run(&crosslink_dir, &layout)
         }
+        Commands::Dashboard { action } => match action {
+            DashboardCommands::Serve {
+                port,
+                dashboard_dir,
+                rotate_token,
+            } => {
+                let crosslink_dir = find_crosslink_dir()?;
+                let db = get_db()?;
+                // Bootstrap the per-user dashboard index at
+                // ~/.crosslink/dashboard.db. Schema is applied idempotently.
+                let dashboard_db_path = dashboard::db::DashboardDb::default_path()?;
+                dashboard::db::DashboardDb::open(&dashboard_db_path)?;
+                if rotate_token {
+                    // Discard the cached token so the next AppState::new
+                    // generates a fresh one.
+                    let _ = crate::server::state::rotate_auth_token();
+                    println!("auth token rotated at ~/.crosslink/.dashboard-token");
+                }
+
+                // Server owns the poll loop + shutdown coordination
+                // now (see `server::run_with_dashboard_db`) — that's
+                // where the broadcast sender that the poll loop
+                // publishes to lives alongside the WS fanout.
+                tokio::runtime::Runtime::new()?.block_on(server::run_with_dashboard_db(
+                    port,
+                    dashboard_dir,
+                    db,
+                    crosslink_dir,
+                    Some(dashboard_db_path),
+                ))
+            }
+            DashboardCommands::Track {
+                path,
+                slug,
+                init,
+                agent_id,
+            } => {
+                if init {
+                    let id = agent_id.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "--init requires --agent-id <ID> \
+                             (alphanumeric, hyphens, underscores)"
+                        )
+                    })?;
+                    dashboard::projects::track_with_init(&path, slug.as_deref(), &id)
+                } else {
+                    dashboard::projects::track(&path, slug.as_deref())
+                }
+            }
+            DashboardCommands::Untrack { slug } => dashboard::projects::untrack(&slug),
+            DashboardCommands::List => dashboard::projects::list(),
+            DashboardCommands::Discover { root, depth, track } => {
+                let opts = if root.is_empty() {
+                    let mut o = dashboard::discover::DiscoverOptions::defaults();
+                    o.depth = depth;
+                    o
+                } else {
+                    dashboard::discover::DiscoverOptions { roots: root, depth }
+                };
+                let db_path = dashboard::db::DashboardDb::default_path()?;
+                let db = dashboard::db::DashboardDb::open(&db_path)?;
+                let hits = dashboard::discover::discover(&db, &opts)?;
+                if hits.is_empty() {
+                    println!(
+                        "No crosslink-enabled repos found under: {}",
+                        opts.roots
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    return Ok(());
+                }
+                println!("{:<40} {:<10} PATH", "SLUG", "TRACKED?");
+                for h in &hits {
+                    println!(
+                        "{:<40} {:<10} {}",
+                        h.slug,
+                        if h.already_tracked { "yes" } else { "no" },
+                        h.path.display()
+                    );
+                }
+                if track {
+                    let to_track: Vec<_> = hits.iter().filter(|h| !h.already_tracked).collect();
+                    if to_track.is_empty() {
+                        println!("\nAll {} hits already tracked.", hits.len());
+                    } else {
+                        println!("\nTracking {} new repo(s)…", to_track.len());
+                        for h in to_track {
+                            if let Err(e) = dashboard::projects::track(&h.path, None) {
+                                eprintln!("  {}: {e}", h.slug);
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        },
         Commands::Serve {
             port,
             dashboard_dir,
         } => {
+            eprintln!(
+                "warning: `crosslink serve` is deprecated. \
+                 Use `crosslink dashboard` instead. \
+                 See https://github.com/forecast-bio/crosslink/issues/429. \
+                 This alias will be removed in a future release."
+            );
             let crosslink_dir = find_crosslink_dir()?;
             let db = get_db()?;
             tokio::runtime::Runtime::new()?.block_on(server::run(
