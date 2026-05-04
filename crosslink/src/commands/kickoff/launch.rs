@@ -701,9 +701,108 @@ pub(super) fn launch_container(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{} container launch failed: {}", runtime_cmd, stderr.trim());
+        bail!(format_container_launch_error(runtime_cmd, image, &stderr));
     }
 
     let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(container_id)
+}
+
+/// URL of the published GHCR package — surfaced in the launch-failure hint so
+/// users can confirm whether the image they're requesting actually exists.
+const AGENT_IMAGE_PACKAGE_URL: &str =
+    "https://github.com/forecast-bio/crosslink/pkgs/container/crosslink-agent";
+
+/// Format the error message emitted when `docker run` / `podman run` fails.
+///
+/// Detects pull-failure substrings in the runtime's stderr and appends a
+/// hint pointing at `just build-image` (for local builds) and the GHCR
+/// package page (to confirm what's actually published). For other failure
+/// modes (e.g. invalid mount, OOM), the original stderr is returned without
+/// the hint to avoid misdirection.
+fn format_container_launch_error(runtime_cmd: &str, image: &str, stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    let pull_failure = ["not found", "denied", "manifest unknown", "no such image"]
+        .iter()
+        .any(|needle| lowered.contains(needle));
+
+    if pull_failure {
+        format!(
+            "{runtime_cmd} container launch failed: {trimmed}\n\n\
+             Hint: the image `{image}` could not be pulled. Either:\n  \
+               * Build it locally:  just build-image       (tags as :local)\n  \
+               * Or pick a published tag from {AGENT_IMAGE_PACKAGE_URL}\n  \
+                 and pass it via `--image ghcr.io/forecast-bio/crosslink-agent:<tag>`."
+        )
+    } else {
+        format!("{runtime_cmd} container launch failed: {trimmed}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pull_failure_not_found_yields_hint() {
+        let stderr = "Unable to find image 'ghcr.io/forecast-bio/crosslink-agent:latest' locally\nError response from daemon: manifest unknown";
+        let msg = format_container_launch_error(
+            "docker",
+            "ghcr.io/forecast-bio/crosslink-agent:latest",
+            stderr,
+        );
+        assert!(msg.contains("docker container launch failed"));
+        assert!(msg.contains("Hint:"));
+        assert!(msg.contains("just build-image"));
+        assert!(msg.contains(AGENT_IMAGE_PACKAGE_URL));
+        assert!(msg.contains("ghcr.io/forecast-bio/crosslink-agent:latest"));
+    }
+
+    #[test]
+    fn pull_failure_denied_yields_hint() {
+        let stderr = "Error response from daemon: pull access denied for some/image, repository does not exist or may require 'docker login'";
+        let msg = format_container_launch_error(
+            "podman",
+            "ghcr.io/forecast-bio/crosslink-agent:nightly",
+            stderr,
+        );
+        assert!(msg.contains("podman container launch failed"));
+        assert!(msg.contains("Hint:"));
+        assert!(msg.contains("just build-image"));
+    }
+
+    #[test]
+    fn pull_failure_no_such_image_yields_hint() {
+        let stderr = "Error: No such image: ghcr.io/forecast-bio/crosslink-agent:does-not-exist";
+        let msg = format_container_launch_error(
+            "docker",
+            "ghcr.io/forecast-bio/crosslink-agent:does-not-exist",
+            stderr,
+        );
+        assert!(msg.contains("Hint:"));
+    }
+
+    #[test]
+    fn non_pull_failure_omits_hint() {
+        let stderr = "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist";
+        let msg = format_container_launch_error(
+            "docker",
+            "ghcr.io/forecast-bio/crosslink-agent:latest",
+            stderr,
+        );
+        assert!(msg.contains("docker container launch failed"));
+        assert!(
+            !msg.contains("Hint:"),
+            "non-pull errors must not get the build-image hint (would misdirect): {msg}"
+        );
+        assert!(!msg.contains("just build-image"));
+    }
+
+    #[test]
+    fn pull_failure_is_case_insensitive() {
+        let stderr = "Error: NOT FOUND";
+        let msg = format_container_launch_error("docker", "image:tag", stderr);
+        assert!(msg.contains("Hint:"));
+    }
 }

@@ -75,7 +75,12 @@ if [ -n "$WORKSPACE" ]; then
     if [ -f "$WORKSPACE/go.mod" ]; then
         if ! command -v go &>/dev/null; then
             echo "[crosslink-entrypoint] Installing Go..."
-            curl -fsSL https://go.dev/dl/go1.23.4.linux-amd64.tar.gz | tar -C /usr/local -xzf - 2>&1
+            GO_ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+            case "$GO_ARCH" in
+                amd64|x86_64) GO_ARCH=amd64 ;;
+                arm64|aarch64) GO_ARCH=arm64 ;;
+            esac
+            curl -fsSL "https://go.dev/dl/go1.23.4.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf - 2>&1
         else
             echo "[crosslink-entrypoint] Go already installed."
         fi
