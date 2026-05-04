@@ -3084,10 +3084,7 @@ fn test_init_deploys_claude_skills() {
     init_crosslink(dir.path());
 
     let skills_dir = dir.path().join(".claude/skills");
-    assert!(
-        skills_dir.is_dir(),
-        ".claude/skills/ directory not created"
-    );
+    assert!(skills_dir.is_dir(), ".claude/skills/ directory not created");
 
     // Spot-check a few representative skills from the bundled set
     for skill in [
@@ -3099,11 +3096,7 @@ fn test_init_deploys_claude_skills() {
         "workflow",
     ] {
         let skill_md = skills_dir.join(skill).join("SKILL.md");
-        assert!(
-            skill_md.exists(),
-            "skill not deployed: {}/SKILL.md",
-            skill
-        );
+        assert!(skill_md.exists(), "skill not deployed: {}/SKILL.md", skill);
         let content = std::fs::read_to_string(&skill_md).unwrap();
         assert!(
             !content.is_empty(),
