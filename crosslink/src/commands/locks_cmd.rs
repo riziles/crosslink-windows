@@ -313,8 +313,24 @@ pub fn sync_cmd(crosslink_dir: &Path, db: &Database) -> Result<()> {
         Err(e) => tracing::warn!("could not publish agent key: {}", e),
     }
 
+    // Snapshot bootstrap status before `configure_signing` so we can
+    // detect — and announce — the GH#738 self-trust auto-completion
+    // that flips the hub out of bootstrap on the operator's first sync.
+    let bootstrap_before = crate::sync::bootstrap::read_bootstrap_state(sync.cache_path())
+        .map(|s| s.status)
+        .unwrap_or_default();
+
     if let Err(e) = sync.configure_signing(crosslink_dir) {
         tracing::warn!("could not configure commit signing: {e} — commits will be unsigned");
+    }
+
+    // GH#738: surface bootstrap completion when it happened during this
+    // sync (parity with `crosslink trust approve`'s post-completion msg).
+    let bootstrap_after = crate::sync::bootstrap::read_bootstrap_state(sync.cache_path())
+        .map(|s| s.status)
+        .unwrap_or_default();
+    if bootstrap_before == "pending" && bootstrap_after == "complete" {
+        println!("Bootstrap complete — signing enforcement is now active.");
     }
 
     // Upgrade v1 layouts to v2 if needed (migrates inline comments to standalone files)
