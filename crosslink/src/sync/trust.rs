@@ -607,12 +607,25 @@ impl SyncManager {
 /// <agent>` ever wrote to `allowed_signers`. The driver's own signing
 /// key (selected by `configure_signing`) was never registered, so every
 /// signed hub commit out of a driver workspace failed verification.
+///
+/// GH#738: when this function actually adds a new entry while the hub is
+/// still in `bootstrap.status = "pending"`, the registration *is* the
+/// trust-establishment event — morally identical to running `crosslink
+/// trust approve` on the workspace's own key — so we also flip bootstrap
+/// to `"complete"` atomically in the same unsigned commit. Without this,
+/// `trust pending` reports nothing pending (because the key is already
+/// trusted by self-registration), and the bootstrap state would remain
+/// "pending" forever, blocking signing enforcement.
+///
+/// Returns `Ok(true)` when an entry was added (and, by implication, when
+/// bootstrap may have been completed). `Ok(false)` when the key was
+/// already trusted under some principal.
 fn register_active_key_as_trusted(
     cache_dir: &Path,
     crosslink_dir: &Path,
     private_key_path: &Path,
     allowed_signers_path: &Path,
-) -> Result<()> {
+) -> Result<bool> {
     use crate::signing::{AllowedSignerEntry, AllowedSigners};
 
     // Resolve the public-key companion file (SSH convention: <key>.pub).
@@ -624,13 +637,13 @@ fn register_active_key_as_trusted(
                 "skipping allowed_signers self-registration: cannot read pubkey at {}: {e}",
                 public_key_path.display()
             );
-            return Ok(());
+            return Ok(false);
         }
     };
 
     let mut signers = AllowedSigners::load(allowed_signers_path)?;
     if signers.contains_key(&public_key) {
-        return Ok(()); // Already trusted under some principal — no-op.
+        return Ok(false); // Already trusted under some principal — no-op.
     }
 
     // Pick a principal: prefer the agent.json identity for visibility,
@@ -650,6 +663,21 @@ fn register_active_key_as_trusted(
     });
     signers.save(allowed_signers_path)?;
 
+    // GH#738: If the hub is still in the bootstrap "pending" state, this
+    // self-registration completes bootstrap. The flag file is staged
+    // alongside allowed_signers in the same atomic commit below.
+    let bootstrap_completed_now =
+        if let Some(state) = super::bootstrap::read_bootstrap_state(cache_dir) {
+            if state.status == "pending" {
+                super::bootstrap::complete_bootstrap(cache_dir)?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
     // Commit unsigned; best-effort. If the commit fails (e.g. nothing
     // staged because of a race), the on-disk file is still correct for
     // local verification, and the next push will pick up any residue.
@@ -658,9 +686,11 @@ fn register_active_key_as_trusted(
             "registered '{principal}' in allowed_signers on disk but commit failed: {e} \
              (run `crosslink sync` to recover)"
         );
+    } else if bootstrap_completed_now {
+        tracing::info!("bootstrap completed: self-registered '{principal}' as trusted signer");
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Compute the conventional public-key path for an SSH private key
@@ -671,7 +701,9 @@ fn with_pub_extension(private_key_path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Stage `trust/allowed_signers` and commit it without signing.
+/// Stage `trust/allowed_signers` (plus `meta/bootstrap.json` when present,
+/// to fold a bootstrap state-flip into the same commit; see GH#738) and
+/// commit it without signing.
 ///
 /// Used only by [`register_active_key_as_trusted`]. Unsigned commit is
 /// required because the just-added key isn't yet visible in any earlier
@@ -696,6 +728,13 @@ fn commit_allowed_signers_unsigned(cache_dir: &Path, principal: &str) -> Result<
     };
 
     run(&["add", "trust/allowed_signers"])?;
+    // GH#738: when bootstrap was just completed (file written by the
+    // caller before this commit), fold the state-flip into the same
+    // atomic commit. Best-effort — if the file is absent or unchanged,
+    // `git add` is a no-op and the commit still succeeds.
+    if cache_dir.join("meta").join("bootstrap.json").exists() {
+        let _ = run(&["add", "meta/bootstrap.json"]);
+    }
     run(&[
         "-c",
         "commit.gpgsign=false",

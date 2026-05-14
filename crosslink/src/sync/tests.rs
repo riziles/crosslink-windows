@@ -2751,6 +2751,107 @@ fn test_configure_signing_self_registration_is_idempotent() {
     );
 }
 
+// ========================================================================
+// GH#738: when register_active_key_as_trusted adds a new entry while the
+// hub is still in bootstrap "pending", it must atomically flip bootstrap
+// to "complete". Without this, trust-pending lies (nothing pending — the
+// key was auto-trusted) and signing_enforcement=enforced bails forever.
+// ========================================================================
+
+#[test]
+fn test_configure_signing_completes_bootstrap_on_first_self_registration() {
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    // init_cache wrote meta/bootstrap.json with status="pending".
+    let pre = crate::sync::bootstrap::read_bootstrap_state(manager.cache_path())
+        .expect("init_cache should write bootstrap.json");
+    assert_eq!(pre.status, "pending", "fresh hub starts pending");
+    assert!(pre.completed_at.is_none());
+
+    let keys_dir = crosslink_dir.join("keys");
+    std::fs::create_dir_all(&keys_dir).unwrap();
+    let key_file = keys_dir.join("driver_ed25519");
+    std::fs::write(&key_file, "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n").unwrap();
+    let pubkey_line = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAGH738-bootstrap-flip driver@host";
+    std::fs::write(format!("{}.pub", key_file.display()), pubkey_line).unwrap();
+    set_repo_signing_key(work_dir.path(), &key_file);
+
+    let agent = AgentConfig {
+        agent_id: "bootstrap-flip-driver".to_string(),
+        machine_id: "test-host".to_string(),
+        description: None,
+        role: AgentRole::Driver,
+        ssh_key_path: None,
+        ssh_fingerprint: None,
+        ssh_public_key: None,
+    };
+    let agent_json = serde_json::to_string_pretty(&agent).unwrap();
+    std::fs::write(crosslink_dir.join("agent.json"), agent_json).unwrap();
+
+    manager.configure_signing(&crosslink_dir).unwrap();
+
+    let post = crate::sync::bootstrap::read_bootstrap_state(manager.cache_path())
+        .expect("bootstrap.json must still exist after configure_signing");
+    assert_eq!(
+        post.status, "complete",
+        "self-registering the workspace key during bootstrap must flip status to complete"
+    );
+    assert!(
+        post.completed_at.is_some(),
+        "complete state must carry a timestamp"
+    );
+}
+
+#[test]
+fn test_configure_signing_does_not_revisit_completed_bootstrap() {
+    // Idempotency check: when the same workspace syncs again later, the
+    // key is already trusted (register short-circuits) and bootstrap must
+    // remain "complete" with its original completed_at timestamp.
+    let (work_dir, _remote_dir) = setup_sync_env();
+    let crosslink_dir = work_dir.path().join(".crosslink");
+    let manager = SyncManager::new(&crosslink_dir).unwrap();
+    manager.init_cache().unwrap();
+
+    let keys_dir = crosslink_dir.join("keys");
+    std::fs::create_dir_all(&keys_dir).unwrap();
+    let key_file = keys_dir.join("driver_ed25519");
+    std::fs::write(&key_file, "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n").unwrap();
+    let pubkey_line = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAGH738-idempotent driver@host";
+    std::fs::write(format!("{}.pub", key_file.display()), pubkey_line).unwrap();
+    set_repo_signing_key(work_dir.path(), &key_file);
+
+    let agent = AgentConfig {
+        agent_id: "bootstrap-idempotent-driver".to_string(),
+        machine_id: "test-host".to_string(),
+        description: None,
+        role: AgentRole::Driver,
+        ssh_key_path: None,
+        ssh_fingerprint: None,
+        ssh_public_key: None,
+    };
+    let agent_json = serde_json::to_string_pretty(&agent).unwrap();
+    std::fs::write(crosslink_dir.join("agent.json"), agent_json).unwrap();
+
+    manager.configure_signing(&crosslink_dir).unwrap();
+    let after_first = crate::sync::bootstrap::read_bootstrap_state(manager.cache_path())
+        .expect("first call should complete bootstrap");
+    assert_eq!(after_first.status, "complete");
+    let first_ts = after_first.completed_at.clone();
+
+    manager.configure_signing(&crosslink_dir).unwrap();
+    manager.configure_signing(&crosslink_dir).unwrap();
+
+    let after_repeat = crate::sync::bootstrap::read_bootstrap_state(manager.cache_path()).unwrap();
+    assert_eq!(after_repeat.status, "complete");
+    assert_eq!(
+        after_repeat.completed_at, first_ts,
+        "completed_at must not be rewritten when bootstrap was already complete"
+    );
+}
+
 #[test]
 fn test_configure_signing_skips_self_registration_when_pub_missing() {
     // When the .pub companion isn't on disk, self-registration must
