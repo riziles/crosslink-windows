@@ -574,11 +574,23 @@ impl SharedWriter {
 
     /// Add a label to an issue.
     ///
+    /// Returns `Ok(true)` if the label was newly added, `Ok(false)` if the
+    /// issue already carried the label (no-op short-circuit).
+    ///
     /// # Errors
     ///
     /// Returns an error if the issue cannot be loaded or git operations fail.
-    pub fn add_label(&self, db: &Database, display_id: i64, label: &str) -> Result<()> {
+    pub fn add_label(&self, db: &Database, display_id: i64, label: &str) -> Result<bool> {
         let label_owned = label.to_string();
+
+        // Idempotency short-circuit (#600): if the label is already present,
+        // serializing the unchanged issue would hand `write_commit_push` an
+        // identical file, which git rejects with "nothing to commit". Skip
+        // git entirely and report no-op via the boolean return.
+        let current = self.load_issue_by_id(display_id, db)?;
+        if current.labels.contains(&label_owned) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -599,16 +611,26 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Remove a label from an issue.
     ///
+    /// Returns `Ok(true)` if the label was removed, `Ok(false)` if the issue
+    /// did not carry the label (no-op short-circuit).
+    ///
     /// # Errors
     ///
     /// Returns an error if the issue cannot be loaded or git operations fail.
-    pub fn remove_label(&self, db: &Database, display_id: i64, label: &str) -> Result<()> {
+    pub fn remove_label(&self, db: &Database, display_id: i64, label: &str) -> Result<bool> {
         let label_owned = label.to_string();
+
+        // Idempotency short-circuit (#600): if the label is absent, skip the
+        // write entirely to avoid an empty git commit.
+        let current = self.load_issue_by_id(display_id, db)?;
+        if !current.labels.contains(&label_owned) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -629,18 +651,34 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Add a blocker dependency: `issue_id` is blocked by `blocking_issue_id`.
     ///
     /// Only modifies the blocked issue's file (single-direction storage).
     ///
+    /// Returns `Ok(true)` if the blocker was newly added, `Ok(false)` if it
+    /// was already recorded (no-op short-circuit).
+    ///
     /// # Errors
     ///
     /// Returns an error if either issue cannot be resolved or git operations fail.
-    pub fn add_blocker(&self, db: &Database, issue_id: i64, blocking_issue_id: i64) -> Result<()> {
+    pub fn add_blocker(
+        &self,
+        db: &Database,
+        issue_id: i64,
+        blocking_issue_id: i64,
+    ) -> Result<bool> {
         let blocker_uuid = self.resolve_uuid(blocking_issue_id, db)?;
+
+        // Idempotency short-circuit (#600): if the blocker is already
+        // recorded, the closure would serialize an identical issue file and
+        // `git commit` would fail with "nothing to commit".
+        let current = self.load_issue_by_id(issue_id, db)?;
+        if current.blockers.contains(&blocker_uuid) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -661,10 +699,13 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Remove a blocker dependency.
+    ///
+    /// Returns `Ok(true)` if the blocker was removed, `Ok(false)` if the
+    /// blocker was not present (no-op short-circuit).
     ///
     /// # Errors
     ///
@@ -674,8 +715,15 @@ impl SharedWriter {
         db: &Database,
         issue_id: i64,
         blocking_issue_id: i64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let blocker_uuid = self.resolve_uuid(blocking_issue_id, db)?;
+
+        // Idempotency short-circuit (#600): if the blocker is absent, skip
+        // the write entirely to avoid an empty git commit.
+        let current = self.load_issue_by_id(issue_id, db)?;
+        if !current.blockers.contains(&blocker_uuid) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -696,16 +744,26 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Add a relation between two issues (single-direction storage).
     ///
+    /// Returns `Ok(true)` if the relation was newly added, `Ok(false)` if
+    /// it was already recorded (no-op short-circuit).
+    ///
     /// # Errors
     ///
     /// Returns an error if either issue cannot be resolved or git operations fail.
-    pub fn add_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<()> {
+    pub fn add_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<bool> {
         let related_uuid = self.resolve_uuid(related_id, db)?;
+
+        // Idempotency short-circuit (#600): if the relation is already
+        // recorded, skip the write entirely to avoid an empty git commit.
+        let current = self.load_issue_by_id(issue_id, db)?;
+        if current.related.contains(&related_uuid) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -726,16 +784,26 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Remove a relation between two issues.
     ///
+    /// Returns `Ok(true)` if the relation was removed, `Ok(false)` if no
+    /// such relation existed (no-op short-circuit).
+    ///
     /// # Errors
     ///
     /// Returns an error if either issue cannot be resolved or git operations fail.
-    pub fn remove_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<()> {
+    pub fn remove_relation(&self, db: &Database, issue_id: i64, related_id: i64) -> Result<bool> {
         let related_uuid = self.resolve_uuid(related_id, db)?;
+
+        // Idempotency short-circuit (#600): if the relation is absent, skip
+        // the write entirely to avoid an empty git commit.
+        let current = self.load_issue_by_id(issue_id, db)?;
+        if !current.related.contains(&related_uuid) {
+            return Ok(false);
+        }
 
         let _ = self.write_commit_push(
             |writer| {
@@ -756,7 +824,7 @@ impl SharedWriter {
         )?;
 
         self.hydrate_with_retry(db);
-        Ok(())
+        Ok(true)
     }
 
     /// Rewrite a just-committed issue to set `display_id: null` and revert the
