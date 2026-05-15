@@ -1,7 +1,7 @@
 //! Point-in-time `SQLite` snapshots for safety nets around destructive
 //! operations (e.g. `integrity hydration --repair`, see #602).
 //!
-//! Uses SQLite's native `VACUUM INTO` (SQLite 3.27+) so the snapshot is
+//! Uses `SQLite`'s native `VACUUM INTO` (`SQLite` 3.27+) so the snapshot is
 //! self-contained — it bundles the main database, any WAL pages, and
 //! settles all in-flight checkpoints into a single file the user can
 //! drop in place to recover state.

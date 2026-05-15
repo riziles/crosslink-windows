@@ -228,10 +228,10 @@ fn check_hydration(
         crosslink_dir,
         crate::db::snapshot::HYDRATION_BACKUP_PREFIX,
     )?;
-    let snapshot_rel = snapshot_path
-        .strip_prefix(crosslink_dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| snapshot_path.to_string_lossy().into_owned());
+    let snapshot_rel = snapshot_path.strip_prefix(crosslink_dir).map_or_else(
+        |_| snapshot_path.to_string_lossy().into_owned(),
+        |p| p.to_string_lossy().into_owned(),
+    );
 
     // If the drift contains rows that re-emit cannot represent in JSON
     // (comments, time entries), refuse to destroy them without an
@@ -298,9 +298,9 @@ fn check_hydration(
     })
 }
 
-/// Run the legacy count comparison: returns a list of "JSON has N, SQLite
-/// has M" detail strings for each category that mismatches. Empty Vec
-/// means counts agree (content drift may still exist).
+/// Run the legacy count comparison: returns a list of "`JSON` has N,
+/// `SQLite` has M" detail strings for each category that mismatches.
+/// Empty `Vec` means counts agree (content drift may still exist).
 fn collect_count_mismatch(cache_dir: &Path, db: &Database) -> Result<Vec<String>> {
     let issues_dir = cache_dir.join("issues");
     let json_issues = read_all_issue_files(&issues_dir)?;
