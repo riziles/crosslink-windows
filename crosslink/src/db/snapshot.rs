@@ -58,12 +58,7 @@ pub fn snapshot_to_integrity_dir(
     let escaped = dest_path.to_string_lossy().replace('\'', "''");
     db.conn
         .execute(&format!("VACUUM INTO '{escaped}'"), [])
-        .with_context(|| {
-            format!(
-                "Failed to write SQLite snapshot to {}",
-                dest_path.display()
-            )
-        })?;
+        .with_context(|| format!("Failed to write SQLite snapshot to {}", dest_path.display()))?;
 
     Ok(dest_path)
 }

@@ -226,7 +226,9 @@ fn run_diff_queries(main_db: &Database) -> Result<HydrationDriftReport> {
              ORDER BY issue_id, label",
         )?;
         report.sqlite_only_labels = stmt
-            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
     }
 
