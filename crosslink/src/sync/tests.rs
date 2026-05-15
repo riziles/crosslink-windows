@@ -1107,8 +1107,8 @@ fn test_clean_dirty_state_with_dirty_file() {
 /// branch's tree with hub-cache artifacts.
 ///
 /// The fix adds a `verify_cache_worktree` preflight that:
-/// 1. Confirms `git rev-parse --show-toplevel` from cache_dir resolves to
-///    cache_dir (not a parent — catches the walk-up case).
+/// 1. Confirms `git rev-parse --show-toplevel` from `cache_dir` resolves to
+///    `cache_dir` (not a parent — catches the walk-up case).
 /// 2. Confirms HEAD is on the configured `HUB_BRANCH`.
 ///
 /// This test simulates the broken-worktree state and asserts that
@@ -2561,8 +2561,7 @@ fn test_migrate_from_locks_branch_with_old_remote_branch() {
     // After migration, crosslink/hub should exist on remote
     let has_hub = manager
         .git_in_repo(&["ls-remote", "--heads", "origin", HUB_BRANCH])
-        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-        .unwrap_or(false);
+        .is_ok_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
     assert!(
         has_hub,
         "crosslink/hub should exist on remote after migration"
@@ -2571,8 +2570,7 @@ fn test_migrate_from_locks_branch_with_old_remote_branch() {
     // Old branch should be gone from remote
     let has_old = manager
         .git_in_repo(&["ls-remote", "--heads", "origin", OLD_BRANCH])
-        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-        .unwrap_or(false);
+        .is_ok_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
     assert!(!has_old, "crosslink/locks should be deleted from remote");
 }
 
@@ -2863,7 +2861,7 @@ fn test_configure_signing_does_not_revisit_completed_bootstrap() {
     let after_first = crate::sync::bootstrap::read_bootstrap_state(manager.cache_path())
         .expect("first call should complete bootstrap");
     assert_eq!(after_first.status, "complete");
-    let first_ts = after_first.completed_at.clone();
+    let first_ts = after_first.completed_at;
 
     manager.configure_signing(&crosslink_dir).unwrap();
     manager.configure_signing(&crosslink_dir).unwrap();

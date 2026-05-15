@@ -697,7 +697,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             // git not available in this environment; skip gracefully
             return;
         }
@@ -772,7 +772,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -844,7 +844,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -892,7 +892,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -933,7 +933,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -977,7 +977,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -1015,7 +1015,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -1081,7 +1081,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -1237,7 +1237,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -1273,7 +1273,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 
@@ -1440,7 +1440,7 @@ mod tests {
             .args(["init", "-q"])
             .current_dir(repo_root)
             .status();
-        if init_status.map(|s| !s.success()).unwrap_or(true) {
+        if init_status.map_or(true, |s| !s.success()) {
             return;
         }
 

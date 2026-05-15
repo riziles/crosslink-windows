@@ -1531,6 +1531,8 @@ mod integration {
 
     #[test]
     fn test_add_label_idempotent() {
+        // Regression test for #600: re-adding an existing label must exit
+        // cleanly (Ok(false)) rather than failing on the empty git commit.
         let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
         let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
         let db = make_db(work_dir.path());
@@ -1538,12 +1540,47 @@ mod integration {
         let id = writer
             .create_issue(&db, "Idempotent label", None, "medium", None, None)
             .unwrap();
-        writer.add_label(&db, id, "tag").unwrap();
-        let _ = writer.add_label(&db, id, "tag"); // duplicate -- may error on empty commit
+        assert!(
+            writer.add_label(&db, id, "tag").unwrap(),
+            "First add should report newly-added (Ok(true))"
+        );
+        assert!(
+            !writer.add_label(&db, id, "tag").unwrap(),
+            "Duplicate add should report no-op (Ok(false)), not fail"
+        );
 
         let labels = db.get_labels(id).unwrap();
         let tag_count = labels.iter().filter(|l| l.as_str() == "tag").count();
         assert_eq!(tag_count, 1, "Duplicate label should not be double-added");
+        drop(work_dir);
+    }
+
+    #[test]
+    fn test_remove_label_idempotent() {
+        // Removing a label that isn't present must return Ok(false), not
+        // fail on the empty git commit (#600).
+        let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
+        let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
+        let db = make_db(work_dir.path());
+
+        let id = writer
+            .create_issue(&db, "Remove absent label", None, "medium", None, None)
+            .unwrap();
+
+        assert!(
+            !writer.remove_label(&db, id, "never-added").unwrap(),
+            "Removing an absent label should report no-op (Ok(false))"
+        );
+
+        writer.add_label(&db, id, "tag").unwrap();
+        assert!(
+            writer.remove_label(&db, id, "tag").unwrap(),
+            "Removing a present label should report removed (Ok(true))"
+        );
+        assert!(
+            !writer.remove_label(&db, id, "tag").unwrap(),
+            "Removing again should report no-op (Ok(false))"
+        );
         drop(work_dir);
     }
 
@@ -1594,6 +1631,73 @@ mod integration {
         drop(work_dir);
     }
 
+    #[test]
+    fn test_add_blocker_idempotent() {
+        // Regression test for #600: `crosslink issue block <a> <b>` must
+        // exit zero when <a> is already blocked by <b>, instead of failing
+        // with a confusing "git commit […] failed:" error from the empty
+        // commit path.
+        let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
+        let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
+        let db = make_db(work_dir.path());
+
+        let blocked = writer
+            .create_issue(&db, "Blocked twice", None, "medium", None, None)
+            .unwrap();
+        let blocker = writer
+            .create_issue(&db, "Blocker", None, "high", None, None)
+            .unwrap();
+
+        assert!(
+            writer.add_blocker(&db, blocked, blocker).unwrap(),
+            "First add should report newly-added (Ok(true))"
+        );
+        assert!(
+            !writer.add_blocker(&db, blocked, blocker).unwrap(),
+            "Re-adding the same blocker should report no-op (Ok(false)), not fail"
+        );
+
+        let issue_file = writer.load_issue_by_id(blocked, &db).unwrap();
+        assert_eq!(
+            issue_file.blockers.len(),
+            1,
+            "Idempotent add must not duplicate the blocker entry"
+        );
+        drop(work_dir);
+    }
+
+    #[test]
+    fn test_remove_blocker_idempotent() {
+        // Removing a blocker that isn't present must return Ok(false), not
+        // fail on the empty git commit (#600).
+        let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
+        let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
+        let db = make_db(work_dir.path());
+
+        let issue = writer
+            .create_issue(&db, "Never blocked", None, "medium", None, None)
+            .unwrap();
+        let other = writer
+            .create_issue(&db, "Not a blocker", None, "medium", None, None)
+            .unwrap();
+
+        assert!(
+            !writer.remove_blocker(&db, issue, other).unwrap(),
+            "Removing an absent blocker should report no-op (Ok(false))"
+        );
+
+        writer.add_blocker(&db, issue, other).unwrap();
+        assert!(
+            writer.remove_blocker(&db, issue, other).unwrap(),
+            "Removing a present blocker should report removed (Ok(true))"
+        );
+        assert!(
+            !writer.remove_blocker(&db, issue, other).unwrap(),
+            "Removing again should report no-op (Ok(false))"
+        );
+        drop(work_dir);
+    }
+
     // --- add_relation() / remove_relation() ---
 
     #[test]
@@ -1634,6 +1738,72 @@ mod integration {
 
         let issue = writer.load_issue_by_id(id1, &db).unwrap();
         assert!(issue.related.is_empty(), "Relation should be removed");
+        drop(work_dir);
+    }
+
+    #[test]
+    fn test_add_relation_idempotent() {
+        // Regression test for #600: re-adding the same relation must exit
+        // cleanly via the no-op short-circuit rather than failing on the
+        // empty git commit.
+        let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
+        let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
+        let db = make_db(work_dir.path());
+
+        let id1 = writer
+            .create_issue(&db, "Related E", None, "medium", None, None)
+            .unwrap();
+        let id2 = writer
+            .create_issue(&db, "Related F", None, "medium", None, None)
+            .unwrap();
+
+        assert!(
+            writer.add_relation(&db, id1, id2).unwrap(),
+            "First add should report newly-added (Ok(true))"
+        );
+        assert!(
+            !writer.add_relation(&db, id1, id2).unwrap(),
+            "Re-adding the same relation should report no-op (Ok(false))"
+        );
+
+        let issue = writer.load_issue_by_id(id1, &db).unwrap();
+        assert_eq!(
+            issue.related.len(),
+            1,
+            "Idempotent add must not duplicate the relation entry"
+        );
+        drop(work_dir);
+    }
+
+    #[test]
+    fn test_remove_relation_idempotent() {
+        // Removing a relation that isn't present must return Ok(false), not
+        // fail on the empty git commit (#600).
+        let (work_dir, _remote, crosslink_dir) = setup_shared_writer_env();
+        let writer = SharedWriter::new(&crosslink_dir).unwrap().unwrap();
+        let db = make_db(work_dir.path());
+
+        let id1 = writer
+            .create_issue(&db, "Lonely G", None, "medium", None, None)
+            .unwrap();
+        let id2 = writer
+            .create_issue(&db, "Lonely H", None, "medium", None, None)
+            .unwrap();
+
+        assert!(
+            !writer.remove_relation(&db, id1, id2).unwrap(),
+            "Removing an absent relation should report no-op (Ok(false))"
+        );
+
+        writer.add_relation(&db, id1, id2).unwrap();
+        assert!(
+            writer.remove_relation(&db, id1, id2).unwrap(),
+            "Removing a present relation should report removed (Ok(true))"
+        );
+        assert!(
+            !writer.remove_relation(&db, id1, id2).unwrap(),
+            "Removing again should report no-op (Ok(false))"
+        );
         drop(work_dir);
     }
 

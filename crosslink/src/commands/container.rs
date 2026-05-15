@@ -645,7 +645,7 @@ mod tests {
 
     /// The container subcommands MUST address the same registry-qualified
     /// image name as `crosslink kickoff run --container docker|podman`.
-    /// Regressing IMAGE_NAME back to the bare `crosslink-agent` form
+    /// Regressing `IMAGE_NAME` back to the bare `crosslink-agent` form
     /// silently un-composes the two code paths and re-opens GH#576.
     #[test]
     fn image_name_is_ghcr_namespaced() {
@@ -654,8 +654,7 @@ mod tests {
             IMAGE_NAME,
             crate::commands::kickoff::DEFAULT_AGENT_IMAGE
                 .rsplit_once(':')
-                .map(|(name, _)| name)
-                .unwrap_or(IMAGE_NAME),
+                .map_or(IMAGE_NAME, |(name, _)| name),
             "container.rs IMAGE_NAME diverged from kickoff DEFAULT_AGENT_IMAGE — \
              re-opens the GH#576 compose-failure between `crosslink container build` \
              and `crosslink kickoff run --container …`"
