@@ -1,6 +1,7 @@
 ---
 allowed-tools: Bash(crosslink *), Bash(git *), Bash(gh *), Bash(ls *), Bash(find *), Bash(mkdir *), Read, Grep, Glob, Write
 description: Interactive, iterative design document authoring grounded in codebase exploration
+argument-hint: ["feature description"] | --issue <id> | --gh-issue <number> | --continue <slug>
 ---
 
 ## Context
