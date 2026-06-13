@@ -91,6 +91,13 @@ fn poll_all_sources(
             ));
         }
     }
+    if config.sources.cpitd.enabled {
+        sources.push(Box::new(super::sources::cpitd::CpitdSource::new(
+            crosslink_dir,
+            config.sources.cpitd.interval_hours,
+            config.sources.cpitd.min_tokens,
+        )));
+    }
 
     let mut all_signals: Vec<Signal> = Vec::new();
     for source in &mut sources {
@@ -359,7 +366,7 @@ fn create_sentinel_issue(
         &signal.body[..signal.body.len().min(2000)]
     );
     let issue_id = if let Some(w) = writer {
-        w.create_issue(db, &signal.title, Some(&description), "medium")?
+        w.create_issue(db, &signal.title, Some(&description), "medium", None, None)?
     } else {
         db.create_issue(&signal.title, Some(&description), "medium")?
     };
@@ -442,6 +449,7 @@ fn spawn_agent(
         design_doc: None,
         doc_path: None,
         skip_permissions: true,
+        permission_mode: None,
     };
 
     run(crosslink_dir, db, writer, &opts)
