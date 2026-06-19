@@ -1,0 +1,121 @@
+name: Sync from Upstream
+
+# Checks the upstream crosslink repo for new releases. When a new release
+# is detected, merges upstream/main into our main, tags it with the upstream
+# version, and pushes — which triggers windows-release.yml to build the .exe.
+#
+# If there are merge conflicts, a PR is created instead for manual resolution.
+# Runs on a schedule (daily) and can also be triggered manually.
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily at 6am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Sync upstream/main → main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/forecast-bio/crosslink.git
+          git fetch upstream main
+
+      - name: Get latest upstream release tag
+        id: upstream
+        run: |
+          # Get the latest release tag from the GitHub API (not git tags,
+          # because upstream might have unreleased tags)
+          LATEST=$(gh api repos/forecast-bio/crosslink/releases/latest --jq '.tag_name')
+          echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $LATEST"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Check for our tracking tag
+        id: tracking
+        run: |
+          # We store a lightweight tag to remember which upstream release
+          # we last synced. If the tag doesn't exist, we need to sync.
+          if git rev-parse --verify "refs/tags/synced-upstream-${{ steps.upstream.outputs.tag }}" >/dev/null 2>&1; then
+            echo "already_synced=true" >> "$GITHUB_OUTPUT"
+            echo "Already synced to ${{ steps.upstream.outputs.tag }} — nothing to do"
+          else
+            echo "already_synced=false" >> "$GITHUB_OUTPUT"
+            echo "New upstream release detected: ${{ steps.upstream.outputs.tag }}"
+          fi
+
+      - name: Merge upstream/main
+        if: steps.tracking.outputs.already_synced != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create a sync branch
+          SYNC_BRANCH="sync/upstream-${{ steps.upstream.outputs.tag }}"
+          git checkout -b "$SYNC_BRANCH"
+
+          # Merge upstream/main. If there are conflicts, this will fail
+          # and we'll still create a PR showing the conflict.
+          if git merge upstream/main --no-edit -m "Merge upstream/main (${{ steps.upstream.outputs.tag }})"; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Merge conflicts detected — PR will need manual resolution"
+            # Abort the merge so we can still push the branch showing
+            # what we tried to merge
+            git merge --abort
+          fi
+
+          git push origin "$SYNC_BRANCH" --force
+          echo "branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+        id: merge
+
+      - name: Fast-forward main and tag release
+        if: steps.tracking.outputs.already_synced != 'true' && steps.merge.outputs.merged == 'true'
+        run: |
+          git checkout main
+          git merge "sync/upstream-${{ steps.upstream.outputs.tag }}" --ff-only
+
+          # Tag with the upstream release version. This triggers
+          # windows-release.yml which builds the .exe and creates a
+          # GitHub Release.
+          git tag "${{ steps.upstream.outputs.tag }}"
+
+          # Internal tracking tag so we don't re-sync the same release
+          git tag "synced-upstream-${{ steps.upstream.outputs.tag }}"
+
+          git push origin main
+          git push origin "${{ steps.upstream.outputs.tag }}"
+          git push origin "synced-upstream-${{ steps.upstream.outputs.tag }}"
+
+      - name: Create PR for conflict resolution
+        if: steps.tracking.outputs.already_synced != 'true' && steps.merge.outputs.merged != 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ${{ steps.merge.outputs.branch }}
+          base: main
+          title: "⬆️ Sync upstream ${{ steps.upstream.outputs.tag }} (⚠️ conflicts)"
+          body: |
+            Auto-sync from [forecast-bio/crosslink](https://github.com/forecast-bio/crosslink).
+
+            **Upstream release:** `${{ steps.upstream.outputs.tag }}`
+            **Triggered by:** ${{ github.event_name == 'schedule' && 'scheduled daily run' || 'manual dispatch' }}
+
+            ⚠️ **Merge conflicts detected** — manual resolution required.
+            Resolve conflicts, merge the PR, then manually tag main with
+            `${{ steps.upstream.outputs.tag }}` to trigger the Windows build.
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,12 +1,19 @@
 name: Windows Release
 
 # Builds the Windows binary and attaches it to a GitHub Release.
-# Runs on tag pushes AND can be triggered manually from any branch
-# via the Actions tab → "Run workflow" dropdown.
+# Triggers:
+#   - Tag push (v*) — creates a full GitHub Release with the .exe attached
+#   - Push to main (from sync PR merge) — builds & uploads artifact only
+#   - Manual dispatch — build & upload artifact (optionally tag-driven release)
+#
+# The sync-upstream.yml workflow tags main after a clean merge, which then
+# triggers this workflow to produce the release binary automatically.
 on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag_name:
