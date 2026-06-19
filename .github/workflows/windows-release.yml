@@ -63,7 +63,7 @@ jobs:
       - name: Rename binary for upload
         shell: bash
         run: |
-          cp crosslink/target/x86_64-pc-windows-msvc/release/crosslink.exe crosslink-win.exe
+          cp target/x86_64-pc-windows-msvc/release/crosslink.exe crosslink-win.exe
           ls -lh crosslink-win.exe
 
       - name: Upload artifact (always)
